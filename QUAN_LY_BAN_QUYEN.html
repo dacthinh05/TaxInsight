@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TaxInsight – Quản Lý Khách Hàng & Phát Hành Bản Quyền</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <!-- Header -->
+  <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 bg-gradient-to-br from-teal-400 to-emerald-600 rounded-xl flex items-center justify-center text-slate-950 font-black text-xl shadow-lg shadow-teal-500/20">
+          🔑
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-base font-bold text-white tracking-wide">TaxInsight Manager</h1>
+            <span class="text-[10px] uppercase font-bold bg-teal-500/20 text-teal-400 border border-teal-500/30 px-2 py-0.5 rounded-full">v2.0 Pro</span>
+          </div>
+          <p class="text-xs text-slate-400">Trình phát hành License Key & Quản trị Danh sách Khách hàng</p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-2">
+        <button onclick="exportCSV()" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold px-3.5 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 active:scale-95">
+          <i class="fa-solid fa-file-excel"></i>
+          <span>Xuất File Excel</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <!-- Metric Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-slate-400 uppercase">Tổng khách hàng</span>
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        </div>
+        <div id="totalCustCount" class="mt-2 text-2xl font-bold text-white">0</div>
+        <div class="mt-1 text-[11px] text-slate-400">Đã lưu trong trình duyệt</div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+        <span class="text-xs font-semibold text-slate-400 uppercase">Gói Vĩnh Viễn (LIFETIME)</span>
+        <div id="lifetimeCount" class="mt-2 text-2xl font-bold text-amber-400">0</div>
+        <div class="mt-1 text-[11px] text-slate-400">Bản quyền không giới hạn</div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+        <span class="text-xs font-semibold text-slate-400 uppercase">Gói 1 Năm (PRO_1Y / PERSONAL_1Y)</span>
+        <div id="oneYearCount" class="mt-2 text-2xl font-bold text-teal-400">0</div>
+        <div class="mt-1 text-[11px] text-slate-400">Thời hạn 365 ngày</div>
+      </div>
+    </div>
+
+    <!-- Layout 2 Cột -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <!-- Cột Trái: Form Phát Hành Key -->
+      <div class="lg:col-span-5 space-y-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+          <div class="flex items-center space-x-2.5 pb-4 border-b border-slate-800">
+            <div class="w-8 h-8 rounded-lg bg-teal-500/10 text-teal-400 flex items-center justify-center font-bold">
+              ➕
+            </div>
+            <div>
+              <h2 class="text-sm font-bold text-white uppercase tracking-wider">Cấp Bản Quyền Mới</h2>
+              <p class="text-xs text-slate-400">Tạo License Key & Tự động lưu khách hàng</p>
+            </div>
+          </div>
+
+          <form id="licenseForm" onsubmit="createLicense(event)" class="space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                Mã máy khách hàng (Machine ID) <span class="text-red-400">*</span>
+              </label>
+              <input id="inMachineId" type="text" required placeholder="TR-XXXX-XXXX-XXXX-XXXX" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-teal-300 font-mono uppercase focus:outline-none focus:border-teal-500">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                Tên khách hàng / Doanh nghiệp <span class="text-red-400">*</span>
+              </label>
+              <input id="inCustomerName" type="text" required placeholder="Ví dụ: Kế toán Minh Anh" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-teal-500">
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Số điện thoại / Zalo</label>
+                <input id="inPhone" type="text" placeholder="09xxxxxxxx" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-teal-500">
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Giá thu (VNĐ)</label>
+                <input id="inPrice" type="number" placeholder="500000" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-teal-500">
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Gói bản quyền</label>
+                <select id="inTier" onchange="onTierChange()" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-teal-500 cursor-pointer">
+                  <option value="LIFETIME">⭐ Vĩnh viễn (LIFETIME)</option>
+                  <option value="PRO_1Y">💼 Chuyên nghiệp (1 Năm)</option>
+                  <option value="PERSONAL_1Y">👤 Cá nhân (1 Năm)</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Hạn sử dụng</label>
+                <input id="inExpiryDate" type="date" value="2099-12-31" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-teal-500">
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 uppercase mb-1">Ghi chú</label>
+              <input id="inNotes" type="text" placeholder="Ghi chú thêm..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-teal-500">
+            </div>
+
+            <button type="submit" class="w-full bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-slate-950 font-bold py-3 px-4 rounded-xl text-xs shadow-lg shadow-teal-500/20 active:scale-95 transition-all">
+              ⚡ TẠO KEY & LƯU KHÁCH HÀNG
+            </button>
+          </form>
+
+          <!-- Hộp hiển thị Key -->
+          <div id="newKeyBox" class="hidden p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-emerald-400">🎉 ĐÃ TẠO KEY THÀNH CÔNG!</span>
+              <button onclick="copyGeneratedKey()" class="text-xs bg-emerald-500 text-slate-950 font-bold px-2.5 py-1 rounded-lg hover:bg-emerald-400 transition-all">
+                Sao chép Key
+              </button>
+            </div>
+            <textarea id="txtGeneratedKey" readonly rows="3" class="w-full bg-slate-950 border border-emerald-500/30 rounded-lg p-2 text-[11px] font-mono text-emerald-300 select-all"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cột Phải: Bảng Danh Sách Khách Hàng -->
+      <div class="lg:col-span-7 space-y-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 class="text-sm font-bold text-white uppercase tracking-wider">Danh Sách Khách Hàng</h2>
+              <p class="text-xs text-slate-400">Lưu trữ, tra cứu & sao chép key</p>
+            </div>
+            <div class="relative w-full sm:w-64">
+              <input id="searchBox" oninput="renderTable()" type="text" placeholder="Tìm theo tên, SĐT, mã máy..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-2 text-xs text-white focus:outline-none focus:border-teal-500">
+              <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-500 text-xs"></i>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto rounded-xl border border-slate-800">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-950 text-slate-400 font-semibold uppercase text-[11px] border-b border-slate-800">
+                <tr>
+                  <th class="p-3">Khách hàng</th>
+                  <th class="p-3">Mã máy</th>
+                  <th class="p-3">Gói</th>
+                  <th class="p-3">Hạn dùng</th>
+                  <th class="p-3 text-right">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="custTableBody" class="divide-y divide-slate-800 font-medium">
+                <tr><td colspan="5" class="p-6 text-center text-slate-500">Chưa có khách hàng nào.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const SECRET_SIGN_KEY = 'TR_2026_MASTER_SECRET_KEY_TAXRECORD_VIETNAM_SECURE_AUTH';
+    const DB_KEY = 'TAXINSIGHT_CUSTOMERS_DB';
+
+    function getStoredCustomers() {
+      try {
+        const raw = localStorage.getItem(DB_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveCustomers(list) {
+      localStorage.setItem(DB_KEY, JSON.stringify(list));
+      updateCounts();
+      renderTable();
+    }
+
+    function onTierChange() {
+      const tier = document.getElementById('inTier').value;
+      const expiry = document.getElementById('inExpiryDate');
+      if (tier === 'LIFETIME') {
+        expiry.value = '2099-12-31';
+      } else {
+        const d = new Date();
+        d.setFullYear(d.getFullYear() + 1);
+        expiry.value = d.toISOString().split('T')[0];
+      }
+    }
+
+    function createLicense(e) {
+      e.preventDefault();
+      const machineId = document.getElementById('inMachineId').value.trim().toUpperCase();
+      const customerName = document.getElementById('inCustomerName').value.trim();
+      const phone = document.getElementById('inPhone').value.trim();
+      const price = document.getElementById('inPrice').value.trim();
+      const tier = document.getElementById('inTier').value;
+      const expiryDate = document.getElementById('inExpiryDate').value || '2099-12-31';
+      const notes = document.getElementById('inNotes').value.trim();
+      const issuedAt = new Date().toISOString();
+
+      const dataToSign = `${machineId}|${customerName}|${tier}|${expiryDate}|${issuedAt}`;
+      const signature = CryptoJS.HmacSHA256(dataToSign, SECRET_SIGN_KEY).toString(CryptoJS.enc.Hex).toUpperCase();
+
+      const payload = {
+        machineId,
+        customerName,
+        tier,
+        expiryDate,
+        issuedAt,
+        signature
+      };
+
+      const jsonStr = JSON.stringify(payload);
+      const licenseKey = btoa(unescape(encodeURIComponent(jsonStr)));
+
+      const newCustomer = {
+        id: 'CUST_' + Date.now(),
+        customerName,
+        phone,
+        machineId,
+        tier,
+        expiryDate,
+        issuedAt,
+        price,
+        notes,
+        licenseKey
+      };
+
+      const customers = getStoredCustomers();
+      customers.unshift(newCustomer);
+      saveCustomers(customers);
+
+      document.getElementById('txtGeneratedKey').value = licenseKey;
+      document.getElementById('newKeyBox').classList.remove('hidden');
+    }
+
+    function copyGeneratedKey() {
+      const key = document.getElementById('txtGeneratedKey').value;
+      copyText(key);
+      alert('Đã sao chép License Key vào Clipboard!');
+    }
+
+    function copyText(text) {
+      navigator.clipboard.writeText(text);
+    }
+
+    function deleteCust(id) {
+      if (!confirm('Bạn có chắc muốn xóa khách hàng này khỏi danh sách?')) return;
+      let customers = getStoredCustomers();
+      customers = customers.filter(c => c.id !== id);
+      saveCustomers(customers);
+    }
+
+    function updateCounts() {
+      const customers = getStoredCustomers();
+      document.getElementById('totalCustCount').innerText = customers.length;
+      document.getElementById('lifetimeCount').innerText = customers.filter(c => c.tier === 'LIFETIME').length;
+      document.getElementById('oneYearCount').innerText = customers.filter(c => c.tier !== 'LIFETIME').length;
+    }
+
+    function renderTable() {
+      const customers = getStoredCustomers();
+      const query = document.getElementById('searchBox').value.toLowerCase().trim();
+      const filtered = customers.filter(c => 
+        (c.customerName || '').toLowerCase().includes(query) ||
+        (c.phone || '').toLowerCase().includes(query) ||
+        (c.machineId || '').toLowerCase().includes(query)
+      );
+
+      const tbody = document.getElementById('custTableBody');
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="p-6 text-center text-slate-500">Không tìm thấy khách hàng nào.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(c => `
+        <tr class="hover:bg-slate-800/50 transition-colors">
+          <td class="p-3">
+            <div class="font-bold text-white">${c.customerName}</div>
+            <div class="text-[11px] text-slate-400">${c.phone || 'Chưa có SĐT'} ${c.notes ? '• ' + c.notes : ''}</div>
+          </td>
+          <td class="p-3">
+            <span class="font-mono text-teal-400 text-[11px] select-all">${c.machineId}</span>
+          </td>
+          <td class="p-3">
+            <span class="px-2 py-0.5 rounded-md text-[10px] font-bold ${
+              c.tier === 'LIFETIME' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+            }">${c.tier}</span>
+          </td>
+          <td class="p-3 text-slate-300 text-[11px]">${c.expiryDate}</td>
+          <td class="p-3 text-right space-x-1.5 whitespace-nowrap">
+            <button onclick="copyText('${c.licenseKey}'); alert('Đã sao chép Key của ${c.customerName}!')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-teal-300 rounded border border-slate-700" title="Sao chép Key">
+              <i class="fa-regular fa-copy"></i>
+            </button>
+            <button onclick="deleteCust('${c.id}')" class="px-2 py-1 bg-slate-800 hover:bg-red-950 text-red-400 rounded border border-slate-700" title="Xóa">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function exportCSV() {
+      const customers = getStoredCustomers();
+      if (customers.length === 0) {
+        alert('Chưa có dữ liệu khách hàng để xuất!');
+        return;
+      }
+
+      const csvHeader = 'ID,Ten Khach Hang,So Dien Thoai,Ma May (Machine ID),Goi Ban Quyen,Han Su Dung,Ngay Cap,Gia Tien,Ghi Chu,License Key\n';
+      const csvRows = customers.map(c => {
+        const sanitize = (s = '') => `"${String(s).replace(/"/g, '""')}"`;
+        return [
+          sanitize(c.id),
+          sanitize(c.customerName),
+          sanitize(c.phone),
+          sanitize(c.machineId),
+          sanitize(c.tier),
+          sanitize(c.expiryDate),
+          sanitize(c.issuedAt?.split('T')[0]),
+          sanitize(c.price || 0),
+          sanitize(c.notes),
+          sanitize(c.licenseKey)
+        ].join(',');
+      }).join('\n');
+
+      const blob = new Blob(['\uFEFF' + csvHeader + csvRows], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `danh_sach_khach_hang_${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+    }
+
+    updateCounts();
+    renderTable();
+  </script>
+</body>
+</html>

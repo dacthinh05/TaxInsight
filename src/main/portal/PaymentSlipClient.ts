@@ -1,0 +1,878 @@
+import { PORTAL_CONFIG } from '../../shared/constants';
+import { DateRange, PaymentSlipDetail, PaymentSlipRecord } from '../../shared/types';
+import { PortalSession } from './PortalSession';
+import { DseFormState, DseFormStateParser } from './DseFormStateParser';
+import { GdtResponseClassifier } from './GdtResponseClassifier';
+import { GntParser } from '../scanner/GntParser';
+import { GntMoneyParser } from '../scanner/GntMoneyParser';
+
+export type GntCheckpoint =
+  | 'GNT_01_DVC_SESSION_VALID'
+  | 'GNT_02_ETAX_ENTRY_TRIGGERED'
+  | 'GNT_03_SSO_HANDOFF_DETECTED'
+  | 'GNT_04_ETAX_ORIGIN_REACHED'
+  | 'GNT_05_ETAX_AUTHENTICATED'
+  | 'GNT_06_MODULE_330410_OPENED'
+  | 'GNT_07_GNT_QUERY_READY';
+
+export interface GntDiagnosticReport {
+  checkpoints: Record<GntCheckpoint, { status: 'PASS' | 'FAIL' | 'SKIPPED'; detail?: string }>;
+  ssoHandoffType?: 'HTTP_REDIRECT' | 'FORM_POST' | 'DIRECT_URL' | 'ALREADY_AT_ETAX' | 'UNKNOWN';
+  lastError?: string;
+}
+
+export class PaymentSlipClient {
+  private session: PortalSession;
+  private currentDseState: DseFormState = { sessionId: '' };
+  private isEtaxInitialized = false;
+
+  private inFlightDetailRequests = new Map<string, Promise<PaymentSlipDetail | null>>();
+  private detailCache = new Map<string, PaymentSlipDetail>();
+
+  private latestDiagnostic: GntDiagnosticReport = {
+    checkpoints: {
+      GNT_01_DVC_SESSION_VALID: { status: 'SKIPPED' },
+      GNT_02_ETAX_ENTRY_TRIGGERED: { status: 'SKIPPED' },
+      GNT_03_SSO_HANDOFF_DETECTED: { status: 'SKIPPED' },
+      GNT_04_ETAX_ORIGIN_REACHED: { status: 'SKIPPED' },
+      GNT_05_ETAX_AUTHENTICATED: { status: 'SKIPPED' },
+      GNT_06_MODULE_330410_OPENED: { status: 'SKIPPED' },
+      GNT_07_GNT_QUERY_READY: { status: 'SKIPPED' }
+    }
+  };
+
+  constructor(session: PortalSession) {
+    this.session = session;
+  }
+
+  public getDiagnosticReport(): GntDiagnosticReport {
+    return JSON.parse(JSON.stringify(this.latestDiagnostic));
+  }
+
+  /**
+   * Reset toàn bộ trạng thái phiên eTax (gọi khi đăng xuất / đổi tài khoản):
+   * nếu không reset, phiên DSE cũ sẽ được tái sử dụng với cookie jar mới
+   * gây SESSION_EXPIRED, và cache chi tiết GNT rò rỉ dữ liệu giữa các tài khoản.
+   */
+  public reset() {
+    this.currentDseState = { sessionId: '' };
+    this.isEtaxInitialized = false;
+    this.inFlightDetailRequests.clear();
+    this.detailCache.clear();
+    this.latestDiagnostic = {
+      checkpoints: {
+        GNT_01_DVC_SESSION_VALID: { status: 'SKIPPED' },
+        GNT_02_ETAX_ENTRY_TRIGGERED: { status: 'SKIPPED' },
+        GNT_03_SSO_HANDOFF_DETECTED: { status: 'SKIPPED' },
+        GNT_04_ETAX_ORIGIN_REACHED: { status: 'SKIPPED' },
+        GNT_05_ETAX_AUTHENTICATED: { status: 'SKIPPED' },
+        GNT_06_MODULE_330410_OPENED: { status: 'SKIPPED' },
+        GNT_07_GNT_QUERY_READY: { status: 'SKIPPED' }
+      }
+    };
+  }
+
+  public setManualSessionState(sessionId: string, pageId?: number, processorId?: string) {
+    this.currentDseState = {
+      sessionId,
+      pageId: pageId ? String(pageId) : '5',
+      processorId: processorId || 'EWIGIUJSBZEDBFCOGFDXGTASFMGGCEEQCRAGGADP',
+      operationName: 'corpQueryTaxProc',
+      processorState: 'viewQueryPage',
+      errorPage: '/etax/query_tax_information.jsp'
+    };
+    this.isEtaxInitialized = Boolean(sessionId);
+  }
+
+  private logCheckpoint(cp: GntCheckpoint, status: 'PASS' | 'FAIL', detail?: string) {
+    this.latestDiagnostic.checkpoints[cp] = { status, detail };
+    console.log(`[PaymentSlipClient Checkpoint] ${cp}: ${status}${detail ? ` - ${detail}` : ''}`);
+  }
+
+  /**
+   * Khởi tạo bắt tay SSO từ Cổng Dịch vụ công sang Thuế Điện Tử (eTax - etaxnnt)
+   */
+  public async ensureEtaxSession(forceRefresh = false): Promise<void> {
+    if (this.isEtaxInitialized && !forceRefresh && this.currentDseState.sessionId) {
+      this.logCheckpoint('GNT_07_GNT_QUERY_READY', 'PASS', 'Sử dụng phiên eTax đã khởi tạo');
+      return;
+    }
+
+    try {
+      // ── CHECKPOINT 01: DVC Session Validation ────────────────────────
+      const cookies = await this.session.getCookieJar().getCookies(PORTAL_CONFIG.BASE_URL);
+      const hasDvcCookie = cookies.some(c => c.key.toLowerCase().includes('session') || c.key.toLowerCase().includes('token'));
+      if (!hasDvcCookie && !this.session.getSessionInfo().isLoggedIn) {
+        this.logCheckpoint('GNT_01_DVC_SESSION_VALID', 'FAIL', 'Chưa có session DVC hợp lệ');
+        throw new Error('Chưa đăng nhập hoặc phiên làm việc trên Cổng DVC đã hết hạn.');
+      }
+      this.logCheckpoint('GNT_01_DVC_SESSION_VALID', 'PASS', `Tìm thấy ${cookies.length} cookies DVC`);
+
+      // ── CHECKPOINT 02: Kích hoạt SSO Entry ───────────────────────────
+      let dvcEntryHtml = '';
+      try {
+        const entryRes = await this.session.client.get('https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac', {
+          headers: {
+            'Referer': 'https://dichvucong.gdt.gov.vn/tthc/home',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+          }
+        });
+        dvcEntryHtml = String(entryRes.data || '');
+      } catch {}
+
+      // Cổng mới nhúng CSRF token vào HTML (_csrf hidden input / meta csrf-token),
+      // KHÔNG còn cấp qua cookie XSRF-TOKEN -> phải trích từ HTML
+      const csrfFromHtml =
+        dvcEntryHtml.match(/name=["']_csrf["']\s+value=["']([^"']+)["']/i)?.[1] ||
+        dvcEntryHtml.match(/value=["']([^"']+)["']\s+name=["']_csrf["']/i)?.[1] ||
+        dvcEntryHtml.match(/name=["']csrf-token["']\s+content=["']([^"']+)["']/i)?.[1] ||
+        dvcEntryHtml.match(/content=["']([^"']+)["']\s+name=["']csrf-token["']/i)?.[1] ||
+        '';
+      const xsrfCookie = cookies.find(c => c.key === 'XSRF-TOKEN' || c.key.toLowerCase() === 'xsrf-token')?.value || '';
+      const csrfToken = csrfFromHtml || decodeURIComponent(xsrfCookie);
+
+      // Fallback: nếu trang dịch-vụ-khác có link trực tiếp sang thuedientu thì dùng luôn
+      const directEtaxLink = dvcEntryHtml.match(/https?:\/\/[^"'\s<>]*thuedientu\.gdt\.gov\.vn[^"'\s<>]*/i)?.[0];
+
+      const ssoHeaders: Record<string, string> = {
+        'Origin': 'https://dichvucong.gdt.gov.vn',
+        'Referer': 'https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      };
+      if (csrfToken) {
+        ssoHeaders['X-XSRF-TOKEN'] = csrfToken;
+      }
+
+      this.logCheckpoint('GNT_02_ETAX_ENTRY_TRIGGERED', 'PASS', csrfToken ? `Gửi request SSO module=330410 (CSRF: ${csrfToken.slice(0, 8)}***)` : 'Gửi request SSO module=330410 (KHÔNG có CSRF token!)');
+
+      // ── CHECKPOINT 03: Phát hiện SSO Handoff Mechanism ───────────────
+      let ssoResponseHtml = '';
+      let redirectUrl = '';
+      let handoffType: 'HTTP_REDIRECT' | 'FORM_POST' | 'DIRECT_URL' | 'ALREADY_AT_ETAX' | 'UNKNOWN' = 'UNKNOWN';
+
+      try {
+        const ssoBody = new URLSearchParams();
+        if (csrfToken) ssoBody.append('_csrf', csrfToken);
+
+        const ssoRes = await this.session.client.post(
+          `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=330410`,
+          ssoBody.toString(),
+          {
+            headers: {
+              ...ssoHeaders,
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+            },
+            timeout: 15000,
+            maxRedirects: 5
+          }
+        );
+
+        const resData = ssoRes.data;
+        const resDataStr = typeof resData === 'string' ? resData : JSON.stringify(resData || '');
+        const finalUrl = (ssoRes.request as any)?.res?.responseUrl || '';
+
+        if (finalUrl && finalUrl.includes('thuedientu.gdt.gov.vn')) {
+          handoffType = 'ALREADY_AT_ETAX';
+          ssoResponseHtml = resDataStr;
+          redirectUrl = finalUrl;
+        } else {
+          const match = resDataStr.match(/https?:\/\/[^\s"'<>]+thuedientu\.gdt\.gov\.vn[^\s"'<>]+/i);
+          if (match) {
+            handoffType = 'DIRECT_URL';
+            redirectUrl = match[0].replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+          } else if (typeof resData === 'string' && resData.startsWith('http')) {
+            handoffType = 'DIRECT_URL';
+            redirectUrl = resData.trim();
+          }
+        }
+      } catch (postErr: any) {
+        const status = postErr.response?.status;
+        const errBody = String(postErr.response?.data || '').replace(/\s+/g, ' ').slice(0, 150);
+        console.warn(`[PaymentSlipClient] Post SSO err: ${postErr.message}${status ? ` (HTTP ${status})` : ''}${errBody ? ` body="${errBody}"` : ''}`);
+        // Fallback GET: một số cấu hình WAF chỉ chặn POST không có Referer đầy đủ
+        if (!redirectUrl) {
+          try {
+            const getSso = await this.session.client.get(`${PORTAL_CONFIG.SSO_REDIRECT_API}?module=330410`, {
+              headers: ssoHeaders,
+              timeout: 15000,
+              maxRedirects: 5
+            });
+            const getStr = typeof getSso.data === 'string' ? getSso.data : JSON.stringify(getSso.data || '');
+            const finalUrlGet = (getSso.request as any)?.res?.responseUrl || '';
+            if (finalUrlGet.includes('thuedientu.gdt.gov.vn')) {
+              handoffType = 'ALREADY_AT_ETAX';
+              redirectUrl = finalUrlGet;
+            } else {
+              const m2 = getStr.match(/https?:\/\/[^\s"'<>]+thuedientu\.gdt\.gov\.vn[^\s"'<>]+/i);
+              if (m2) {
+                handoffType = 'DIRECT_URL';
+                redirectUrl = m2[0].replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+              }
+            }
+          } catch (getErr: any) {
+            console.warn(`[PaymentSlipClient] Get SSO fallback err: ${getErr.message}`);
+          }
+        }
+      }
+
+      // Fallback cuối: link thuedientu xuất hiện trực tiếp trong trang dich-vu-khac
+      if (!redirectUrl && directEtaxLink) {
+        handoffType = 'DIRECT_URL';
+        redirectUrl = directEtaxLink.replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+        console.warn('[PaymentSlipClient] Dùng link eTax trực tiếp từ trang dich-vu-khac (fallback)');
+      }
+
+      this.latestDiagnostic.ssoHandoffType = handoffType;
+      if (handoffType !== 'UNKNOWN') {
+        this.logCheckpoint('GNT_03_SSO_HANDOFF_DETECTED', 'PASS', `Cơ chế handoff: ${handoffType}`);
+      }
+
+      let initHtml = ssoResponseHtml;
+
+      if (handoffType === 'DIRECT_URL' && redirectUrl) {
+        const etaxInitRes = await this.session.client.get(redirectUrl, {
+          headers: {
+            'Referer': 'https://dichvucong.gdt.gov.vn/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+          },
+          timeout: 20000,
+          maxRedirects: 5
+        });
+        initHtml = String(etaxInitRes.data || '');
+      }
+
+      let dseState = DseFormStateParser.extractDseFormState(initHtml);
+      if (dseState.sessionId) {
+        this.currentDseState = dseState;
+        this.logCheckpoint('GNT_04_ETAX_ORIGIN_REACHED', 'PASS', `Đã vào origin eTax (op=${dseState.operationName ?? '?'})`);
+
+        // Đi theo chuỗi điều hướng như trình duyệt thật:
+        // EstablishSession -> corpJumpProc -> corpUserLoginProc (auto-submit form) -> corpIndexProc
+        if (this.currentDseState.operationName !== 'corpQueryTaxProc') {
+          await this.followRedirectChain(initHtml, redirectUrl || `${PORTAL_CONFIG.ETAX_BASE_URL}/etaxnnt/EstablishSession`);
+        }
+
+        this.isEtaxInitialized = true;
+        this.logCheckpoint('GNT_05_ETAX_AUTHENTICATED', 'PASS', `SessionId: ${this.currentDseState.sessionId.slice(0, 6)}***`);
+
+        // Từ trang chính, mở phân hệ tra cứu (corpQueryTaxProc)
+        if (this.currentDseState.operationName !== 'corpQueryTaxProc') {
+          await this.openQueryModule();
+        }
+      } else {
+        const etaxCookies = await this.session.getCookieJar().getCookies(PORTAL_CONFIG.ETAX_BASE_URL);
+        const jsession = etaxCookies.find(c => c.key.toLowerCase().includes('jsession'))?.value;
+        if (jsession) {
+          this.setManualSessionState(jsession, 5, 'EWIGIUJSBZEDBFCOGFDXGTASFMGGCEEQCRAGGADP');
+          this.logCheckpoint('GNT_05_ETAX_AUTHENTICATED', 'PASS', 'JSESSIONID tìm thấy trong cookie eTax');
+        }
+      }
+    } catch (err: any) {
+      this.latestDiagnostic.lastError = err.message;
+      console.warn('[PaymentSlipClient] ensureEtaxSession notice:', err.message);
+    }
+  }
+
+  /**
+   * Đi theo chuỗi điều hướng của eTax như trình duyệt thật:
+   * - JS redirect (window.location.href) / meta refresh
+   * - Plugin Gate (retailIndexProc): giả lập kết quả kiểm tra plugin THÀNH CÔNG
+   *   bằng cách nộp goProcForm với corporateHomeProc/startTTHC như fncInstalled()
+   * - Form auto-submit trung gian (vd: corpUserLoginProc)
+   */
+  private async followRedirectChain(html: string, referer: string): Promise<void> {
+    let currentHtml = html;
+    let currentUrl = referer;
+
+    for (let hop = 0; hop < 6; hop++) {
+      // Trạng thái hiện tại của trang -> merge có bảo vệ
+      this.mergeDseState(DseFormStateParser.extractDseFormState(currentHtml));
+
+      const op = this.currentDseState.operationName;
+      // Đã tới trang đích đáng tin -> dừng, KHÔNG auto-submit thêm gì nữa
+      if (op === 'corpQueryTaxProc' || op === 'corpIndexProc' || op === 'corporateHomeProc') break;
+
+      const clean = (u: string) => u.replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+      let nextUrl = '';
+      let nextMethod: 'GET' | 'POST' = 'GET';
+      let postBody = '';
+
+      const isPluginGate =
+        currentHtml.includes('hwcrypto.js') ||
+        currentHtml.includes('checkInstall(8768)') ||
+        currentHtml.includes('plugin_websocket.js') ||
+        currentHtml.includes('Hệ thống đang thực hiện kiểm tra bản cập nhật');
+
+      if (isPluginGate) {
+        // Giả lập đường fncInstalled() thành công: goProc('corporateHomeProc','startTTHC')
+        const form = this.extractMainForm(currentHtml);
+        const fields: Record<string, string> = { ...(form?.fields ?? {}) };
+        if (!fields['dse_sessionId']) fields['dse_sessionId'] = this.currentDseState.sessionId;
+        fields['dse_applicationId'] = '-1';
+        fields['dse_operationName'] = 'corporateHomeProc';
+        fields['dse_nextEventName'] = 'startTTHC';
+        fields['dse_errorPage'] = fields['dse_errorPage'] || 'error_page.jsp';
+        fields['dse_processorState'] = fields['dse_processorState'] || 'initial';
+        if (!fields['dse_pageId']) fields['dse_pageId'] = this.currentDseState.pageId || '3';
+
+        nextUrl = /^https?:\/\//i.test(form?.action || '')
+          ? clean(form!.action)
+          : `${PORTAL_CONFIG.ETAX_BASE_URL}${(form?.action || '/etaxnnt/Request').startsWith('/') ? '' : '/'}${form?.action || '/etaxnnt/Request'}`;
+        nextMethod = 'POST';
+        postBody = new URLSearchParams(fields).toString();
+        console.log(`[PaymentSlipClient] Plugin Gate detected -> giả lập goProc('corporateHomeProc','startTTHC')`);
+      } else {
+        const jsRedir =
+          currentHtml.match(/window\.location\.href\s*=\s*["']([^"']+)["']/i) ||
+          currentHtml.match(/location\.replace\(\s*["']([^"']+)["']\s*\)/i) ||
+          currentHtml.match(/window\.location\s*=\s*["']([^"']+)["']/i);
+        const metaRedir = currentHtml.match(/http-equiv=["']refresh["'][^>]*url=([^"'>]+)/i);
+
+        const nextPath = ((jsRedir?.[1] || metaRedir?.[1]) || '').trim();
+        if (nextPath && !nextPath.toLowerCase().startsWith('javascript')) {
+          nextUrl = /^https?:\/\//i.test(nextPath)
+            ? clean(nextPath)
+            : clean(`${PORTAL_CONFIG.ETAX_BASE_URL}${nextPath.startsWith('/') ? '' : '/'}${nextPath}`);
+        } else {
+          // Form auto-submit thuần DSE (chỉ hidden input, không có dữ liệu người dùng)
+          const form = this.extractMainForm(currentHtml);
+          if (form && form.autoSubmit && Object.keys(form.fields).length > 0 && form.fields['dse_sessionId']) {
+            const actionAbs = /^https?:\/\//i.test(form.action)
+              ? clean(form.action)
+              : `${PORTAL_CONFIG.ETAX_BASE_URL}${form.action.startsWith('/') ? '' : '/'}${form.action}`;
+            nextUrl = actionAbs;
+            nextMethod = 'POST';
+            postBody = new URLSearchParams(form.fields).toString();
+            console.log(`[PaymentSlipClient] Auto-submit form "${form.name || 'mainForm'}" (${Object.keys(form.fields).length} fields)`);
+          }
+        }
+      }
+
+      if (!nextUrl) break;
+
+      try {
+        const res = nextMethod === 'POST'
+          ? await this.session.client.post(nextUrl, postBody, {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
+                'Referer': currentUrl,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+              },
+              timeout: 20000
+            })
+          : await this.session.client.get(nextUrl, {
+              headers: {
+                'Referer': currentUrl,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+              },
+              timeout: 20000,
+              maxRedirects: 5
+            });
+        currentHtml = String(res.data || '');
+        currentUrl = (res.request as any)?.res?.responseUrl || nextUrl;
+
+        console.log(`[PaymentSlipClient] Nav hop ${hop + 1}: op=${this.currentDseState.operationName ?? '?'}, pageId=${this.currentDseState.pageId ?? '?'}, procId=${(this.currentDseState.processorId || '').slice(0, 8)}***${currentHtml.includes('NullPointerException') ? ' [NPE]' : ''}`);
+        this.debugDumpPage(hop + 1, currentHtml);
+      } catch (err: any) {
+        const status = err.response?.status;
+        console.warn(`[PaymentSlipClient] Nav hop ${hop + 1} err: ${err.message}${status ? ` (HTTP ${status})` : ''}`);
+        break;
+      }
+    }
+  }
+
+  private extractMainForm(html: string): { name: string; action: string; fields: Record<string, string>; autoSubmit: boolean } | null {
+    const formTag = html.match(/<form\b[^>]*>/i);
+    if (!formTag) return null;
+    const startIdx = formTag.index ?? 0;
+    const endIdx = html.toLowerCase().indexOf('</form', startIdx);
+    const formBody = endIdx === -1 ? html.slice(startIdx) : html.slice(startIdx, endIdx);
+
+    const action = formTag[0].match(/action=["']([^"']*)["']/i)?.[1] || '/etaxnnt/Request';
+    const name = formTag[0].match(/name=["']([^"']*)["']/i)?.[1]
+      || formTag[0].match(/id=["']([^"']*)["']/i)?.[1]
+      || '';
+
+    const fields: Record<string, string> = {};
+    const inputRe = /<input\b[^>]*>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = inputRe.exec(formBody))) {
+      const tag = m[0];
+      const fieldName = tag.match(/\bname=["']([^"']+)["']/i)?.[1];
+      if (!fieldName) continue;
+      const type = tag.match(/\btype=["']([^"']+)["']/i)?.[1]?.toLowerCase();
+      if (type === 'checkbox' || type === 'radio') {
+        if (!/\bchecked\b/i.test(tag)) continue;
+      }
+      if (type === 'button' || type === 'submit') continue;
+      fields[fieldName] = tag.match(/\bvalue=["']([^"']*)["']/i)?.[1]?.replace(/&amp;/g, '&') ?? '';
+    }
+
+    const autoSubmit = /\.submit\(\s*\)/i.test(html) || /forms\[0\]\.submit/i.test(html);
+    return { name, action, fields, autoSubmit };
+  }
+
+  private debugDumpPage(hop: number, html: string): void {
+    try {
+      if (!process.env.GNT_DEBUG_DUMP) return;
+      const fs = require('fs') as typeof import('fs');
+      const osMod = require('os') as typeof import('os');
+      const pathMod = require('path') as typeof import('path');
+      const p = pathMod.join(osMod.tmpdir(), `gnt_nav_hop_${hop}_${Date.now()}.html`);
+      fs.writeFileSync(p, html);
+      console.log(`[PaymentSlipClient] Đã dump trang hop ${hop}: ${p}`);
+    } catch {}
+  }
+
+  private mergeDseState(st: ReturnType<typeof DseFormStateParser.extractDseFormState>): void {
+    if (!st.sessionId) return;
+    // Bảo vệ trạng thái đích: đã đứng ở corpQueryTaxProc thì không cho trang rác kéo ngược lại
+    if (this.currentDseState.operationName === 'corpQueryTaxProc' && st.operationName !== 'corpQueryTaxProc') {
+      this.currentDseState = {
+        ...this.currentDseState,
+        sessionId: st.sessionId || this.currentDseState.sessionId
+      };
+      return;
+    }
+    const entries = Object.entries(st).filter(([, v]) => v !== undefined && v !== '');
+    this.currentDseState = { ...this.currentDseState, ...Object.fromEntries(entries) } as typeof this.currentDseState;
+  }
+
+  /**
+   * Từ trang chính corpIndexProc, mở phân hệ tra cứu GNT (corpQueryTaxProc).
+   * Thử lần lượt các biến thể điều hướng đã biết cho tới khi server xác nhận op=corpQueryTaxProc.
+   */
+  private async openQueryModule(): Promise<void> {
+    const sid = encodeURIComponent(this.currentDseState.sessionId || '');
+    const variants: Array<{ label: string; url: string; post?: string }> = [
+      {
+        label: 'GET jump corpJumpProc->corpQueryTaxProc',
+        url: `${PORTAL_CONFIG.ETAX_REQUEST_API}?dse_operationName=corpJumpProc&dse_nextEventName=start&toOpName=corpQueryTaxProc&dse_sessionId=${sid}&dse_applicationId=-1`
+      },
+      {
+        label: 'GET direct corpQueryTaxProc initial',
+        url: `${PORTAL_CONFIG.ETAX_REQUEST_API}?dse_operationName=corpQueryTaxProc&dse_processorState=initial&dse_nextEventName=start&dse_errorPage=/etax/query_tax_information.jsp&dse_sessionId=${sid}&dse_applicationId=-1&dse_pageId=1`
+      },
+      {
+        label: 'POST jump corpJumpProc->corpQueryTaxProc',
+        url: PORTAL_CONFIG.ETAX_REQUEST_API,
+        post: `dse_sessionId=${sid}&dse_applicationId=-1&dse_operationName=corpJumpProc&dse_nextEventName=start&toOpName=corpQueryTaxProc`
+      }
+    ];
+
+    for (const v of variants) {
+      try {
+        const res = v.post
+          ? await this.session.client.post(v.url, v.post, {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
+                'Referer': PORTAL_CONFIG.ETAX_REQUEST_API,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+              },
+              timeout: 20000
+            })
+          : await this.session.client.get(v.url, {
+              headers: {
+                'Referer': `${PORTAL_CONFIG.ETAX_BASE_URL}/etaxnnt/Request`,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+              },
+              timeout: 20000
+            });
+
+        const html = String(res.data || '');
+        this.debugDumpPage(90 + variants.indexOf(v), html);
+
+        // Merge trạng thái TRƯỚC, nếu đã tới đích thì DỪNG - tuyệt đối không điều hướng tiếp
+        const st = DseFormStateParser.extractDseFormState(html);
+        this.mergeDseState(st);
+
+        if (this.currentDseState.operationName === 'corpQueryTaxProc' && this.currentDseState.processorId) {
+          this.logCheckpoint('GNT_06_MODULE_330410_OPENED', 'PASS',
+            `Đã mở phân hệ tra cứu (${v.label}; pageId=${this.currentDseState.pageId ?? '?'}, procId=${this.currentDseState.processorId.slice(0, 8)}***)`);
+          return;
+        }
+
+        // Response có thể lại là redirect chain -> đi tiếp từng bước
+        await this.followRedirectChain(html, v.url);
+
+        if (this.currentDseState.operationName === 'corpQueryTaxProc' && this.currentDseState.processorId) {
+          this.logCheckpoint('GNT_06_MODULE_330410_OPENED', 'PASS',
+            `Đã mở phân hệ tra cứu (${v.label}; pageId=${this.currentDseState.pageId ?? '?'}, procId=${this.currentDseState.processorId.slice(0, 8)}***)`);
+          return;
+        }
+
+        console.warn(`[PaymentSlipClient] openQueryModule variant KHÔNG đạt (${v.label}): op=${this.currentDseState.operationName ?? '?'}${html.includes('NullPointerException') ? ' [NPE]' : ''}`);
+      } catch (err: any) {
+        const status = err.response?.status;
+        const body = String(err.response?.data || '').replace(/\s+/g, ' ').slice(0, 120);
+        console.warn(`[PaymentSlipClient] openQueryModule variant lỗi (${v.label}): ${err.message}${status ? ` (HTTP ${status})` : ''}${body ? ` body="${body}"` : ''}`);
+      }
+    }
+
+    this.logCheckpoint('GNT_06_MODULE_330410_OPENED', 'FAIL', 'Không mở được phân hệ tra cứu corpQueryTaxProc bằng mọi biến thể điều hướng');
+  }
+
+  private async ensureQueryPageLoaded(): Promise<void> {
+    const params = new URLSearchParams();
+    params.append('dse_sessionId', this.currentDseState.sessionId || '');
+    params.append('dse_applicationId', '-1');
+    params.append('dse_operationName', 'corpQueryTaxProc');
+    params.append('dse_pageId', this.currentDseState.pageId || '5');
+    params.append('dse_processorState', 'initial');
+    params.append('dse_processorId', this.currentDseState.processorId || '');
+    params.append('dse_errorPage', '/etax/query_tax_information.jsp');
+    params.append('dse_nextEventName', 'start');
+
+    try {
+      const res = await this.session.client.post(PORTAL_CONFIG.ETAX_REQUEST_API, params.toString(), {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
+          'Referer': PORTAL_CONFIG.ETAX_REQUEST_API,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+        },
+        timeout: 20000
+      });
+      const html = String(res.data || '');
+      const st = DseFormStateParser.extractDseFormState(html);
+      if (st.sessionId) {
+        this.currentDseState = { ...this.currentDseState, ...st };
+      }
+      this.logCheckpoint('GNT_06_MODULE_330410_OPENED', 'PASS',
+        `Trang truy vấn sẵn sàng (pageId=${this.currentDseState.pageId ?? '?'}, processorId=${(this.currentDseState.processorId || '').slice(0, 8)}***)`);
+    } catch (err: any) {
+      const status = err.response?.status;
+      const body = String(err.response?.data || '').replace(/\s+/g, ' ').slice(0, 150);
+      console.warn(`[PaymentSlipClient] Load query page err: ${err.message}${status ? ` (HTTP ${status})` : ''}${body ? ` body="${body}"` : ''}`);
+      // Không ném lỗi — vẫn thử gửi query với trạng thái hiện có
+    }
+  }
+
+  /**
+   * Tra cứu danh sách Giấy nộp tiền từ phân hệ eTax.
+   *
+   * Tự phục hồi khi phiên eTax chết phía server (hiện tượng "tra cứu vẫn thành
+   * công nhưng 0 giấy"): server trả lại form truy vấn rỗng / trang lỗi thay vì
+   * bảng kết quả. Ta phân loại response; nếu KHÔNG chứa bảng kết quả thì ép
+   * làm mới toàn bộ phiên SSO -> eTax và gửi lại truy vấn đúng MỘT lần trước
+   * khi báo lỗi thật về UI.
+   */
+  public async queryPaymentSlips(query: {
+    startDate?: string;
+    endDate?: string;
+    range?: DateRange;
+    page?: number;
+  }): Promise<{ success: boolean; data: PaymentSlipRecord[]; error?: string; errorCode?: string }> {
+    const startDate = query.startDate || query.range?.fromDate || `01/01/${new Date().getFullYear()}`;
+    const endDate = query.endDate || query.range?.toDate || new Date().toLocaleDateString('en-GB');
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        if (attempt === 2) {
+          // Ép thiết lập lại toàn bộ phiên eTax — phiên cũ đã bị server từ chối,
+          // giữ lại sessionId/processorId cũ chỉ khiến lặp lại cùng trang lỗi.
+          this.currentDseState = { sessionId: '' };
+        }
+        await this.ensureEtaxSession(attempt === 2);
+
+        if (this.currentDseState.sessionId && this.currentDseState.operationName !== 'corpQueryTaxProc') {
+          await this.ensureQueryPageLoaded();
+        }
+
+        const st = this.currentDseState;
+        console.log(`[PaymentSlipClient] Query state (lan ${attempt}): sessionId=${st.sessionId.slice(0, 6)}***, pageId=${st.pageId ?? '?'}, processorId=${(st.processorId || '').slice(0, 8)}***, op=${st.operationName ?? '?'}, procState=${st.processorState ?? '?'}`);
+
+        const params = new URLSearchParams();
+        params.append('dse_sessionId', st.sessionId || '');
+        params.append('dse_applicationId', '-1');
+        params.append('dse_operationName', 'corpQueryTaxProc');
+        params.append('dse_pageId', st.pageId || '5');
+        params.append('dse_processorState', st.processorState || 'viewQueryPage');
+        params.append('dse_processorId', st.processorId || 'EWIGIUJSBZEDBFCOGFDXGTASFMGGCEEQCRAGGADP');
+        params.append('dse_errorPage', '/etax/query_tax_information.jsp');
+        params.append('dse_nextEventName', 'query');
+        params.append('pn', String(query.page || 1));
+        params.append('sct', '');
+        params.append('ctuId', '');
+        params.append('soGnt', '');
+        params.append('idBke', '');
+        params.append('type_tax', '01');
+        params.append('ma_giao_dich', '');
+        params.append('so_ctu_nh', '');
+        params.append('so_gnt', '');
+        params.append('ngay_lap_tu_ngay', startDate);
+        params.append('ngay_lap_den_ngay', endDate);
+        params.append('ngay_gui_tu_ngay', '');
+        params.append('ngay_gui_den_ngay', '');
+        params.append('ngay_nop_tu_ngay', '');
+        params.append('ngay_nop_den_ngay', '');
+        params.append('ma_nhang', '');
+        params.append('so_tk', '');
+        params.append('nguyen_te', '');
+        params.append('hthuc_nop', '');
+        params.append('tong_tien_nt_tu', '');
+        params.append('tong_tien_nt_den', '');
+        params.append('trang_thai', '');
+
+        const res = await this.session.client.post(PORTAL_CONFIG.ETAX_REQUEST_API, params.toString(), {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
+            'Referer': PORTAL_CONFIG.ETAX_REQUEST_API,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+          },
+          timeout: 25000
+        });
+
+        const html = String(res.data || '');
+        const kind = GdtResponseClassifier.classify(html);
+        this.debugDumpPage(99, html);
+
+        if (kind === 'LOGIN_PAGE') {
+          if (attempt === 1) {
+            console.warn('[PaymentSlipClient] eTax tra ve trang dang nhap -> lam moi phien SSO roi thu lai');
+            continue;
+          }
+          return {
+            success: false,
+            data: [],
+            error: 'Phiên làm việc trên Cổng Thuế đã hết hạn.',
+            errorCode: 'SESSION_EXPIRED'
+          };
+        }
+
+        if (kind === 'PLUGIN_GATE') {
+          if (attempt === 1) {
+            console.warn('[PaymentSlipClient] eTax tra ve Plugin Gate -> lam moi phien SSO roi thu lai');
+            continue;
+          }
+          return {
+            success: false,
+            data: [],
+            error: 'eTax yêu cầu xác thực phiên đăng nhập (Plugin Gate). Vui lòng dùng nút "Mở eTax để xác thực".',
+            errorCode: 'AUTH_REQUIRED'
+          };
+        }
+
+        const nextDse = DseFormStateParser.extractDseFormState(html);
+        if (nextDse.sessionId) {
+          this.currentDseState = nextDse;
+        }
+
+        const gntList = GntParser.parseList(html);
+
+        // ── PHÁT HIỆN TRANG LỖI GIẢ MẠO "THÀNH CÔNG" ─────────────────────
+        // Server xử lý query nhưng phiên đã chết: trả lại form truy vấn rỗng
+        // (GNT_QUERY_PAGE), trang lỗi hệ thống hoặc trang lạ — không có bảng
+        // kết quả. Trước đây bị ngầm hiểu là "0 giấy nộp tiền".
+        const hasResultTable = kind === 'GNT_LIST' || kind === 'GNT_DETAIL' || gntList.length > 0;
+        if (!hasResultTable) {
+          const isNpe = html.includes('NullPointerException');
+          if (attempt === 1) {
+            console.warn(`[PaymentSlipClient] Phan hoi khong co bang ket qua (kind=${kind}${isNpe ? ', NPE' : ''}) -> lam moi phien eTax va thu lai`);
+            continue;
+          }
+          this.logCheckpoint('GNT_07_GNT_QUERY_READY', 'FAIL', `Phản hồi không có bảng kết quả (kind=${kind}${isNpe ? ', NullPointerException' : ''})`);
+          return {
+            success: false,
+            data: [],
+            error: isNpe
+              ? 'eTax đang trả trang lỗi hệ thống (NullPointerException). Vui lòng thử lại sau ít phút.'
+              : 'eTax không trả về bảng kết quả tra cứu (phiên phân hệ tra cứu có thể đã đứt). Vui lòng thử lại hoặc dùng "Mở eTax để xác thực".',
+            errorCode: isNpe ? 'ETAX_SYSTEM_ERROR' : 'ETAX_QUERY_BLOCKED'
+          };
+        }
+
+        this.logCheckpoint('GNT_07_GNT_QUERY_READY', 'PASS', `Truy vấn thành công, nhận ${gntList.length} giấy nộp tiền`);
+
+        const records: PaymentSlipRecord[] = gntList.map(item => ({
+          id: item.ctuId,
+          stt: item.raw?.cells[0] ? parseInt(item.raw.cells[0], 10) || 1 : 1,
+          maGiaoDich: item.transactionRef || '',
+          maGiaoDichChiTiet: item.detailTransactionRef,
+          lanNop: item.submissionNo ? String(item.submissionNo) : undefined,
+          soGnt: item.gntNo || item.ctuId,
+          soTien: Number(item.amount.value),
+          soTienFormatted: GntMoneyParser.formatVND(item.amount.value),
+          loaiTien: item.currency || 'VND',
+          trangThai: item.statusRaw || 'Nộp thuế thành công',
+          soChungTu: item.bankDocumentNo,
+          ngayLapGnt: item.createdAt,
+          ngayGuiGnt: item.sentAt,
+          ngayNopThue: item.paidAt,
+          hinhThucNop: item.source === 'OTHER_CHANNEL' ? 'Nộp tại các kênh khác' : 'Nộp tại cổng eTax của TCT',
+          tenNganHang: item.bankName,
+          soTaiKhoan: item.bankAccount,
+          downloadAvailable: item.canDownload
+        }));
+
+        return {
+          success: true,
+          data: records
+        };
+      } catch (err: any) {
+        const status = err.response?.status;
+        const body = String(err.response?.data || '').replace(/\s+/g, ' ').slice(0, 200);
+        console.warn(`[PaymentSlipClient] Query err (lan ${attempt}): ${err.message}${status ? ` (HTTP ${status})` : ''}${body ? ` body="${body}"` : ''}`);
+        if (attempt === 1) {
+          // Lỗi mạng/timeout nhất thời -> cho phép thử lại một lần với phiên mới
+          continue;
+        }
+        const msg = err.message || 'Lỗi kết nối khi gửi request tra cứu GNT sang eTax';
+        const errorCode = status === 403
+          ? 'AUTH_REQUIRED'
+          : (msg.includes('Chưa đăng nhập') || msg.includes('hết hạn'))
+            ? 'SESSION_EXPIRED'
+            : 'CONNECTIVITY_ERROR';
+        return {
+          success: false,
+          data: [],
+          error: msg,
+          errorCode
+        };
+      }
+    }
+
+    return {
+      success: false,
+      data: [],
+      error: 'Tra cứu Giấy Nộp Tiền thất bại sau 2 lần thử.',
+      errorCode: 'CONNECTIVITY_ERROR'
+    };
+  }
+
+  /**
+   * Lấy chi tiết Mẫu C1-02/NS của một GNT (có Single-Flight Deduplication & Caching)
+   */
+  public async getPaymentSlipDetail(ctuId: string): Promise<PaymentSlipDetail | null> {
+    if (!ctuId) return null;
+
+    if (this.detailCache.has(ctuId)) {
+      return this.detailCache.get(ctuId)!;
+    }
+
+    if (this.inFlightDetailRequests.has(ctuId)) {
+      return this.inFlightDetailRequests.get(ctuId)!;
+    }
+
+    const detailPromise = (async () => {
+      try {
+        await this.ensureEtaxSession();
+
+        const params = new URLSearchParams();
+        params.append('dse_sessionId', this.currentDseState.sessionId || '');
+        params.append('dse_applicationId', '-1');
+        params.append('dse_operationName', 'corpQueryTaxProc');
+        params.append('dse_pageId', this.currentDseState.pageId || '6');
+        params.append('dse_processorState', this.currentDseState.processorState || 'viewQueryPage');
+        params.append('dse_processorId', this.currentDseState.processorId || 'EWIGIUJSBZEDBFCOGFDXGTASFMGGCEEQCRAGGADP');
+        params.append('dse_errorPage', '/etax/query_tax_information.jsp');
+        params.append('dse_nextEventName', 'detail');
+        params.append('pn', '1');
+        params.append('sct', '');
+        params.append('ctuId', ctuId);
+        params.append('soGnt', '');
+        params.append('idBke', '');
+        params.append('type_tax', '01');
+        params.append('isReport', 'N');
+        params.append('type', 'pdf');
+
+        const res = await this.session.client.post(PORTAL_CONFIG.ETAX_REQUEST_API, params.toString(), {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
+            'Referer': PORTAL_CONFIG.ETAX_REQUEST_API,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+          },
+          timeout: 25000
+        });
+
+        const html = String(res.data || '');
+        const parsed = GntParser.parseDetail(html, ctuId);
+
+        const detail: PaymentSlipDetail = {
+          id: parsed.id,
+          soGnt: parsed.gntNo,
+          maHieu: parsed.symbolCode,
+          soChungTu: parsed.documentNo,
+          soThamChieu: parsed.transactionRef,
+          hinhThucNopTien: 'CHUYEN_KHOAN',
+          loaiTien: parsed.currency || 'VND',
+          nguoiNopThue: parsed.taxpayerName,
+          maSoThue: parsed.taxpayerId,
+          diaChi: parsed.address,
+          tinhTp: parsed.province,
+          nganHangTrichTk: parsed.debitBank,
+          soTaiKhoanTrich: parsed.debitAccount,
+          loaiTaiKhoanThu: 'TK_THU_NSNN',
+          taiKhoanKbnn: parsed.treasuryAccount,
+          tinhTpKbnn: parsed.treasuryProvince,
+          nganHangUynhiemThu: parsed.collectingBank,
+          coQuanQuanLyThu: parsed.collectionAgency,
+          items: parsed.allocations.map(al => ({
+            stt: al.sequence || 1,
+            soToKhaiQuyetDinh: al.referenceDocumentNo,
+            kyThueNgayQd: al.taxPeriodRaw,
+            noiDungKhoanNop: al.description || '',
+            soTienNguyenTe: al.originalAmount.raw || undefined,
+            soTienVND: GntMoneyParser.formatVND(al.vndAmount.value),
+            maChuong: al.chapterCode,
+            maNDKT: al.ndktCode
+          })),
+          tongTienVND: GntMoneyParser.formatVND(parsed.totalVndAmount.value),
+          tongTienBangChu: parsed.totalTextVnd,
+          signatures: parsed.signatures.map(s => ({
+            signer: s.signerName,
+            signedAt: s.signedAt || ''
+          })),
+          rawHtml: parsed.rawHtml
+        };
+
+        this.detailCache.set(ctuId, detail);
+        return detail;
+      } catch (err: any) {
+        const status = err.response?.status;
+        const body = String(err.response?.data || '').replace(/\s+/g, ' ').slice(0, 150);
+        console.warn(`[PaymentSlipClient] Lỗi khi lấy chi tiết GNT ${ctuId}: ${err.message}${status ? ` (HTTP ${status})` : ''}${body ? ` body="${body}"` : ''}`);
+        return null;
+      } finally {
+        this.inFlightDetailRequests.delete(ctuId);
+      }
+    })();
+
+    this.inFlightDetailRequests.set(ctuId, detailPromise);
+    return detailPromise;
+  }
+
+  /**
+   * Alias tương thích ngược cho searchPaymentSlips.
+   * Lưu ý: khi tra cứu THẤT BẠI sẽ throw kèm errorCode thay vì trả mảng rỗng —
+   * trước đây lỗi (hết phiên / plugin gate / trang lỗi) bị nuốt thành
+   * "thành công với 0 giấy nộp tiền" khiến người dùng không biết là hỏng.
+   */
+  public async searchPaymentSlips(
+    range: DateRange,
+    options: {
+      maGiaoDich?: string;
+      soGnt?: string;
+      trangThai?: string;
+      page?: number;
+    } = {}
+  ): Promise<PaymentSlipRecord[]> {
+    const res = await this.queryPaymentSlips({
+      range,
+      page: options.page
+    });
+    if (!res.success) {
+      const err: any = new Error(res.error || 'Tra cứu Giấy Nộp Tiền thất bại');
+      err.errorCode = res.errorCode;
+      throw err;
+    }
+    return res.data;
+  }
+}
+

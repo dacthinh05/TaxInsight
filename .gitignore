@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-electron/
+release/
+release-v*/
+data/
+
+# Local secrets & credentials
+.github_token
+.env
+.env.local
+*.log
+scripts/.license_ed25519_private.hex
+
+# Checkpoint test outputs
+test_out/

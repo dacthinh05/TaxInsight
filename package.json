@@ -1,0 +1,115 @@
+{
+  "name": "tax-insight",
+  "version": "2.4.2",
+  "description": "Tải và quản lý hồ sơ, tờ khai thuế điện tử",
+  "main": "dist-electron/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "vite",
+    "build": "tsc && vite build && tsc -p tsconfig.electron.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "icons": "node scripts/generate-icons.js && npx electron scripts/build-icon-assets.cjs",
+    "keygen": "node scripts/generate-key.js",
+    "dist": "npm run build && electron-builder --win",
+    "electron:dev": "vite",
+    "electron:build": "npm run dist"
+  },
+  "keywords": [
+    "tax",
+    "taxrecord",
+    "dichvucong",
+    "gdt",
+    "accounting",
+    "electron"
+  ],
+  "author": "TaxRecord",
+  "license": "MIT",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "axios": "^1.8.1",
+    "axios-cookiejar-support": "^5.0.5",
+    "cheerio": "^1.2.0",
+    "clsx": "^2.1.1",
+    "electron-updater": "^6.8.9",
+    "exceljs": "^4.4.0",
+    "jpeg-js": "^0.4.4",
+    "lucide-react": "^0.475.0",
+    "pngjs": "^7.0.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.0.2",
+    "tesseract.js": "^7.0.0",
+    "tough-cookie": "^5.1.2"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^22.13.4",
+    "@types/pngjs": "^6.0.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@types/tough-cookie": "^4.0.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.5.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5"
+  },
+  "build": {
+    "appId": "com.taxrecord.app",
+    "productName": "TaxInsight",
+    "publish": {
+      "provider": "github",
+      "owner": "dacthinh05",
+      "repo": "TaxInsight"
+    },
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "resources/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/tessdata",
+        "to": "resources/tessdata"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TaxInsight",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
+    }
+  }
+}
