@@ -87,6 +87,31 @@ export class DownloadManager extends EventEmitter {
     this.isCancelled = false;
     this.state = 'IDLE';
     this.hasEmittedAuthExpired = false;
+    this.stopWatchdog();
+  }
+
+  /**
+   * 🆙 WATCHDOG: tự chữa lành hàng đợi treo. Nếu state RUNNING nhưng không còn
+   * worker nào hoạt động trong khi vẫn còn item PENDING (mất thức tỉnh do race
+   * giữa pause/abort/resume) -> gọi lại processQueue. Đây là nguyên nhân UI
+   * đứng hình "Đang tải đồng thời 0 hồ sơ" vĩnh viễn.
+   */
+  private startWatchdog() {
+    this.stopWatchdog();
+    this.watchdogTimer = setInterval(() => {
+      if (this.state !== 'RUNNING' || this.isPaused || this.isCancelled) return;
+      if (this.activeDownloads === 0 && this.queue.some(q => q.status === 'PENDING')) {
+        console.warn('[DownloadManager] Watchdog: hàng đợi treo (0 worker, còn PENDING) -> tự khởi động lại processQueue');
+        this.processQueue();
+      }
+    }, 2000);
+  }
+
+  private stopWatchdog() {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
   }
 
   /**
@@ -176,6 +201,7 @@ export class DownloadManager extends EventEmitter {
     }
 
     if (!isSessionAlive) {
+      this.stopWatchdog();
       this.state = 'AUTH_REQUIRED';
       this.isPaused = true;
       this.activeDownloads = 0;
@@ -191,6 +217,7 @@ export class DownloadManager extends EventEmitter {
 
     this.emit('started', this.getSummary());
     this.emitProgress();
+    this.startWatchdog();
     this.processQueue();
   }
 
@@ -202,7 +229,13 @@ export class DownloadManager extends EventEmitter {
 
     // Kiểm tra lại phiên mới
     const isSessionAlive = await this.client.checkSession();
+    if (this.isCancelled || this.state === 'CANCELLED') {
+      this.stopWatchdog();
+      this.emitProgress();
+      return;
+    }
     if (!isSessionAlive) {
+      this.stopWatchdog();
       this.state = 'AUTH_REQUIRED';
       this.isPaused = true;
       this.emit('session_expired');
@@ -218,10 +251,12 @@ export class DownloadManager extends EventEmitter {
 
     this.emit('resumed', this.getSummary());
     this.emitProgress();
+    this.startWatchdog();
     this.processQueue();
   }
 
   public pause() {
+    this.stopWatchdog();
     this.isPaused = true;
     this.state = 'PAUSED';
     if (this.abortController) {
@@ -239,6 +274,7 @@ export class DownloadManager extends EventEmitter {
   }
 
   public cancel() {
+    this.stopWatchdog();
     this.isCancelled = true;
     this.isPaused = false;
     this.state = 'CANCELLED';
@@ -278,6 +314,7 @@ export class DownloadManager extends EventEmitter {
     if (this.activeDownloads === 0 && this.state === 'RUNNING') {
       const summary = this.getSummary();
       if (summary.remaining === 0) {
+        this.stopWatchdog();
         this.state = 'COMPLETED';
         this.emit('completed', summary);
       }
@@ -375,6 +412,7 @@ export class DownloadManager extends EventEmitter {
         this.isPaused = true;
         this.state = 'PAUSED_AUTH_REQUIRED';
         this.activeDownloads = 0;
+        this.stopWatchdog();
 
         // Chỉ bắn sự kiện expired 1 lần duy nhất cho toàn bộ batch
         if (!this.hasEmittedAuthExpired) {
