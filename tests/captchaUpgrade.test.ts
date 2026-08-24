@@ -59,19 +59,18 @@ describe('UPGRADE #1 — removeStrokeLines', () => {
   it('Nét sóng chéo thưa (density thấp) bị xóa', () => {
     const plane = makeWhitePlane();
     drawBar(plane, 15, 10, 9, 20);
-    // Đường chéo lượn từ trái sang phải, dày 1px, không chạm vạch chữ
+    // Đường chéo lượn liên tục từ trái sang phải, dày 1px, không chạm vạch chữ
     for (let x = 30; x < W; x++) {
       const y = 8 + Math.round(6 * Math.sin(x / 9));
-      if (x >= 45 && x <= 53) continue; // né vạch thứ 2 để không dính
       plane[W * y + x] = 0;
     }
 
     const cleaned = CaptchaSolver.removeStrokeLines(plane, W, H);
-    // Toàn bộ vùng sóng (trừ vạch chữ) phải trắng
+    // Toàn bộ vùng sóng phải trắng
     let waveDark = 0;
     for (let x = 30; x < W; x++) {
       for (let y = 0; y < H; y++) {
-        if ((x < 45 || x > 53) && cleaned[W * y + x] === 0) waveDark++;
+        if (cleaned[W * y + x] === 0) waveDark++;
       }
     }
     expect(waveDark).toBe(0);
