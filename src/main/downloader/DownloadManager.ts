@@ -9,7 +9,7 @@ export class DownloadManager extends EventEmitter {
   private fileOrganizer: FileOrganizer;
   private queue: DownloadQueueItem[] = [];
   private activeDownloads = 0;
-  private maxConcurrency = PORTAL_CONFIG.DOWNLOAD_CONCURRENCY; // 3
+  private maxConcurrency = PORTAL_CONFIG.DOWNLOAD_CONCURRENCY; // 2
   private abortController: AbortController | null = null;
   private isPaused = false;
   private isCancelled = false;
@@ -138,11 +138,31 @@ export class DownloadManager extends EventEmitter {
    * Nếu session invalid -> KHÔNG start queue, KHÔNG tạo worker, set state AUTH_REQUIRED
    */
   public async start(): Promise<void> {
-    if (this.activeDownloads > 0 || this.state === 'RUNNING') return;
+    if (this.activeDownloads > 0 || this.state === 'RUNNING') {
+      this.processQueue();
+      return;
+    }
 
     this.isPaused = false;
     this.isCancelled = false;
     this.hasEmittedAuthExpired = false;
+
+    // Đợt trước đã bị HỦY mà người dùng bấm tải lại: các item CANCELLED phải
+    // được hồi phục về PENDING. Nếu không, hàng đợi không còn item nào chạy được
+    // nhưng remaining > 0 → state kẹt RUNNING vĩnh viễn, không bao giờ emit
+    // 'completed' và UI treo ở màn hình tiến trình.
+    const hasRunnableItem = this.queue.some(q => q.status === 'PENDING' || q.status === 'DOWNLOADING');
+    if (!hasRunnableItem && this.queue.some(q => q.status === 'CANCELLED')) {
+      for (const q of this.queue) {
+        if (q.status === 'CANCELLED') {
+          q.status = 'PENDING';
+          q.retries = 0;
+          q.progressPercent = 0;
+          q.error = undefined;
+          q.filing.downloadStatus = 'PENDING';
+        }
+      }
+    }
 
     // PRE-FLIGHT HEALTH CHECK
     const isSessionAlive = await this.client.checkSession();
@@ -156,9 +176,12 @@ export class DownloadManager extends EventEmitter {
     }
 
     this.state = 'RUNNING';
-    this.abortController = new AbortController();
+    if (!this.abortController || this.abortController.signal.aborted) {
+      this.abortController = new AbortController();
+    }
 
     this.emit('started', this.getSummary());
+    this.emitProgress();
     this.processQueue();
   }
 
@@ -180,9 +203,12 @@ export class DownloadManager extends EventEmitter {
     this.isPaused = false;
     this.isCancelled = false;
     this.state = 'RUNNING';
-    this.abortController = new AbortController();
+    if (!this.abortController || this.abortController.signal.aborted) {
+      this.abortController = new AbortController();
+    }
 
     this.emit('resumed', this.getSummary());
+    this.emitProgress();
     this.processQueue();
   }
 

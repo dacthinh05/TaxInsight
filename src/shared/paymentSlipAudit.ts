@@ -30,6 +30,10 @@ export const normalizePaymentState = (trangThai?: string | null): SlipPaymentSta
   return 'UNKNOWN';
 };
 
+/** Chỉ GNT đã được eTax xác nhận nộp thành công mới được đưa vào đối chiếu/tổng tiền. */
+export const isPaidSuccessSlip = (slip: Pick<PaymentSlipRecord, 'trangThai'>): boolean =>
+  normalizePaymentState(slip.trangThai) === 'PAID_SUCCESS';
+
 export interface SlipStatusView {
   state: SlipPaymentState;
   label: string;
@@ -343,8 +347,8 @@ export const buildSlipReconciliationIndex = (
 
 export const filterPaymentSlips = (slips: PaymentSlipRecord[], query: string): PaymentSlipRecord[] => {
   const q = query.toLowerCase().trim();
-  if (!q) return slips;
-  return slips.filter(s => {
+  return slips.filter(isPaidSuccessSlip).filter(s => {
+    if (!q) return true;
     const classText = s.classification
       ? `${s.classification.taxTypes.join(' ')} ${s.classification.periods.join(' ')} ${s.classification.ndktCodes.join(' ')}`.toLowerCase()
       : '';

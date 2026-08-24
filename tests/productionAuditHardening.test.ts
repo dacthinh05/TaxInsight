@@ -10,6 +10,8 @@ import { TaxPaymentMatcher } from '../src/main/engine/TaxPaymentMatcher';
 import { TaxObligation, TaxDeadlineResult } from '../src/shared/obligationTypes';
 import { PaymentSlipRecord, TaxFiling } from '../src/shared/types';
 import { VatDeclarationSnapshot } from '../src/shared/vatAnalyticsTypes';
+import { TaxPortalClient } from '../src/main/portal/TaxPortalClient';
+import { PortalSession } from '../src/main/portal/PortalSession';
 
 describe('PRODUCTION AUDIT & HARDENING TEST SUITE', () => {
   let tempDir: string;
@@ -252,5 +254,35 @@ describe('PRODUCTION AUDIT & HARDENING TEST SUITE', () => {
 
     expect(matched[1].status).toBe('NOT_DUE');
     expect(matched[1].matchedPaymentAmount).toBe(0n);
+  });
+
+  // 6. ROBUST PAYLOAD EXTRACTION & UNWRAPPING
+  it('Bug G — TaxPortalClient extractPayloadContent unpacks nested response structures', () => {
+    const client = new TaxPortalClient(new PortalSession());
+
+    // 1. Nested { data: { content: '...' } }
+    const nestedData = {
+      status: 200,
+      data: {
+        content: 'UEsDBBQAAAAIAAAAAAAAAAAAAAAAAAAAAAA=',
+        fileName: 'to_khai_01.zip'
+      }
+    };
+    const p1 = (client as any).extractPayloadContent(nestedData, '12345');
+    expect(p1).not.toBeNull();
+    expect(p1?.content).toBe('UEsDBBQAAAAIAAAAAAAAAAAAAAAAAAAAAAA=');
+    expect(p1?.fileName).toBe('to_khai_01.zip');
+
+    // 2. Direct base64 string with newlines
+    const rawBase64WithSpaces = '  UEsDBBQAAAAIA\nAAAAAAAAAAAAAAAAAAAAAA= \n ';
+    const p2 = (client as any).extractPayloadContent(rawBase64WithSpaces, '12345');
+    expect(p2).not.toBeNull();
+    expect(p2?.content).toBe('UEsDBBQAAAAIAAAAAAAAAAAAAAAAAAAAAAA=');
+
+    // 3. Binary Buffer
+    const buffer = Buffer.from('TEST_BINARY_FILE_BUFFER');
+    const p3 = (client as any).extractPayloadContent(buffer, '12345');
+    expect(p3).not.toBeNull();
+    expect(p3?.content).toBe(buffer.toString('base64'));
   });
 });

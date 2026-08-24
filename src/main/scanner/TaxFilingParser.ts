@@ -249,28 +249,63 @@ export class TaxFilingParser {
       const rowHtml = $tr.html() || "";
 
       let filingId = "";
-      const $withDataMaHoSo = $tr.find("[data-ma-ho-so]").first();
-      if ($withDataMaHoSo.length) filingId = ($withDataMaHoSo.attr("data-ma-ho-so") || "").trim();
-      if (!filingId) {
-        const $withDataMahoso = $tr.find("[data-mahoso]").first();
-        if ($withDataMahoso.length) filingId = ($withDataMahoso.attr("data-mahoso") || "").trim();
+      const $withDataMaHoSo = $tr.find("[data-ma-ho-so], [data-mahoso], [data-id], [data-id-tkhai], [data-idtkhai], [data-id-hoso], [data-idhoso]").first();
+      if ($withDataMaHoSo.length) {
+        filingId = (
+          $withDataMaHoSo.attr("data-ma-ho-so") ||
+          $withDataMaHoSo.attr("data-mahoso") ||
+          $withDataMaHoSo.attr("data-id") ||
+          $withDataMaHoSo.attr("data-id-tkhai") ||
+          $withDataMaHoSo.attr("data-idtkhai") ||
+          $withDataMaHoSo.attr("data-id-hoso") ||
+          $withDataMaHoSo.attr("data-idhoso") ||
+          ""
+        ).trim();
       }
       if (!filingId) {
-        const m = rowHtml.match(/(?:files\/detail\/|idTKhai=)([0-9a-zA-Z.\-_]+)/i);
+        const m = rowHtml.match(/(?:files\/detail\/|idTKhai=|maHoSo=|(?:downloadHoSo|downloadHoSoTdt|taiHoSo|chiTiet)\s*\(\s*['"]?)([0-9a-zA-Z.\-_]+)/i);
         if (m) filingId = m[1];
       }
       if (!filingId) {
         const m2 = rowHtml.match(/\b(\d{3}\.\d{3}\.\d{2}\.[A-Z0-9]+-\d+-\d+)\b/);
         if (m2) filingId = m2[1];
       }
+      if (!filingId) {
+        const m3 = rowHtml.match(/\b(\d{8,18})\b/);
+        if (m3) filingId = m3[1];
+      }
       if (!filingId) return;
 
       let isThueDienTu: boolean | undefined;
       let loaiTraCuu: string | undefined;
-      const $dl = $tr.find("[data-is-thue-dien-tu]").first();
+
+      const $dl = $tr.find("[data-is-thue-dien-tu], [data-isthuedientu], [data-thue-dien-tu], [data-thuedientu], [data-tdt]").first();
       if ($dl.length) {
-        isThueDienTu = ($dl.attr("data-is-thue-dien-tu") || "").toLowerCase() === "true";
-        loaiTraCuu = $dl.attr("data-loai-tra-cuu") || undefined;
+        const rawTdt = $dl.attr("data-is-thue-dien-tu") ||
+          $dl.attr("data-isthuedientu") ||
+          $dl.attr("data-thue-dien-tu") ||
+          $dl.attr("data-thuedientu") ||
+          $dl.attr("data-tdt") ||
+          "";
+        isThueDienTu = rawTdt.toLowerCase() === "true" || rawTdt === "1";
+        loaiTraCuu = $dl.attr("data-loai-tra-cuu") || $dl.attr("data-loaitracuu") || undefined;
+      }
+
+      if (isThueDienTu === undefined) {
+        if (
+          /(?:downloadHoSo|taiHoSo)\s*\(\s*[^,]+,\s*['"]?(?:true|1)['"]?/i.test(rowHtml) ||
+          /downloadHoSoTdt/i.test(rowHtml) ||
+          /loaiTraCuu/i.test(rowHtml) ||
+          /thue-dien-tu|thuedientu/i.test(rowHtml)
+        ) {
+          isThueDienTu = true;
+        }
+      }
+
+      if (!loaiTraCuu) {
+        const mLoai = rowHtml.match(/(?:downloadHoSo|downloadHoSoTdt)\s*\([^,]+,[^,]+,\s*['"]?([^'",\)\s]+)['"]?\)/i) ||
+          rowHtml.match(/loaiTraCuu=([^&"'\s]+)/i);
+        if (mLoai) loaiTraCuu = mLoai[1];
       }
 
       const cells: string[] = [];
@@ -297,6 +332,11 @@ export class TaxFilingParser {
       }
 
       const taxType = this.classifyTaxType(procedureCode, title, declarationCode);
+
+      // Nếu là tờ khai TNCN, mặc định ưu tiên hỗ trợ tải TDT nếu chưa có thông tin
+      if (isThueDienTu === undefined && (taxType === 'PIT' || (declarationCode || '').includes('TNCN'))) {
+        isThueDienTu = true;
+      }
 
       // ─── 6. Kỳ kê khai (Cột 5: 07/2025, 2025, 01/2026...) ──────────────────
       let periodNorm: PeriodNormalized | undefined;

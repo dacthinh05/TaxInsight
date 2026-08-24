@@ -849,10 +849,9 @@ export class PaymentSlipClient {
   }
 
   /**
-   * Alias tương thích ngược cho searchPaymentSlips.
+   * Tra cứu toàn bộ Giấy nộp tiền theo dải ngày, tự động duyệt qua tất cả các trang kết quả (Auto-Pagination).
    * Lưu ý: khi tra cứu THẤT BẠI sẽ throw kèm errorCode thay vì trả mảng rỗng —
-   * trước đây lỗi (hết phiên / plugin gate / trang lỗi) bị nuốt thành
-   * "thành công với 0 giấy nộp tiền" khiến người dùng không biết là hỏng.
+   * bảo vệ tính toàn vẹn dữ liệu, tránh nuốt lỗi thành "0 giấy nộp tiền".
    */
   public async searchPaymentSlips(
     range: DateRange,
@@ -863,16 +862,99 @@ export class PaymentSlipClient {
       page?: number;
     } = {}
   ): Promise<PaymentSlipRecord[]> {
-    const res = await this.queryPaymentSlips({
+    // 1. Nếu chỉ định trang cụ thể, chỉ tra cứu 1 trang đơn lẻ
+    if (options.page !== undefined && options.page > 0) {
+      const res = await this.queryPaymentSlips({
+        range,
+        page: options.page
+      });
+      if (!res.success) {
+        const err: any = new Error(res.error || 'Tra cứu Giấy Nộp Tiền thất bại');
+        err.errorCode = res.errorCode;
+        throw err;
+      }
+      return res.data;
+    }
+
+    // 2. Chế độ tra cứu toàn bộ: Tự động phân trang (Auto-Pagination Loop)
+    const allRecords: PaymentSlipRecord[] = [];
+    const seenIds = new Set<string>();
+
+    const firstPageRes = await this.queryPaymentSlips({
       range,
-      page: options.page
+      page: 1
     });
-    if (!res.success) {
-      const err: any = new Error(res.error || 'Tra cứu Giấy Nộp Tiền thất bại');
-      err.errorCode = res.errorCode;
+
+    if (!firstPageRes.success) {
+      const err: any = new Error(firstPageRes.error || 'Tra cứu Giấy Nộp Tiền thất bại');
+      err.errorCode = firstPageRes.errorCode;
       throw err;
     }
-    return res.data;
+
+    for (const item of firstPageRes.data) {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        allRecords.push(item);
+      }
+    }
+
+    // Nếu trang 1 có ít hơn 10 bản ghi -> đây là trang duy nhất, kết thúc sớm
+    const pageSizeIndicator = firstPageRes.data.length;
+    if (pageSizeIndicator < 10) {
+      return allRecords;
+    }
+
+    // Duyệt tiếp các trang 2, 3, 4... tối đa 50 trang (500-1000 GNT)
+    const MAX_PAGES = 50;
+    for (let page = 2; page <= MAX_PAGES; page++) {
+      try {
+        console.log(`[PaymentSlipClient] Tự động tải tiếp trang ${page} danh sách Giấy Nộp Tiền...`);
+        const nextPageRes = await this.queryPaymentSlips({
+          range,
+          page
+        });
+
+        if (!nextPageRes.success || !nextPageRes.data || nextPageRes.data.length === 0) {
+          // Phiên/xác thực đứt giữa chừng phân trang: dữ liệu chắc chắn THIẾU.
+          // Phải ném lỗi thay vì trả một phần im lặng khiến đối chiếu kết luận sai.
+          if (!nextPageRes.success &&
+              (nextPageRes.errorCode === 'SESSION_EXPIRED' || nextPageRes.errorCode === 'AUTH_REQUIRED')) {
+            const err: any = new Error(nextPageRes.error || 'Phiên eTax hết hạn giữa chừng khi tra cứu Giấy Nộp Tiền');
+            err.errorCode = nextPageRes.errorCode;
+            throw err;
+          }
+          break;
+        }
+
+        let newRecordsCount = 0;
+        for (const item of nextPageRes.data) {
+          if (!seenIds.has(item.id)) {
+            seenIds.add(item.id);
+            allRecords.push(item);
+            newRecordsCount++;
+          }
+        }
+
+        // Nếu trang này không đem lại bản ghi mới nào -> đã hết dữ liệu hoặc quay vòng
+        if (newRecordsCount === 0) {
+          break;
+        }
+
+        // Nếu số bản ghi trả về ít hơn 10 -> đây là trang cuối cùng
+        if (nextPageRes.data.length < 10) {
+          break;
+        }
+
+        // Giãn cách nhẹ tránh nghẽn DSE
+        await new Promise(r => setTimeout(r, 100));
+      } catch (err: any) {
+        console.warn(`[PaymentSlipClient] Dừng phân trang tại trang ${page}: ${err.message}`);
+        break;
+      }
+    }
+
+    console.log(`[PaymentSlipClient] Hoàn tất tra cứu: Đã thu thập tổng cộng ${allRecords.length} Giấy Nộp Tiền qua phân trang tự động`);
+    return allRecords;
   }
 }
 

@@ -217,7 +217,7 @@ export function setupIpcHandlers(
 
       downloadManager.setContext(currentTaxCode, currentYear);
       downloadManager.enqueueFilings(filings, currentTaxCode, currentYear);
-      downloadManager.start();
+      await downloadManager.start();
 
       auditLogger.log('INFO', `Bắt đầu tải hàng loạt ${filings.length} hồ sơ`);
       return { success: true, summary: downloadManager.getSummary() };
@@ -604,7 +604,7 @@ export function setupIpcHandlers(
                       const toDateInput = document.querySelector('input[name="ngay_lap_den_ngay"], #ngay_lap_den_ngay') as HTMLInputElement;
                       if (fromDateInput && !fromDateInput.value) {
                         const currentYear = new Date().getFullYear();
-                        fromDateInput.value = '01/01/' + currentYear;
+                        fromDateInput.value = '01/01/' + (currentYear - 1);
                       }
                       if (toDateInput && !toDateInput.value) {
                         const now = new Date();
@@ -669,6 +669,19 @@ export function setupIpcHandlers(
               })()
             `);
 
+            // Đảm bảo lấy JSESSIONID nếu có trong cookie
+            const etaxCookies = await authWin.webContents.session.cookies.get({ domain: 'thuedientu.gdt.gov.vn' });
+            const jsession = etaxCookies.find(c => c.name.toLowerCase().includes('jsession'))?.value;
+            const finalSessionId = res?.sessionId || jsession || '';
+
+            if (finalSessionId) {
+              // KHÔNG fallback processorId bằng 'corpQueryTaxProc' — đó là operationName,
+              // không phải processorId. Truyền sai khiến mọi query GNT sau đó gửi
+              // dse_processorId không hợp lệ và server trả trang lỗi.
+              // Bỏ trống để PaymentSlipClient tự dùng hằng processorId mặc định của eTax.
+              paymentSlipClient.setManualSessionState(finalSessionId, res?.pageId || 12, res?.processorId || undefined);
+            }
+
             if (res && res.tableHtml && (res.tableHtml.includes('Giao dịch') || res.tableHtml.includes('chiTietCT') || res.tableHtml.includes('VND'))) {
               const gntRecords = GntParser.parseList(res.tableHtml);
               if (gntRecords.length > 0) {
@@ -693,28 +706,18 @@ export function setupIpcHandlers(
                   soTaiKhoan: item.bankAccount,
                   downloadAvailable: item.canDownload
                 }));
-                auditLogger.log('SUCCESS', `Trích xuất trực tiếp ${records.length} GNT từ bảng kết quả DOM`);
+                auditLogger.log('SUCCESS', `Trích xuất ${records.length} GNT và đồng bộ phiên eTax thành công`);
                 authWin.close();
-                resolve({ success: true, paymentSlips: records, sessionId: res.sessionId || 'DOM_CAPTURED' });
+                resolve({ success: true, paymentSlips: records, sessionId: finalSessionId || 'SESSION_SYNCED' });
                 return;
               }
             }
 
-            if (res && res.sessionId) {
+            if (finalSessionId) {
               hasClosed = true;
-              paymentSlipClient.setManualSessionState(res.sessionId, res.pageId, res.processorId);
-              auditLogger.log('SUCCESS', 'Xác thực phiên eTax thành công qua cửa sổ trình duyệt', `Session: ${res.sessionId.slice(0, 6)}***`);
+              auditLogger.log('SUCCESS', 'Xác thực phiên eTax thành công qua cửa sổ trình duyệt', `Session: ${finalSessionId.slice(0, 6)}***`);
               authWin.close();
-              resolve({ success: true, sessionId: res.sessionId });
-            } else if (res && res.isAtEtax) {
-              const etaxCookies = await authWin.webContents.session.cookies.get({ domain: 'thuedientu.gdt.gov.vn' });
-              const jsession = etaxCookies.find(c => c.name.toLowerCase().includes('jsession'))?.value;
-              if (jsession) {
-                hasClosed = true;
-                paymentSlipClient.setManualSessionState(jsession, 12, 'corpQueryTaxProc');
-                authWin.close();
-                resolve({ success: true, sessionId: jsession });
-              }
+              resolve({ success: true, sessionId: finalSessionId });
             }
           } catch {}
         };
@@ -830,7 +833,9 @@ export function setupIpcHandlers(
         const tienStr = (detail.tongTienVND || '0').replace(/[,.]/g, '');
         const dateRaw = detail.signatures[0]?.signedAt?.split(' ')[0] || '';
         const dateStr = dateRaw ? dateRaw.split('/').reverse().join('') : '';
-        fileName = `GNT_${taxLabel}_${kyStr}_${tienStr}_${dateStr || detail.soGnt}.pdf`;
+        // Gắn ctuId vào tên file: 2 GNT khác nhau trùng loại thuế/kỳ/số tiền/ngày
+        // trước đây ghi đè PDF của nhau im lặng
+        fileName = `GNT_${taxLabel}_${kyStr}_${tienStr}_${dateStr || detail.soGnt}_${ctuId}.pdf`;
       }
       if (!fileName.toLowerCase().endsWith('.pdf')) {
         fileName += '.pdf';
@@ -891,7 +896,7 @@ export function setupIpcHandlers(
         if (!win.isDestroyed()) win.destroy();
       }
     } catch (err: any) {
-      auditLogger.log('ERROR', 'L?i khi xu?t PDF Gi?y N?p Ti?n', err.message);
+      auditLogger.log('ERROR', 'Lỗi khi xuất PDF Giấy Nộp Tiền', err.message);
       return { success: false, error: err.message };
     }
   });

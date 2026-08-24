@@ -37,7 +37,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
   const [errorField, setErrorField] = useState<'CAPTCHA' | 'PASSWORD' | 'TAX_CODE' | 'SESSION' | 'GENERAL' | null>(null);
   const [savedAccounts, setSavedAccounts] = useState<SavedAccountInfo[]>([]);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState('2.4.2');
+  const [appVersion, setAppVersion] = useState('2.4.6');
 
   const passwordInputRef = React.useRef<HTMLInputElement>(null);
   const captchaInputRef = React.useRef<HTMLInputElement>(null);

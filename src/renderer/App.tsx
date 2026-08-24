@@ -21,7 +21,7 @@ import { BottomStatusBar } from './components/BottomStatusBar';
 import { CaptchaModal } from './components/CaptchaModal';
 import { DownloadProgressModal } from './components/DownloadProgressModal';
 import { enrichSlipWithClassification } from '../shared/gntClassification';
-import { buildSlipReconciliationIndex, filterPaymentSlips, SlipReconInfo } from '../shared/paymentSlipAudit';
+import { buildSlipReconciliationIndex, filterPaymentSlips, isPaidSuccessSlip, SlipReconInfo } from '../shared/paymentSlipAudit';
 import { FilingQuickPreviewDrawer } from './components/FilingQuickPreviewDrawer';
 import { InventoryTable } from './components/InventoryTable';
 import { LoginPage } from './components/LoginPage';
@@ -42,11 +42,6 @@ import { UpdateNotificationModal } from './components/UpdateNotificationModal';
 import { UpdateInfo } from '../shared/types';
 
 type PaymentQueryStatus = 'CONNECTED_WITH_DATA' | 'CONNECTED_NO_DATA' | 'QUERY_FAILED' | 'NOT_QUERIED';
-
-const isPaidSuccessSlip = (slip: PaymentSlipRecord): boolean => {
-  const st = (slip.trangThai || '').toLowerCase();
-  return (st.includes('thành công') || st.startsWith('đã nộp')) && !st.includes('không thành công');
-};
 
 export const App: React.FC = () => {
   const [session, setSession] = useState<UserSessionInfo>({ isLoggedIn: false });
@@ -96,6 +91,20 @@ export const App: React.FC = () => {
 
   // Counter cho id log (Date.now() bị trùng khi nhiều log cùng ms -> key React trùng)
   const logIdCounter = useRef(0);
+
+  const buildInitialDownloadSummary = (total: number): DownloadSummary => ({
+    total,
+    completed: 0,
+    existing: 0,
+    failed: 0,
+    downloading: 0,
+    pending: total,
+    remaining: total,
+    isPaused: false,
+    isCancelled: false,
+    isRunning: true,
+    state: 'RUNNING'
+  });
 
   // Download & Modals
   const [downloadSummary, setDownloadSummary] = useState<DownloadSummary | null>(null);
@@ -227,6 +236,18 @@ export const App: React.FC = () => {
     } else {
       setAvailableCheckpoint(null);
     }
+    checkExistingGntCheckpoint(taxCode, year);
+  };
+
+  const checkExistingGntCheckpoint = async (taxCode: string, year: number) => {
+    if (!window.taxPortalAPI?.getGntCheckpoint || !taxCode) return;
+    try {
+      const res = await window.taxPortalAPI.getGntCheckpoint({ taxCode, year });
+      if (res?.success && res.data?.slips?.length > 0) {
+        setPaymentSlips(res.data.slips as PaymentSlipRecord[]);
+        setPaymentQueryStatus('CONNECTED_WITH_DATA');
+      }
+    } catch {}
   };
 
   // Lưu trữ dữ liệu hồ sơ độc lập theo từng năm trong phiên làm việc
@@ -241,6 +262,7 @@ export const App: React.FC = () => {
     };
     setSession(info);
     checkExistingCheckpoint(taxCode, selectedYear);
+    checkExistingGntCheckpoint(taxCode, selectedYear);
   };
 
   // Quét hồ sơ thuế (Hỗ trợ Quét Đa Năm & Chống Race Condition)
@@ -468,6 +490,8 @@ export const App: React.FC = () => {
   const handleDownloadSingle = async (filing: TaxFiling) => {
     setSelectedIds(new Set([filing.id]));
     if (window.taxPortalAPI) {
+      setDownloadSummary(buildInitialDownloadSummary(1));
+      setIsDownloadModalOpen(true);
       const res = await window.taxPortalAPI.startDownload({
         filings: [filing],
         taxCode: session.taxCode,
@@ -485,6 +509,8 @@ export const App: React.FC = () => {
     if (toDownload.length === 0) return;
 
     if (window.taxPortalAPI) {
+      setDownloadSummary(buildInitialDownloadSummary(toDownload.length));
+      setIsDownloadModalOpen(true);
       const res = await window.taxPortalAPI.startDownload({
         filings: toDownload,
         taxCode: session.taxCode,
@@ -503,6 +529,8 @@ export const App: React.FC = () => {
     if (!list || list.length === 0) return;
 
     if (window.taxPortalAPI) {
+      setDownloadSummary(buildInitialDownloadSummary(list.length));
+      setIsDownloadModalOpen(true);
       const res = await window.taxPortalAPI.startDownload({
         filings: list,
         taxCode: session.taxCode,
@@ -527,6 +555,8 @@ export const App: React.FC = () => {
     setSelectedIds(new Set(toDownload.map(f => f.id)));
 
     if (window.taxPortalAPI) {
+      setDownloadSummary(buildInitialDownloadSummary(toDownload.length));
+      setIsDownloadModalOpen(true);
       const res = await window.taxPortalAPI.startDownload({
         filings: toDownload,
         taxCode: session.taxCode,
@@ -544,6 +574,8 @@ export const App: React.FC = () => {
     if (filings.length === 0) return;
 
     if (window.taxPortalAPI) {
+      setDownloadSummary(buildInitialDownloadSummary(filings.length));
+      setIsDownloadModalOpen(true);
       const res = await window.taxPortalAPI.startDownload({
         filings,
         taxCode: session.taxCode,
@@ -571,6 +603,8 @@ export const App: React.FC = () => {
     setSelectedIds(new Set(failedFilings.map(f => f.id)));
 
     if (window.taxPortalAPI) {
+      setDownloadSummary(buildInitialDownloadSummary(failedFilings.length));
+      setIsDownloadModalOpen(true);
       const res = await window.taxPortalAPI.startDownload({
         filings: failedFilings,
         taxCode: session.taxCode,
@@ -753,22 +787,27 @@ export const App: React.FC = () => {
   };
 
   // ─── TÍNH TOÁN NGHĨA VỤ THUẾ + ĐỐI CHIẾU GIẤY NỘP TIỀN (TAX OBLIGATION ENGINE) ──
+  const successfulPaymentSlips = useMemo(
+    () => paymentSlips.filter(isPaidSuccessSlip),
+    [paymentSlips]
+  );
+
   const obligationSummary = useMemo<TaxObligationSummary>(() => {
     return TaxObligationEngine.processObligations(
       filings,
-      paymentSlips,
+      successfulPaymentSlips,
       session.taxCode || '',
       gntDetails,
       new Date(),
       paymentQueryStatus
     );
-  }, [filings, paymentSlips, gntDetails, session.taxCode, paymentQueryStatus]);
+  }, [filings, successfulPaymentSlips, gntDetails, session.taxCode, paymentQueryStatus]);
 
   // ─── GẮN PHÂN LOẠI (LOẠI THUẾ / KỲ) VÀO DANH SÁCH GNT TỪ CHI TIẾT C1-02 ĐÃ TẢI ──
   const enrichedPaymentSlips = useMemo<PaymentSlipRecord[]>(() => {
-    if (gntDetails.size === 0) return paymentSlips;
-    return paymentSlips.map(s => enrichSlipWithClassification(s, gntDetails));
-  }, [paymentSlips, gntDetails]);
+    if (gntDetails.size === 0) return successfulPaymentSlips;
+    return successfulPaymentSlips.map(s => enrichSlipWithClassification(s, gntDetails));
+  }, [successfulPaymentSlips, gntDetails]);
 
   // ─── ĐỐI CHIẾU NGƯỢC GNT → NGHĨA VỤ (cột «Đối chiếu» + side panel chi tiết) ──
   // Liên kết 3 module: Tờ khai → Nghĩa vụ (obligationSummary) → GNT → trạng thái Khớp/Chưa khớp/Nộp trùng?
@@ -833,9 +872,9 @@ export const App: React.FC = () => {
   // có cache + chống trùng request nên gọi lặp lại an toàn.
   // Ở tab Giấy Nộp Tiền: tải chi tiết cho TOÀN BỘ danh sách để hiển thị cột Loại thuế/Kỳ.
   const pendingDetailKey = useMemo(
-    () => (viewMode === 'PAYMENT_SLIPS' ? paymentSlips : paymentSlips.filter(isPaidSuccessSlip))
+    () => successfulPaymentSlips
       .filter(s => !gntDetails.has(s.id)).map(s => s.id).join(','),
-    [paymentSlips, gntDetails, viewMode]
+    [successfulPaymentSlips, gntDetails]
   );
 
   useEffect(() => {
@@ -966,7 +1005,7 @@ export const App: React.FC = () => {
         if (res.state === 'AVAILABLE') {
           setIsUpdateModalOpen(true);
         } else if (res.state === 'NOT_AVAILABLE' || res.state === 'IDLE') {
-          alert(`Phần mềm đang ở phiên bản mới nhất (v${res.currentVersion || '2.4.2'}).`);
+          alert(`Phần mềm đang ở phiên bản mới nhất (v${res.currentVersion || '2.4.6'}).`);
         } else if (res.state === 'ERROR') {
           alert('Không thể kết nối máy chủ cập nhật: ' + (res.error || 'Lỗi mạng'));
         }
@@ -1005,6 +1044,14 @@ export const App: React.FC = () => {
         setGntDetails(new Map());
         setPaymentSlipsError(null);
         setPaymentQueryStatus(slips.length > 0 ? 'CONNECTED_WITH_DATA' : 'CONNECTED_NO_DATA');
+        if (window.taxPortalAPI?.saveGntCheckpoint && session.taxCode) {
+          window.taxPortalAPI.saveGntCheckpoint({
+            taxCode: session.taxCode,
+            year: selectedYear,
+            paymentSlips: slips,
+            dateRange: range
+          });
+        }
       } else {
         setPaymentSlips([]);
         setGntDetails(new Map());

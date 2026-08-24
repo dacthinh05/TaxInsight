@@ -72,4 +72,55 @@ describe('FileOrganizer', () => {
     const secondResult = organizer.saveExtractedFiling(base64, filing, '3702735709', 2026);
     expect(secondResult.isExisting).toBe(true);
   });
+
+  it('should extract direct raw XML Base64 (non-ZIP) safely without throwing', () => {
+    const rawXml = '<?xml version="1.0" encoding="UTF-8"?><HSoThue><TKhai><maTKhai>05/KK-TNCN</maTKhai><ct34>15000000</ct34></TKhai></HSoThue>';
+    const base64 = Buffer.from(rawXml, 'utf-8').toString('base64');
+
+    const filing: TaxFiling = {
+      id: 'TNCN_2025_05KK_001',
+      procedureCode: '1.008347',
+      declarationCode: '05/KK-TNCN',
+      title: 'Tờ khai thuế TNCN',
+      taxType: 'PIT',
+      period: 'Quý 4/2025',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true,
+      isThueDienTu: true
+    };
+
+    const result = organizer.saveExtractedFiling(base64, filing, '3702735709', 2025);
+
+    expect(result.isExisting).toBe(false);
+    expect(result.savedPaths.length).toBe(1);
+    expect(result.xmlPath).toBeDefined();
+    expect(fs.existsSync(result.xmlPath!)).toBe(true);
+
+    const savedContent = fs.readFileSync(result.xmlPath!, 'utf-8');
+    expect(savedContent).toContain('05/KK-TNCN');
+    expect(savedContent).toContain('15000000');
+  });
+
+  it('should extract direct raw PDF Base64 (non-ZIP) safely', () => {
+    const rawPdf = '%PDF-1.5 Sample PIT Tax Receipt Direct PDF Content';
+    const base64 = Buffer.from(rawPdf, 'utf-8').toString('base64');
+
+    const filing: TaxFiling = {
+      id: 'TNCN_PDF_DOC_002',
+      procedureCode: '1.008347',
+      declarationCode: '05/KK-TNCN',
+      title: 'Thông báo thuế TNCN',
+      taxType: 'PIT',
+      period: 'Năm 2025',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    const result = organizer.saveExtractedFiling(base64, filing, '3702735709', 2025);
+
+    expect(result.isExisting).toBe(false);
+    expect(result.savedPaths.length).toBe(1);
+    expect(result.pdfPath).toBeDefined();
+    expect(fs.existsSync(result.pdfPath!)).toBe(true);
+  });
 });

@@ -295,6 +295,94 @@ export class CaptchaSolver {
     return result;
   }
 
+  /**
+   * 🆙 UPGRADE: Xóa nét gạch ngang/sóng xuyên qua chữ (strike-through removal).
+   * Nét phá là connected component RỘNG (≥50% ảnh) và:
+   *  - THẲNG MỎNG: chiều dày ≤18% ảnh (nét kẻ ngang), hoặc
+   *  - SÓNG CHÉO THƯA: cao ≤45% ảnh với mật độ fill ≤35% (đường lượn chéo).
+   * Glyph cụm chữ: CAO và ĐẬY hơn ngưỡng, hoặc rộng <50% ảnh → không bao giờ bị ăn.
+   */
+  public static removeStrokeLines(binary: Uint8Array, width: number, height: number): Uint8Array {
+    const visited = new Uint8Array(width * height);
+    const result = new Uint8Array(binary);
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = width * y + x;
+        if (result[idx] !== 0 || visited[idx]) continue;
+
+        const componentIndices: number[] = [];
+        let minX = x, maxX = x, minY = y, maxY = y;
+        const queue = [idx];
+        visited[idx] = 1;
+
+        while (queue.length > 0) {
+          const curr = queue.pop()!;
+          componentIndices.push(curr);
+          const cy = Math.floor(curr / width);
+          const cx = curr % width;
+          if (cx < minX) minX = cx;
+          if (cx > maxX) maxX = cx;
+          if (cy < minY) minY = cy;
+          if (cy > maxY) maxY = cy;
+
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = cx + dx;
+              const ny = cy + dy;
+              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                const nIdx = width * ny + nx;
+                if (result[nIdx] === 0 && !visited[nIdx]) {
+                  visited[nIdx] = 1;
+                  queue.push(nIdx);
+                }
+              }
+            }
+          }
+        }
+
+        const compW = maxX - minX + 1;
+        const compH = maxY - minY + 1;
+        const density = componentIndices.length / (compW * compH);
+
+        // Nét THẲNG mỏng (density cao nhưng siêu mỏng) hoặc nét SÓNG chéo (thưa)
+        const thinEnough = compH <= Math.max(3, Math.round(height * 0.18));
+        const wavySparse = compH <= height * 0.45 && density <= 0.35;
+        const isStrokeLine = compW >= width * 0.5 && (thinEnough || wavySparse);
+
+        if (isStrokeLine) {
+          for (const cIdx of componentIndices) result[cIdx] = 255;
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 🆙 UPGRADE: Giãn nở morphology 1px (8-láng giềng).
+   * Nối lại nét chữ bị đứt đoạn bởi ngưỡng hóa — giúp connected-component
+   * đếm đúng số glyph và LSTM thấy nét liền mạch.
+   */
+  public static dilateBinary(binary: Uint8Array, width: number, height: number): Uint8Array {
+    const out = new Uint8Array(binary);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (binary[width * y + x] !== 0) continue;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+              out[width * ny + nx] = 0;
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
+
   /** Nội suy bilinear phóng đại — mượt hơn nearest-neighbor đáng kể cho LSTM */
   public static scaleBilinear(
     data: Uint8Array,
@@ -393,6 +481,30 @@ export class CaptchaSolver {
   }
 
   /**
+   * 🆙 UPGRADE: Dựng bộ mặt phẳng xử lý DÙNG CHUNG cho mọi luồng OCR.
+   * Mọi mặt phẳng nhị phân đều qua removeStrokeLines — nét gạch xuyên chữ
+   * là nguyên nhân đọc sai số 1 của captcha GDT.
+   */
+  public static buildPlanes(cleanedGray: Uint8Array, width: number, height: number): Record<string, Uint8Array> {
+    const otsuTh = this.calculateOtsuThreshold(cleanedGray, width, height);
+
+    const binarize = (th: number) => {
+      const binary = new Uint8Array(width * height);
+      for (let i = 0; i < binary.length; i++) binary[i] = cleanedGray[i] < th ? 0 : 255;
+      return binary;
+    };
+
+    return {
+      otsu_clean: this.removeStrokeLines(this.removeSmallSpeckles(binarize(otsuTh), width, height, 10), width, height),
+      high_contrast: this.removeStrokeLines(this.removeSmallSpeckles(binarize(Math.min(otsuTh + 18, 178)), width, height, 8), width, height),
+      low_threshold: this.removeStrokeLines(this.removeSmallSpeckles(binarize(Math.max(otsuTh - 16, 100)), width, height, 6), width, height),
+      otsu_raw: this.removeStrokeLines(binarize(otsuTh), width, height),
+      sauvola_adaptive: this.removeStrokeLines(this.removeSmallSpeckles(this.sauvolaThreshold(cleanedGray, width, height), width, height, 5), width, height),
+      grayscale_stretched: this.stretchContrast(cleanedGray)
+    };
+  }
+
+  /**
    * Tiền xử lý đa luồng (Multi-Pipeline Preprocessing) — 6 mặt phẳng:
    * 4 biến thể ngưỡng toàn cục + Sauvola thích nghi + grayscale kéo giãn.
    */
@@ -402,22 +514,7 @@ export class CaptchaSolver {
 
     const { width, height, gray } = decoded;
     const cleanedGray = this.clearFrame(gray, width, height);
-    const otsuTh = this.calculateOtsuThreshold(cleanedGray, width, height);
-
-    const binarize = (th: number) => {
-      const binary = new Uint8Array(width * height);
-      for (let i = 0; i < binary.length; i++) binary[i] = cleanedGray[i] < th ? 0 : 255;
-      return binary;
-    };
-
-    const planes: Record<string, Uint8Array> = {
-      otsu_clean: this.removeSmallSpeckles(binarize(otsuTh), width, height, 10),
-      high_contrast: this.removeSmallSpeckles(binarize(Math.min(otsuTh + 18, 178)), width, height, 8),
-      low_threshold: this.removeSmallSpeckles(binarize(Math.max(otsuTh - 16, 100)), width, height, 6),
-      otsu_raw: binarize(otsuTh),
-      sauvola_adaptive: this.removeSmallSpeckles(this.sauvolaThreshold(cleanedGray, width, height), width, height, 5),
-      grayscale_stretched: this.stretchContrast(cleanedGray)
-    };
+    const planes = this.buildPlanes(cleanedGray, width, height);
 
     const out: { name: string; buffer: Buffer }[] = [];
     for (const [name, plane] of Object.entries(planes)) {
@@ -431,14 +528,18 @@ export class CaptchaSolver {
   /**
    * Tách glyph khỏi mặt phẳng nhị phân: connected components -> lọc đốm ->
    * gộp hộp chồng lấn trục X (dấu chấm i/j, nét đứt) -> sắp trái -> phải.
+   * 🆙 expectedCount: chuẩn hóa số glyph về đúng số ký tự CAPTCHA (mặc định 5):
+   *  - Thừa box  -> gộp cặp khe hẹp nhất
+   *  - Thiếu box -> tách box quá rộng tại cột "thung lũng mực" (glyph dính nhau)
    */
   public static segmentGlyphs(
     binary: Uint8Array,
     width: number,
-    height: number
+    height: number,
+    expectedCount: number = FORMAT_LEN
   ): { x0: number; y0: number; x1: number; y1: number }[] {
     const visited = new Uint8Array(width * height);
-    const boxes: { x0: number; y0: number; x1: number; y1: number; area: number }[] = [];
+    const rawBoxes: { x0: number; y0: number; x1: number; y1: number; area: number }[] = [];
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -474,14 +575,14 @@ export class CaptchaSolver {
             }
           }
         }
-        boxes.push({ x0: minX, y0: minY, x1: maxX, y1: maxY, area: count });
+        rawBoxes.push({ x0: minX, y0: minY, x1: maxX, y1: maxY, area: count });
       }
     }
 
-    if (boxes.length === 0) return [];
+    if (rawBoxes.length === 0) return [];
 
-    const maxH = Math.max(...boxes.map(b => b.y1 - b.y0 + 1));
-    const glyphs = boxes.filter(b => (b.y1 - b.y0 + 1) >= maxH * 0.35 || b.area >= 12);
+    const maxH = Math.max(...rawBoxes.map(b => b.y1 - b.y0 + 1));
+    const glyphs = rawBoxes.filter(b => (b.y1 - b.y0 + 1) >= maxH * 0.35 || b.area >= 12);
 
     glyphs.sort((a, b) => a.x0 - b.x0);
     const merged: { x0: number; y0: number; x1: number; y1: number; area: number }[] = [];
@@ -500,7 +601,101 @@ export class CaptchaSolver {
       }
     }
 
-    return merged.sort((a, b) => a.x0 - b.x0).map(({ x0, y0, x1, y1 }) => ({ x0, y0, x1, y1 }));
+    let boxes = merged;
+
+    // ── 🆙 CHUẨN HÓA SỐ GLYPH VỀ expectedCount ─────────────────────────
+    if (expectedCount > 0 && boxes.length !== expectedCount && boxes.length > 0) {
+      const widths = boxes.map(b => b.x1 - b.x0 + 1).sort((a, b) => a - b);
+      const medianW = widths[Math.floor(widths.length / 2)] || 1;
+
+      // Thừa box: gộp liên tiếp cặp có khe hẹp nhất (thường là 2 mảnh của 1 ký tự)
+      while (boxes.length > expectedCount) {
+        let bestIdx = -1;
+        let bestGap = Infinity;
+        for (let i = 0; i < boxes.length - 1; i++) {
+          const gap = boxes[i + 1].x0 - boxes[i].x1;
+          if (gap < bestGap) {
+            bestGap = gap;
+            bestIdx = i;
+          }
+        }
+        if (bestIdx < 0) break;
+        const a = boxes[bestIdx];
+        const b = boxes[bestIdx + 1];
+        boxes.splice(bestIdx, 2, {
+          x0: a.x0,
+          y0: Math.min(a.y0, b.y0),
+          x1: b.x1,
+          y1: Math.max(a.y1, b.y1),
+          area: a.area + b.area
+        });
+      }
+
+      // Thiếu box: tách box rộng bất thường tại cột có ít "mực" nhất
+      let guard = 0;
+      while (boxes.length < expectedCount && guard++ < expectedCount * 2) {
+        const widest = [...boxes].sort((a, b) => (b.x1 - b.x0) - (a.x1 - a.x0))[0];
+        if (!widest || (widest.x1 - widest.x0 + 1) < medianW * 1.35) break;
+
+        const parts = this.splitBoxAtInkValley(widest, binary, width);
+        if (!parts) break; // Không còn điểm tách hợp lý -> dừng, giữ nguyên
+        boxes.splice(boxes.indexOf(widest), 1, ...parts);
+      }
+    }
+
+    return boxes.sort((a, b) => a.x0 - b.x0).map(({ x0, y0, x1, y1 }) => ({ x0, y0, x1, y1 }));
+  }
+
+  /**
+   * 🆙 Tách một glyph box dính nhau thành 2 phần tại cột có mật độ mực thấp nhất
+   * (thung lũng projection). Điều kiện chặt: thung lũng phải nằm trong vùng giữa,
+   * mực thung lũng ≤40% mật độ trung bình, mỗi nửa đều đủ rộng để là 1 ký tự.
+   */
+  private static splitBoxAtInkValley(
+    box: { x0: number; y0: number; x1: number; y1: number },
+    binary: Uint8Array,
+    width: number
+  ): { x0: number; y0: number; x1: number; y1: number; area: number }[] | null {
+    const boxW = box.x1 - box.x0 + 1;
+    const innerL = box.x0 + Math.max(1, Math.floor(boxW * 0.25));
+    const innerR = box.x1 - Math.max(1, Math.floor(boxW * 0.25));
+    if (innerR <= innerL) return null;
+
+    let totalInk = 0;
+    const colInk: { x: number; ink: number }[] = [];
+    for (let x = innerL; x <= innerR; x++) {
+      let ink = 0;
+      for (let y = box.y0; y <= box.y1; y++) {
+        if (binary[width * y + x] === 0) ink++;
+      }
+      totalInk += ink;
+      colInk.push({ x, ink });
+    }
+    if (colInk.length === 0 || totalInk === 0) return null;
+
+    const meanInk = totalInk / colInk.length;
+    let valleyX = -1;
+    let valleyInk = Infinity;
+    for (const c of colInk) {
+      if (c.ink < valleyInk) {
+        valleyInk = c.ink;
+        valleyX = c.x;
+      }
+    }
+    if (valleyX < 0 || valleyInk > Math.max(1, Math.floor(meanInk * 0.4))) return null;
+
+    const left = { x0: box.x0, y0: box.y0, x1: valleyX, y1: box.y1, area: 0 };
+    const right = { x0: valleyX + 1, y0: box.y0, x1: box.x1, y1: box.y1, area: 0 };
+    // Mỗi nửa phải tối thiểu 3px rộng mới đáng coi là một ký tự
+    if ((left.x1 - left.x0 + 1) < 3 || (right.x1 - right.x0 + 1) < 3) return null;
+
+    for (let y = left.y0; y <= left.y1; y++) {
+      for (let x = left.x0; x <= left.x1; x++) {
+        if (binary[width * y + x] === 0) left.area++;
+      }
+    }
+    right.area = Math.max(0, totalInk - left.area);
+    return [left, right];
   }
 
   /**
@@ -597,9 +792,15 @@ export class CaptchaSolver {
         const ret = await worker.recognize(glyphBmp, {}, { text: true, blocks: true });
         const { chars: syms, confs } = this.extractSymbols(ret);
         if (syms.length > 0) {
-          chars.push(syms[0]);
-          charConfs.push(confs[0]);
-          confSum += confs[0];
+          // 🆙 Chọn symbol CÓ CONFIDENCE CAO NHẤT thay vì symbol đầu tiên:
+          // Tesseract đôi khi trả nhiều symbol cho 1 glyph (vd "rn" cho m)
+          let bestIdx = 0;
+          for (let i = 1; i < syms.length; i++) {
+            if (confs[i] > confs[bestIdx]) bestIdx = i;
+          }
+          chars.push(syms[bestIdx]);
+          charConfs.push(confs[bestIdx]);
+          confSum += confs[bestIdx];
           okCount++;
         } else {
           chars.push(null);
@@ -837,30 +1038,17 @@ export class CaptchaSolver {
       }
       const { width, height, gray } = decoded;
       const cleanedGray = this.clearFrame(gray, width, height);
-      const otsuTh = this.calculateOtsuThreshold(cleanedGray, width, height);
-
-      const binarize = (th: number) => {
-        const b = new Uint8Array(width * height);
-        for (let i = 0; i < b.length; i++) b[i] = cleanedGray[i] < th ? 0 : 255;
-        return b;
-      };
-
-      const planeOtsuClean = this.removeSmallSpeckles(binarize(otsuTh), width, height, 10);
-      const planeHigh = this.removeSmallSpeckles(binarize(Math.min(otsuTh + 18, 178)), width, height, 8);
-      const planeLow = this.removeSmallSpeckles(binarize(Math.max(otsuTh - 16, 100)), width, height, 6);
-      const planeOtsuRaw = binarize(otsuTh);
-      const planeSauvola = this.removeSmallSpeckles(this.sauvolaThreshold(cleanedGray, width, height), width, height, 5);
-      const planeStretched = this.stretchContrast(cleanedGray);
+      const planes = this.buildPlanes(cleanedGray, width, height);
 
       const debugDir = this.prepareDebugDir();
 
       const wordTargets: { name: string; plane: Uint8Array }[] = [
-        { name: 'otsu_clean', plane: planeOtsuClean },
-        { name: 'high_contrast', plane: planeHigh },
-        { name: 'low_threshold', plane: planeLow },
-        { name: 'otsu_raw', plane: planeOtsuRaw },
-        { name: 'sauvola_adaptive', plane: planeSauvola },
-        { name: 'grayscale_stretched', plane: planeStretched }
+        { name: 'otsu_clean', plane: planes.otsu_clean },
+        { name: 'high_contrast', plane: planes.high_contrast },
+        { name: 'low_threshold', plane: planes.low_threshold },
+        { name: 'otsu_raw', plane: planes.otsu_raw },
+        { name: 'sauvola_adaptive', plane: planes.sauvola_adaptive },
+        { name: 'grayscale_stretched', plane: planes.grayscale_stretched }
       ];
 
       const candidates: OcrCandidate[] = [];
@@ -904,10 +1092,15 @@ export class CaptchaSolver {
       }
 
       // ---- Character Segmentation: crop grayscale + binary, PSM 8 ----
+      // 🆙 Thêm 2 cử tri charseg mới (Sauvola + Dilated): mỗi cử tri là một
+      // "cách nhìn" độc lập — càng nhiều phiếu, đồng thuận theo vị trí càng chuẩn.
+      const planeDilated = this.dilateBinary(planes.otsu_clean, width, height);
       const segAttempts: { tag: string; seg: Uint8Array; crop: Uint8Array }[] = [
-        { tag: 'charseg_gray', seg: planeOtsuClean, crop: planeStretched },
-        { tag: 'charseg_bin', seg: planeOtsuClean, crop: planeOtsuClean },
-        { tag: 'charseg_lowthr_gray', seg: planeLow, crop: planeStretched }
+        { tag: 'charseg_gray', seg: planes.otsu_clean, crop: planes.grayscale_stretched },
+        { tag: 'charseg_bin', seg: planes.otsu_clean, crop: planes.otsu_clean },
+        { tag: 'charseg_lowthr_gray', seg: planes.low_threshold, crop: planes.grayscale_stretched },
+        { tag: 'charseg_sauvola_gray', seg: planes.sauvola_adaptive, crop: planes.grayscale_stretched },
+        { tag: 'charseg_dilated_gray', seg: planeDilated, crop: planes.grayscale_stretched }
       ];
       for (const attempt of segAttempts) {
         const cand = await this.solveBySegmentation(worker, attempt.tag, attempt.seg, width, height, attempt.crop);

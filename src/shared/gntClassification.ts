@@ -20,7 +20,7 @@ export const SLIP_TAX_TYPE_LABELS: Record<SlipTaxTypeKey, string> = {
   OTHER: 'Lệ phí / Khác'
 };
 
-const normalizeTypeKey = (taxType: string): SlipTaxTypeKey => {
+const normalizeTypeKey = (taxType: string): SlipTaxTypeKey | null => {
   switch (taxType) {
     case 'VAT':
     case 'PIT':
@@ -28,8 +28,11 @@ const normalizeTypeKey = (taxType: string): SlipTaxTypeKey => {
     case 'FCT':
     case 'HOUSE_LAND':
       return taxType;
-    default:
+    case 'OTHER':
       return 'OTHER';
+    default:
+      // UNKNOWN không đủ bằng chứng để gắn nhãn "Lệ phí / Khác".
+      return null;
   }
 };
 
@@ -46,7 +49,8 @@ export function classifyPaymentSlip(detail?: PaymentSlipDetail | null): PaymentS
 
   for (const item of detail.items) {
     const result = TaxNdktClassifier.classify(item.maNDKT, item.noiDungKhoanNop);
-    taxTypes.add(normalizeTypeKey(result.taxType));
+    const typeKey = normalizeTypeKey(result.taxType);
+    if (typeKey) taxTypes.add(typeKey);
 
     const period = (item.kyThueNgayQd || '').trim();
     if (period) periods.add(period);

@@ -111,4 +111,31 @@ describe('TaxFilingParser & DOM Integrity', () => {
     expect(merged).toHaveLength(3);
     expect(merged.map(m => m.id)).toEqual(['FILING_01_LAN_DAU', 'FILING_01_BS_1', 'FILING_02_LAN_DAU']);
   });
+
+  it('should correctly parse PIT and TDT filing indicators from portal HTML', () => {
+    const html = `
+      <table>
+        <tbody>
+          <tr data-ma-ho-so="000.701.18.G12-251219-27110000999999">
+            <td>1</td>
+            <td>0100109106</td>
+            <td>1.008347</td>
+            <td><a href="javascript:void(0)" onclick="downloadHoSo('000.701.18.G12-251219-27110000999999', true, '1')">1.008347 - Khai thuế thu nhập cá nhân</a></td>
+            <td>05/KK-TNCN</td>
+            <td>Quý 4/2025</td>
+            <td>Tờ khai chính thức</td>
+            <td>Đã chấp nhận</td>
+            <td>20/01/2026</td>
+          </tr>
+        </tbody>
+      </table>
+    `;
+
+    const filings = TaxFilingParser.parseHtmlSearchResults(html);
+    expect(filings).toHaveLength(1);
+    expect(filings[0].id).toBe('000.701.18.G12-251219-27110000999999');
+    expect(filings[0].taxType).toBe('PIT');
+    expect(filings[0].declarationCode).toBe('05/KK-TNCN');
+    expect(filings[0].isThueDienTu).toBe(true);
+  });
 });

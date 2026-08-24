@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyPaymentSlip, enrichSlipWithClassification, SLIP_TAX_TYPE_LABELS } from '../src/shared/gntClassification';
+import { filterPaymentSlips, isPaidSuccessSlip } from '../src/shared/paymentSlipAudit';
 import { PaymentSlipDetail, PaymentSlipRecord } from '../src/shared/types';
 
 const mkDetail = (id: string, items: { ndkt?: string; kyThue?: string; desc?: string }[]): PaymentSlipDetail => ({
@@ -59,11 +60,11 @@ describe('classifyPaymentSlip', () => {
     expect(cls.taxTypes).toEqual(['VAT']);
   });
 
-  it('mã lạ về OTHER nhưng vẫn giữ kỳ thuế & tiểu mục', () => {
+  it('mã lạ không tự gắn thành OTHER nhưng vẫn giữ kỳ thuế & tiểu mục', () => {
     const cls = classifyPaymentSlip(mkDetail('3', [
       { ndkt: '9999', kyThue: '01/01/2026-31/01/2026', desc: 'Khoản thu khác' }
     ]))!;
-    expect(cls.taxTypes).toEqual(['OTHER']);
+    expect(cls.taxTypes).toEqual([]);
     expect(cls.ndktCodes).toEqual(['9999']);
     expect(cls.periods).toEqual(['01/01/2026-31/01/2026']);
   });
@@ -82,6 +83,18 @@ describe('classifyPaymentSlip', () => {
   it('nhãn tiếng Việt đầy đủ cho mọi sắc thuế', () => {
     expect(SLIP_TAX_TYPE_LABELS.HOUSE_LAND).toBe('Thuế Nhà đất');
     expect(SLIP_TAX_TYPE_LABELS.FCT).toBe('Thuế nhà thầu');
+  });
+});
+
+describe('lọc GNT theo trạng thái thanh toán', () => {
+  it('chỉ giữ GNT Thành công, loại Đã lập/Đã gửi/Thất bại', () => {
+    const success = mkSlip('success');
+    const created = { ...mkSlip('created'), trangThai: 'Đã lập' };
+    const sent = { ...mkSlip('sent'), trangThai: 'Đã gửi' };
+    const failed = { ...mkSlip('failed'), trangThai: 'Nộp thuế không thành công' };
+
+    expect([success, created, sent, failed].filter(isPaidSuccessSlip).map(s => s.id)).toEqual(['success']);
+    expect(filterPaymentSlips([success, created, sent, failed], '').map(s => s.id)).toEqual(['success']);
   });
 });
 
