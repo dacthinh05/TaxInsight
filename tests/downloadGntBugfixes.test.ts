@@ -124,6 +124,65 @@ describe('BUGFIX #2 — DownloadManager start lại sau cancel phải hoàn thà
   });
 });
 
+describe('BUGFIX #5 — Điều khiển tải trong lúc pre-flight đang chờ', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bugfix_dm_preflight_'));
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  });
+
+  it('bấm tạm dừng trong lúc checkSession chờ thì không tự chạy lại', async () => {
+    let releaseCheck: (() => void) | undefined;
+    const checkPromise = new Promise<boolean>(resolve => {
+      releaseCheck = () => resolve(true);
+    });
+    const fakeClient = {
+      checkSession: () => checkPromise,
+      downloadHoSo: vi.fn()
+    } as unknown as TaxPortalClient;
+    const dm = new DownloadManager(fakeClient, new FileOrganizer(tempDir));
+    dm.enqueueFilings([makeFiling('PAUSE')], '3702735709', 2026);
+
+    const startPromise = dm.start();
+    dm.pause();
+    releaseCheck!();
+    await startPromise;
+
+    expect(dm.getState()).toBe('PAUSED');
+    expect(dm.getSummary().pending).toBe(1);
+    expect(fakeClient.downloadHoSo).not.toHaveBeenCalled();
+  });
+
+  it('bấm dừng trong lúc checkSession chờ thì giữ trạng thái đã dừng', async () => {
+    let releaseCheck: (() => void) | undefined;
+    const checkPromise = new Promise<boolean>(resolve => {
+      releaseCheck = () => resolve(true);
+    });
+    const fakeClient = {
+      checkSession: () => checkPromise,
+      downloadHoSo: vi.fn()
+    } as unknown as TaxPortalClient;
+    const dm = new DownloadManager(fakeClient, new FileOrganizer(tempDir));
+    dm.enqueueFilings([makeFiling('CANCEL')], '3702735709', 2026);
+
+    const startPromise = dm.start();
+    dm.cancel();
+    releaseCheck!();
+    await startPromise;
+
+    expect(dm.getState()).toBe('CANCELLED');
+    expect(dm.getSummary().isCancelled).toBe(true);
+    expect(dm.getSummary().remaining).toBe(1);
+    expect(fakeClient.downloadHoSo).not.toHaveBeenCalled();
+  });
+});
+
 describe('BUGFIX #4 — login không false-positive trên trang lỗi HTML chứa "home"', () => {
   it('HTTP 200 + HTML lỗi chứa link /tthc/home phải trả success=false', async () => {
     const session = new PortalSession();

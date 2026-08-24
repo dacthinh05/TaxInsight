@@ -106,6 +106,33 @@ export const App: React.FC = () => {
     state: 'RUNNING'
   });
 
+  const startDownloadBatch = async (batch: TaxFiling[]) => {
+    if (!window.taxPortalAPI || batch.length === 0) return;
+
+    setDownloadSummary(buildInitialDownloadSummary(batch.length));
+    setIsDownloadModalOpen(true);
+
+    try {
+      const res = await window.taxPortalAPI.startDownload({
+        filings: batch,
+        taxCode: session.taxCode,
+        year: selectedYear
+      });
+
+      if (res.success && res.summary) {
+        setDownloadSummary(res.summary);
+      } else {
+        setIsDownloadModalOpen(false);
+        setDownloadSummary(null);
+        alert(res.error || 'Không thể bắt đầu tải hồ sơ thuế.');
+      }
+    } catch (err: any) {
+      setIsDownloadModalOpen(false);
+      setDownloadSummary(null);
+      alert(err?.message || 'Không thể bắt đầu tải hồ sơ thuế.');
+    }
+  };
+
   // Download & Modals
   const [downloadSummary, setDownloadSummary] = useState<DownloadSummary | null>(null);
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
@@ -489,18 +516,7 @@ export const App: React.FC = () => {
   // Tải 1 hồ sơ đơn lẻ từ Preview Drawer
   const handleDownloadSingle = async (filing: TaxFiling) => {
     setSelectedIds(new Set([filing.id]));
-    if (window.taxPortalAPI) {
-      setDownloadSummary(buildInitialDownloadSummary(1));
-      setIsDownloadModalOpen(true);
-      const res = await window.taxPortalAPI.startDownload({
-        filings: [filing],
-        taxCode: session.taxCode,
-        year: selectedYear
-      });
-      if (res.success && res.summary) {
-        setDownloadSummary(res.summary);
-      }
-    }
+    await startDownloadBatch([filing]);
   };
 
   // Tải danh sách hồ sơ đã chọn
@@ -508,19 +524,7 @@ export const App: React.FC = () => {
     const toDownload = filings.filter(f => selectedIds.has(f.id));
     if (toDownload.length === 0) return;
 
-    if (window.taxPortalAPI) {
-      setDownloadSummary(buildInitialDownloadSummary(toDownload.length));
-      setIsDownloadModalOpen(true);
-      const res = await window.taxPortalAPI.startDownload({
-        filings: toDownload,
-        taxCode: session.taxCode,
-        year: selectedYear
-      });
-
-      if (res.success && res.summary) {
-        setDownloadSummary(res.summary);
-      }
-    }
+    await startDownloadBatch(toDownload);
   };
 
   // Tải TRỰC TIẾP một danh sách hồ sơ (quick download theo nhóm/lọc)
@@ -528,19 +532,7 @@ export const App: React.FC = () => {
   const handleDownloadFilings = async (list: TaxFiling[]) => {
     if (!list || list.length === 0) return;
 
-    if (window.taxPortalAPI) {
-      setDownloadSummary(buildInitialDownloadSummary(list.length));
-      setIsDownloadModalOpen(true);
-      const res = await window.taxPortalAPI.startDownload({
-        filings: list,
-        taxCode: session.taxCode,
-        year: selectedYear
-      });
-
-      if (res.success && res.summary) {
-        setDownloadSummary(res.summary);
-      }
-    }
+    await startDownloadBatch(list);
   };
 
   // Tải theo từng kỳ cụ thể (Quý / Tháng)
@@ -554,38 +546,14 @@ export const App: React.FC = () => {
 
     setSelectedIds(new Set(toDownload.map(f => f.id)));
 
-    if (window.taxPortalAPI) {
-      setDownloadSummary(buildInitialDownloadSummary(toDownload.length));
-      setIsDownloadModalOpen(true);
-      const res = await window.taxPortalAPI.startDownload({
-        filings: toDownload,
-        taxCode: session.taxCode,
-        year: selectedYear
-      });
-
-      if (res.success && res.summary) {
-        setDownloadSummary(res.summary);
-      }
-    }
+    await startDownloadBatch(toDownload);
   };
 
   // Tải toàn bộ hồ sơ
   const handleDownloadAll = async () => {
     if (filings.length === 0) return;
 
-    if (window.taxPortalAPI) {
-      setDownloadSummary(buildInitialDownloadSummary(filings.length));
-      setIsDownloadModalOpen(true);
-      const res = await window.taxPortalAPI.startDownload({
-        filings,
-        taxCode: session.taxCode,
-        year: selectedYear
-      });
-
-      if (res.success && res.summary) {
-        setDownloadSummary(res.summary);
-      }
-    }
+    await startDownloadBatch(filings);
   };
 
   // Thử lại riêng các file lỗi
@@ -602,19 +570,7 @@ export const App: React.FC = () => {
 
     setSelectedIds(new Set(failedFilings.map(f => f.id)));
 
-    if (window.taxPortalAPI) {
-      setDownloadSummary(buildInitialDownloadSummary(failedFilings.length));
-      setIsDownloadModalOpen(true);
-      const res = await window.taxPortalAPI.startDownload({
-        filings: failedFilings,
-        taxCode: session.taxCode,
-        year: selectedYear
-      });
-
-      if (res.success && res.summary) {
-        setDownloadSummary(res.summary);
-      }
-    }
+    await startDownloadBatch(failedFilings);
   };
 
   // Xuất Excel danh sách hồ sơ thuế

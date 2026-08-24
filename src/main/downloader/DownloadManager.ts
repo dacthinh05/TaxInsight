@@ -17,6 +17,7 @@ export class DownloadManager extends EventEmitter {
   private hasEmittedAuthExpired = false;
   private taxCode = '';
   private year = new Date().getFullYear();
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(client: TaxPortalClient, fileOrganizer: FileOrganizer) {
     super();
@@ -166,6 +167,14 @@ export class DownloadManager extends EventEmitter {
 
     // PRE-FLIGHT HEALTH CHECK
     const isSessionAlive = await this.client.checkSession();
+
+    // Người dùng có thể bấm Tạm dừng/Dừng trong lúc health check đang chờ mạng.
+    // Không được để phần start tiếp tục ghi đè lại trạng thái điều khiển đó.
+    if (this.isCancelled || this.isPaused || this.state === 'PAUSED') {
+      this.emitProgress();
+      return;
+    }
+
     if (!isSessionAlive) {
       this.state = 'AUTH_REQUIRED';
       this.isPaused = true;
@@ -226,6 +235,7 @@ export class DownloadManager extends EventEmitter {
     }
     this.activeDownloads = 0;
     this.emit('paused', this.getSummary());
+    this.emitProgress();
   }
 
   public cancel() {
@@ -246,6 +256,7 @@ export class DownloadManager extends EventEmitter {
 
     this.activeDownloads = 0;
     this.emit('cancelled', this.getSummary());
+    this.emitProgress();
   }
 
   private async processQueue() {
