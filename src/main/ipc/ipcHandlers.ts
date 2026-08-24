@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { PORTAL_CONFIG } from '../../shared/constants';
 import { sanitizeFilename } from '../../shared/sanitizer';
+import { isValidTaxCode } from '../../shared/taxCodeUtils';
 import { PaymentSlipRecord, TaxFiling, TaxType } from '../../shared/types';
 import { DownloadManager } from '../downloader/DownloadManager';
 import { ExcelExporter } from '../exporter/ExcelExporter';
@@ -43,9 +44,6 @@ export function setupIpcHandlers(
   sendToRenderer: (channel: string, data: any) => void
 ) {
   // ─── VALIDATOR INPUT TỪ RENDERER (chống path traversal qua taxCode/year) ──
-  const isValidTaxCode = (v: unknown): v is string =>
-    typeof v === 'string' && /^\d{10}(-\d{3})?$/.test(v.trim());
-
   const normalizeYear = (v: unknown): number => {
     const n = typeof v === 'number' ? v : parseInt(String(v), 10);
     return Number.isFinite(n) && n >= 1900 && n <= 2200 ? n : new Date().getFullYear();
@@ -209,7 +207,9 @@ export function setupIpcHandlers(
   // ─── DOWNLOAD IPC HANDLERS ──────────────────────────────────────────
   ipcMain.handle('download:start', async (_event, { filings, taxCode, year }) => {
     try {
-      const currentTaxCode = [taxCode, session.getSessionInfo().taxCode].find(isValidTaxCode);
+      const currentTaxCode = [taxCode, session.getSessionInfo().taxCode]
+        .map(value => typeof value === 'string' ? value.trim() : '')
+        .find(isValidTaxCode);
       if (!currentTaxCode) {
         return { success: false, error: 'Không xác định được mã số thuế hợp lệ để tải hồ sơ' };
       }
