@@ -18,6 +18,8 @@ export class DownloadManager extends EventEmitter {
   private taxCode = '';
   private year = new Date().getFullYear();
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  // Invalidates workers from a queue that has been cleared before their promises settle.
+  private queueGeneration = 0;
 
   constructor(client: TaxPortalClient, fileOrganizer: FileOrganizer) {
     super();
@@ -81,6 +83,11 @@ export class DownloadManager extends EventEmitter {
   }
 
   public clearQueue() {
+    this.queueGeneration++;
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
     this.queue = [];
     this.activeDownloads = 0;
     this.isPaused = false;
@@ -295,18 +302,19 @@ export class DownloadManager extends EventEmitter {
     this.emitProgress();
   }
 
-  private async processQueue() {
-    if (this.isPaused || this.isCancelled || this.state !== 'RUNNING') return;
+  private async processQueue(generation = this.queueGeneration) {
+    if (generation !== this.queueGeneration || this.isPaused || this.isCancelled || this.state !== 'RUNNING') return;
 
     while (this.activeDownloads < this.maxConcurrency && !this.isPaused && !this.isCancelled && this.state === 'RUNNING') {
       const nextItem = this.queue.find(item => item.status === 'PENDING');
       if (!nextItem) break;
 
       this.activeDownloads++;
-      this.downloadItemWithWorker(nextItem).finally(() => {
+      this.downloadItemWithWorker(nextItem, generation).finally(() => {
+        if (generation !== this.queueGeneration) return;
         this.activeDownloads = Math.max(0, this.activeDownloads - 1);
         if (this.state === 'RUNNING' && !this.isPaused && !this.isCancelled) {
-          this.processQueue();
+          this.processQueue(generation);
         }
       });
     }
@@ -324,8 +332,8 @@ export class DownloadManager extends EventEmitter {
   /**
    * 2. XỬ LÝ WORKER TẢI VÀ SESSION EXPIRED GIỮA DOWNLOAD
    */
-  private async downloadItemWithWorker(item: DownloadQueueItem): Promise<void> {
-    if (item.status === 'EXISTING' || this.isPaused || this.isCancelled) {
+  private async downloadItemWithWorker(item: DownloadQueueItem, generation: number): Promise<void> {
+    if (generation !== this.queueGeneration || item.status === 'EXISTING' || this.isPaused || this.isCancelled) {
       return;
     }
 
@@ -335,7 +343,7 @@ export class DownloadManager extends EventEmitter {
     // Jitter nhẹ tránh xung đột đồng thời giữa các workers
     await new Promise(r => setTimeout(r, 50 + Math.random() * 100));
 
-    if (this.isPaused || this.isCancelled) {
+    if (generation !== this.queueGeneration || this.isPaused || this.isCancelled) {
       if (item.status === 'DOWNLOADING') item.status = 'PENDING';
       return;
     }
@@ -350,6 +358,9 @@ export class DownloadManager extends EventEmitter {
           loaiTraCuu: item.filing.loaiTraCuu
         }
       );
+
+      // clearQueue() may have replaced the queue while the request was in flight.
+      if (generation !== this.queueGeneration) return;
 
       // 3. Tầng 2: Giải nén an toàn & kiểm tra integrity SHA-256
       const saveResult = this.fileOrganizer.saveExtractedFiling(
@@ -372,6 +383,7 @@ export class DownloadManager extends EventEmitter {
       this.emit('item_completed', { item, saveResult });
       this.emitProgress(item);
     } catch (err: any) {
+      if (generation !== this.queueGeneration) return;
       // Hủy thật sự bởi người dùng (download:cancel)
       if (this.isCancelled) {
         item.status = 'CANCELLED';

@@ -172,4 +172,34 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
     expect(summary.isCancelled).toBe(true);
     expect(summary.downloading).toBe(0);
   });
+
+  it('6. clearQueue abort worker cũ và không để worker cũ làm bẩn batch mới', async () => {
+    let releaseDownload!: () => void;
+    let capturedSignal: AbortSignal | undefined;
+    const client = createMockClient({ isAlive: true });
+    client.downloadHoSo = vi.fn().mockImplementation(async (_id: string, signal?: AbortSignal) => {
+      capturedSignal = signal;
+      await new Promise<void>(resolve => { releaseDownload = resolve; });
+      return {
+        fileName: 'stale.zip',
+        fileType: 'application/zip',
+        content: 'UEsDBBQAAAAIAA=='
+      };
+    });
+    const organizer = createMockOrganizer();
+    const manager = new DownloadManager(client, organizer);
+
+    manager.enqueueFilings([sampleFilings[0]], '3702735709', 2025);
+    await manager.start();
+    await new Promise(r => setTimeout(r, 250));
+
+    manager.clearQueue();
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(manager.getSummary().total).toBe(0);
+
+    releaseDownload();
+    await new Promise(r => setTimeout(r, 100));
+    expect(manager.getSummary().total).toBe(0);
+    expect(organizer.saveExtractedFiling).not.toHaveBeenCalled();
+  });
 });
