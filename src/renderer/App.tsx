@@ -961,7 +961,7 @@ export const App: React.FC = () => {
         if (res.state === 'AVAILABLE') {
           setIsUpdateModalOpen(true);
         } else if (res.state === 'NOT_AVAILABLE' || res.state === 'IDLE') {
-          alert(`Phần mềm đang ở phiên bản mới nhất (v${res.currentVersion || '2.5.3'}).`);
+      alert(`Phần mềm đang ở phiên bản mới nhất (v${res.currentVersion || '2.5.4'}).`);
         } else if (res.state === 'ERROR') {
           alert('Không thể kết nối máy chủ cập nhật: ' + (res.error || 'Lỗi mạng'));
         }
