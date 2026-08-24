@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { PaymentSlipDetail, PaymentSlipRecord, PaymentSlipSignatureInfo, PaymentSlipSubItem } from '../../shared/types';
+import { resolveAllocationColumns } from './GntTableColumns';
 
 export class PaymentSlipParser {
   /**
@@ -159,18 +160,19 @@ export class PaymentSlipParser {
 
     // Bảng chi tiết các khoản nộp (#chungtu_ctiet)
     const items: PaymentSlipSubItem[] = [];
+    const col = resolveAllocationColumns($);
     $('#chungtu_ctiet tbody tr').each((_, tr) => {
       const $tds = $(tr).find('td');
       if ($tds.length >= 7) {
         const stt = parseInt($tds.eq(0).text().trim(), 10);
         if (!isNaN(stt)) {
-          const soToKhaiQuyetDinh = $tds.eq(1).text().trim() || undefined;
-          const kyThueNgayQd = $tds.eq(2).text().trim() || undefined;
-          const noiDungKhoanNop = $tds.eq(3).text().trim();
-          const soTienNguyenTe = $tds.eq(4).text().trim() || undefined;
-          const soTienVND = $tds.eq(5).text().trim();
-          const maChuong = $tds.eq(6).text().trim() || undefined;
-          const maNDKT = $tds.eq(7).text().trim() || undefined;
+          const soToKhaiQuyetDinh = $tds.eq(col.referenceDoc).text().trim() || undefined;
+          const kyThueNgayQd = $tds.eq(col.taxPeriod).text().trim() || undefined;
+          const noiDungKhoanNop = $tds.eq(col.description).text().trim();
+          const soTienNguyenTe = $tds.eq(col.originalAmount).text().trim() || undefined;
+          const soTienVND = $tds.eq(col.vndAmount).text().trim();
+          const maChuong = $tds.eq(col.chapter).text().trim() || undefined;
+          const maNDKT = $tds.eq(col.ndkt).text().trim() || undefined;
 
           items.push({
             stt,

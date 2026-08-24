@@ -2,7 +2,7 @@ import { TaxType } from '../../shared/types';
 
 export interface NdktClassificationResult {
   taxType: TaxType | 'UNKNOWN';
-  confidence: 'EXACT_CODE' | 'DESCRIPTION_MATCH' | 'UNKNOWN';
+  confidence: 'EXACT_CODE' | 'CHAPTER_MATCH' | 'DESCRIPTION_MATCH' | 'UNKNOWN';
   description?: string;
 }
 
@@ -14,6 +14,7 @@ export class TaxNdktClassifier {
   private static readonly NDKT_MAP: Record<string, { taxType: TaxType; name: string }> = {
     // ── THUẾ THU NHẬP CÁ NHÂN (PIT) ───────────────────────────────────────
     '1001': { taxType: 'PIT', name: 'Thuế TNCN từ tiền lương, tiền công' },
+    '1002': { taxType: 'PIT', name: 'Thuế TNCN từ hoạt động sản xuất, kinh doanh' },
     '1003': { taxType: 'PIT', name: 'Thuế TNCN từ hoạt động sản xuất kinh doanh' },
     '1004': { taxType: 'PIT', name: 'Thuế TNCN từ đầu tư vốn' },
     '1005': { taxType: 'PIT', name: 'Thuế TNCN từ chuyển nhượng vốn' },
@@ -33,6 +34,7 @@ export class TaxNdktClassifier {
     '1749': { taxType: 'VAT', name: 'Thuế GTGT khác' },
 
     // ── THUẾ THU NHẬP DOANH NGHIỆP (CIT) ──────────────────────────────────
+    '1051': { taxType: 'CIT', name: 'Thuế TNDN từ hoạt động sản xuất, kinh doanh hàng hóa, dịch vụ' },
     '1052': { taxType: 'CIT', name: 'Thuế TNDN từ hoạt động SXKD' },
     '1053': { taxType: 'CIT', name: 'Thuế TNDN từ chuyển nhượng BĐS' },
     '1054': { taxType: 'CIT', name: 'Thuế TNDN từ hoạt động khác' },
@@ -72,9 +74,16 @@ export class TaxNdktClassifier {
           description: entry.name
         };
       }
+
+      // 2. Fallback theo CHƯƠNG ngân sách (2 chữ số đầu của tiểu mục):
+      //    chương 1700 = GTGT, 3800/3900 = đất/nhà đất, 2800 = lệ phí,
+      //    7400 = tài nguyên, 7500 = bảo vệ môi trường.
+      //    Chương 10xx (thuế thu nhập) KHÔNG dùng được vì trùng giữa PIT/CIT.
+      const chapterMatch = this.classifyByChapter(cleanedCode);
+      if (chapterMatch) return chapterMatch;
     }
 
-    // 2. Tra cứu fallback theo nội dung diễn giải nếu không có mã NDKT
+    // 3. Tra cứu fallback theo nội dung diễn giải nếu không có mã NDKT
     if (description) {
       const descUpper = description.toUpperCase();
       if (descUpper.includes('TIỀN LƯƠNG') || descUpper.includes('TIỀN CÔNG') || descUpper.includes('TNCN') || descUpper.includes('THU NHẬP CÁ NHÂN')) {
@@ -112,6 +121,13 @@ export class TaxNdktClassifier {
           description: description.trim()
         };
       }
+      if (descUpper.includes('MÔN BÀI') || descUpper.includes('LỆ PHÍ')) {
+        return {
+          taxType: 'OTHER',
+          confidence: 'DESCRIPTION_MATCH',
+          description: description.trim()
+        };
+      }
     }
 
     return {
@@ -119,6 +135,28 @@ export class TaxNdktClassifier {
       confidence: 'UNKNOWN',
       description: description?.trim()
     };
+  }
+
+  /**
+   * Đoán sắc thuế theo chương ngân sách khi tiểu mục chưa có trong bảng đối chiếu.
+   * Chỉ áp dụng cho mã 4 chữ số trở lên để tránh khớp nhầm dữ liệu bẩn.
+   */
+  private static classifyByChapter(cleanedCode: string): NdktClassificationResult | null {
+    if (!/^\d{4,}$/.test(cleanedCode)) return null;
+    const chapter = cleanedCode.slice(0, 2);
+    switch (chapter) {
+      case '17':
+        return { taxType: 'VAT', confidence: 'CHAPTER_MATCH', description: `Chương ${chapter}xx — Thuế GTGT` };
+      case '38':
+      case '39':
+        return { taxType: 'HOUSE_LAND', confidence: 'CHAPTER_MATCH', description: `Chương ${chapter}xx — Thuế/Tiền về nhà đất` };
+      case '28':
+      case '74':
+      case '75':
+        return { taxType: 'OTHER', confidence: 'CHAPTER_MATCH', description: `Chương ${chapter}xx — Lệ phí/tài nguyên/BVMT` };
+      default:
+        return null;
+    }
   }
 
   /**

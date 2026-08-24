@@ -600,7 +600,7 @@ export class PaymentSlipClient {
         params.append('ctuId', '');
         params.append('soGnt', '');
         params.append('idBke', '');
-        params.append('type_tax', '01');
+        params.append('type_tax', PORTAL_CONFIG.GNT_TYPE_TAX);
         params.append('ma_giao_dich', '');
         params.append('so_ctu_nh', '');
         params.append('so_gnt', '');
@@ -777,7 +777,7 @@ export class PaymentSlipClient {
         params.append('ctuId', ctuId);
         params.append('soGnt', '');
         params.append('idBke', '');
-        params.append('type_tax', '01');
+        params.append('type_tax', PORTAL_CONFIG.GNT_TYPE_TAX);
         params.append('isReport', 'N');
         params.append('type', 'pdf');
 
@@ -898,59 +898,49 @@ export class PaymentSlipClient {
       }
     }
 
-    // Nếu trang 1 có ít hơn 10 bản ghi -> đây là trang duy nhất, kết thúc sớm
-    const pageSizeIndicator = firstPageRes.data.length;
-    if (pageSizeIndicator < 10) {
-      return allRecords;
-    }
-
-    // Duyệt tiếp các trang 2, 3, 4... tối đa 50 trang (500-1000 GNT)
+    // KHÔNG đoán "trang cuối" theo số dòng/trang (server GDT giới hạn 20 dòng/trang
+    // nhưng không cam kết cố định). Điều kiện dừng dựa trên dấu hiệu cấu trúc:
+    // trang rỗng / không còn bản ghi mới / chạm trần MAX_PAGES.
     const MAX_PAGES = 50;
     for (let page = 2; page <= MAX_PAGES; page++) {
+      let nextPageRes: { success: boolean; data: PaymentSlipRecord[]; error?: string; errorCode?: string };
       try {
         console.log(`[PaymentSlipClient] Tự động tải tiếp trang ${page} danh sách Giấy Nộp Tiền...`);
-        const nextPageRes = await this.queryPaymentSlips({
-          range,
-          page
-        });
-
-        if (!nextPageRes.success || !nextPageRes.data || nextPageRes.data.length === 0) {
-          // Phiên/xác thực đứt giữa chừng phân trang: dữ liệu chắc chắn THIẾU.
-          // Phải ném lỗi thay vì trả một phần im lặng khiến đối chiếu kết luận sai.
-          if (!nextPageRes.success &&
-              (nextPageRes.errorCode === 'SESSION_EXPIRED' || nextPageRes.errorCode === 'AUTH_REQUIRED')) {
-            const err: any = new Error(nextPageRes.error || 'Phiên eTax hết hạn giữa chừng khi tra cứu Giấy Nộp Tiền');
-            err.errorCode = nextPageRes.errorCode;
-            throw err;
-          }
-          break;
-        }
-
-        let newRecordsCount = 0;
-        for (const item of nextPageRes.data) {
-          if (!seenIds.has(item.id)) {
-            seenIds.add(item.id);
-            allRecords.push(item);
-            newRecordsCount++;
-          }
-        }
-
-        // Nếu trang này không đem lại bản ghi mới nào -> đã hết dữ liệu hoặc quay vòng
-        if (newRecordsCount === 0) {
-          break;
-        }
-
-        // Nếu số bản ghi trả về ít hơn 10 -> đây là trang cuối cùng
-        if (nextPageRes.data.length < 10) {
-          break;
-        }
-
-        // Giãn cách nhẹ tránh nghẽn DSE
-        await new Promise(r => setTimeout(r, 100));
+        nextPageRes = await this.queryPaymentSlips({ range, page });
       } catch (err: any) {
         console.warn(`[PaymentSlipClient] Dừng phân trang tại trang ${page}: ${err.message}`);
         break;
       }
+
+      if (!nextPageRes.success) {
+        // BẤT KỂ lỗi gì giữa chừng phân trang (hết phiên, xác thực, mạng, NPE...),
+        // dữ liệu thu được chắc chắn THIẾU — phải ném lỗi thay vì trả một phần
+        // im lặng khiến đối chiếu/tổng hợp kết luận sai.
+        const err: any = new Error(nextPageRes.error || 'Tra cứu Giấy Nộp Tiền thất bại giữa chừng phân trang');
+        err.errorCode = nextPageRes.errorCode || 'CONNECTIVITY_ERROR';
+        throw err;
+      }
+
+      if (!nextPageRes.data || nextPageRes.data.length === 0) {
+        break; // Hết dữ liệu một cách chính đáng
+      }
+
+      let newRecordsCount = 0;
+      for (const item of nextPageRes.data) {
+        if (!seenIds.has(item.id)) {
+          seenIds.add(item.id);
+          allRecords.push(item);
+          newRecordsCount++;
+        }
+      }
+
+      // Trang không đem lại bản ghi mới nào -> đã hết dữ liệu hoặc server lặp trang
+      if (newRecordsCount === 0) {
+        break;
+      }
+
+      // Giãn cách nhẹ tránh nghẽn DSE
+      await new Promise(r => setTimeout(r, 100));
     }
 
     console.log(`[PaymentSlipClient] Hoàn tất tra cứu: Đã thu thập tổng cộng ${allRecords.length} Giấy Nộp Tiền qua phân trang tự động`);

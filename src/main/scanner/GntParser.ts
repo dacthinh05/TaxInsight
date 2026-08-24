@@ -3,6 +3,7 @@ import { TaxType } from '../../shared/types';
 import { GntMoneyParser, MoneyParseResult } from './GntMoneyParser';
 import { GntPeriodNormalizer, NormalizedTaxPeriod } from './GntPeriodNormalizer';
 import { TaxNdktClassifier } from '../engine/TaxNdktClassifier';
+import { resolveAllocationColumns } from './GntTableColumns';
 
 export type GntStatus =
   | 'PAID_SUCCESS'
@@ -293,6 +294,7 @@ export class GntParser {
     let sumAllocationsVnd = 0n;
     let hasInvalidRow = false;   // FIX 2: track dòng có amount INVALID
     const seenRowSignatures = new Set<string>(); // FIX 2: detect duplicate rows
+    const col = resolveAllocationColumns($);
 
     $('#chungtu_ctiet tbody tr').each((_, tr) => {
       const $tds = $(tr).find('td');
@@ -300,13 +302,13 @@ export class GntParser {
         const sttText = $tds.eq(0).text().trim();
         const sequence = parseInt(sttText, 10);
         if (!isNaN(sequence)) {
-          const referenceDocumentNo = $tds.eq(1).text().trim() || undefined;
-          const taxPeriodRaw = $tds.eq(2).text().trim() || undefined;
-          const description = $tds.eq(3).text().trim() || undefined;
-          const originalAmount = GntMoneyParser.parse($tds.eq(4).text().trim());
-          const vndAmount = GntMoneyParser.parse($tds.eq(5).text().trim());
-          const chapterCode = $tds.eq(6).text().trim() || undefined;
-          const ndktCode = $tds.eq(7).text().trim() || undefined;
+          const referenceDocumentNo = $tds.eq(col.referenceDoc).text().trim() || undefined;
+          const taxPeriodRaw = $tds.eq(col.taxPeriod).text().trim() || undefined;
+          const description = $tds.eq(col.description).text().trim() || undefined;
+          const originalAmount = GntMoneyParser.parse($tds.eq(col.originalAmount).text().trim());
+          const vndAmount = GntMoneyParser.parse($tds.eq(col.vndAmount).text().trim());
+          const chapterCode = $tds.eq(col.chapter).text().trim() || undefined;
+          const ndktCode = $tds.eq(col.ndkt).text().trim() || undefined;
 
           // FIX 2: Dòng có amount INVALID phá vỡ tính toàn vẹn
           if (vndAmount.status === 'INVALID') {
@@ -344,7 +346,7 @@ export class GntParser {
             inferredTaxType: classification.taxType,
             evidence: {
               periodSource: taxPeriodRaw ? 'DETAIL_TABLE' : 'UNKNOWN',
-              taxTypeSource: classification.confidence === 'EXACT_CODE' ? 'NDKT' : classification.confidence === 'DESCRIPTION_MATCH' ? 'DESCRIPTION' : 'UNKNOWN'
+              taxTypeSource: classification.confidence === 'EXACT_CODE' || classification.confidence === 'CHAPTER_MATCH' ? 'NDKT' : classification.confidence === 'DESCRIPTION_MATCH' ? 'DESCRIPTION' : 'UNKNOWN'
             }
           });
         }

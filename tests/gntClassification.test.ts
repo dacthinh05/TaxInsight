@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyPaymentSlip, enrichSlipWithClassification, SLIP_TAX_TYPE_LABELS } from '../src/shared/gntClassification';
+import { TaxNdktClassifier } from '../src/main/engine/TaxNdktClassifier';
 import { filterPaymentSlips, isPaidSuccessSlip } from '../src/shared/paymentSlipAudit';
 import { PaymentSlipDetail, PaymentSlipRecord } from '../src/shared/types';
 
@@ -83,6 +84,36 @@ describe('classifyPaymentSlip', () => {
   it('nhãn tiếng Việt đầy đủ cho mọi sắc thuế', () => {
     expect(SLIP_TAX_TYPE_LABELS.HOUSE_LAND).toBe('Thuế Nhà đất');
     expect(SLIP_TAX_TYPE_LABELS.FCT).toBe('Thuế nhà thầu');
+  });
+});
+
+describe('TaxNdktClassifier — bổ sung mã & fallback chương', () => {
+  it('tiểu mục 1051 (TNDN SXKD) và 1002 (TNCN kinh doanh) được phân loại đúng', () => {
+    expect(TaxNdktClassifier.classify('1051').taxType).toBe('CIT');
+    expect(TaxNdktClassifier.classify('1002').taxType).toBe('PIT');
+    expect(TaxNdktClassifier.classify('1051').confidence).toBe('EXACT_CODE');
+  });
+
+  it('fallback theo chương: 17xx -> VAT, 38xx/39xx -> Nhà đất, 28xx/74xx/75xx -> Lệ phí/Khác', () => {
+    expect(TaxNdktClassifier.classify('1710')?.taxType).toBe('VAT');
+    expect(TaxNdktClassifier.classify('1710')?.confidence).toBe('CHAPTER_MATCH');
+    expect(TaxNdktClassifier.classify('3807')?.taxType).toBe('HOUSE_LAND');
+    expect(TaxNdktClassifier.classify('3902')?.taxType).toBe('HOUSE_LAND');
+    expect(TaxNdktClassifier.classify('2865')?.taxType).toBe('OTHER');
+    expect(TaxNdktClassifier.classify('7501')?.taxType).toBe('OTHER');
+
+    // Chương 10xx không đoán được PIT vs CIT -> phải UNKNOWN
+    expect(TaxNdktClassifier.classify('1098', 'Khoản nộp lạ').taxType).toBe('UNKNOWN');
+  });
+
+  it('mã bẩn/không phải số không bị khớp chương', () => {
+    expect(TaxNdktClassifier.classify('17A')?.taxType).toBe('UNKNOWN');
+    expect(TaxNdktClassifier.classify('ab17')?.taxType).toBe('UNKNOWN');
+  });
+
+  it('diễn giải "Lệ phí môn bài" -> OTHER thay vì rơi UNKNOWN', () => {
+    expect(TaxNdktClassifier.classify(null, 'Lệ phí môn bài cấp mới lần đầu')?.taxType).toBe('OTHER');
+    expect(TaxNdktClassifier.classify(null, 'Lệ phí sử dụng cơ sở hạ tầng')?.taxType).toBe('OTHER');
   });
 });
 

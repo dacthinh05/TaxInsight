@@ -44,7 +44,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   const [savedAccounts, setSavedAccounts] = React.useState<SavedAccountInfo[]>([]);
   const [isSwitchMenuOpen, setIsSwitchMenuOpen] = React.useState(false);
   const [isFolderMenuOpen, setIsFolderMenuOpen] = React.useState(false);
-  const [appVersion, setAppVersion] = React.useState('2.5.2');
+  const [appVersion, setAppVersion] = React.useState('2.5.3');
 
   React.useEffect(() => {
     if (window.taxPortalAPI?.getAppVersion) {

@@ -16,6 +16,9 @@ export const PORTAL_CONFIG = {
   SSO_REDIRECT_API: 'https://dichvucong.gdt.gov.vn/tthc/sso/redirect-to-service',
   ETAX_BASE_URL: 'https://thuedientu.gdt.gov.vn',
   ETAX_REQUEST_API: 'https://thuedientu.gdt.gov.vn/etaxnnt/Request',
+  // Nhóm giấy nộp tiền gửi lên tham số type_tax khi tra cứu ('01' = GNT vào NSNN).
+  // Nếu portal bổ sung nhóm khác (02...) cần mở rộng thành danh sách và gom nhiều đợt tra cứu.
+  GNT_TYPE_TAX: '01',
   // ─────────────────────────────────────────────────────────────────────────
   DEFAULT_PAGE_SIZE: 20,
   MAX_PAGE_RESULTS_SUSPICIOUS_THRESHOLD: 20, // Server GDT giới hạn cứng 20 bản ghi/trang -> Nếu đủ 20 bản ghi thì bắt buộc tự động phân rã tháng

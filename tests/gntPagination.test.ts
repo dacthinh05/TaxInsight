@@ -66,7 +66,7 @@ describe('GNT Multi-Page Pagination Suite', () => {
     expect(allSlips[22].id).toBe('CTU_23');
   });
 
-  it('should stop pagination if page contains fewer than 10 records', async () => {
+  it('should terminate single-page results via zero-new-records guard (no hardcoded page size)', async () => {
     const mockSession = new PortalSession();
     const client = new PaymentSlipClient(mockSession);
 
@@ -95,6 +95,7 @@ describe('GNT Multi-Page Pagination Suite', () => {
       }
     ];
 
+    // Trang 2+ trả về cùng dữ liệu (server lặp trang cuối) -> guard "không có bản ghi mới" phải dừng
     const spy = vi.spyOn(client, 'queryPaymentSlips').mockResolvedValue({
       success: true,
       data: singlePageRecords
@@ -104,6 +105,64 @@ describe('GNT Multi-Page Pagination Suite', () => {
     const results = await client.searchPaymentSlips(mockRange);
 
     expect(results).toHaveLength(2);
-    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('should collect all pages regardless of page size (e.g. 12-record pages)', async () => {
+    const mockSession = new PortalSession();
+    const client = new PaymentSlipClient(mockSession);
+
+    const mkRecords = (from: number, count: number) => Array.from({ length: count }, (_, i) => ({
+      id: `CTU_${from + i}`,
+      stt: from + i,
+      maGiaoDich: `TX_${from + i}`,
+      soGnt: `GNT_${from + i}`,
+      soTien: 1000000,
+      soTienFormatted: '1.000.000',
+      loaiTien: 'VND',
+      trangThai: 'Nộp thuế thành công',
+      ngayLapGnt: '15/01/2026',
+      downloadAvailable: true
+    }));
+
+    vi.spyOn(client, 'queryPaymentSlips').mockImplementation(async (query) => {
+      const page = query.page || 1;
+      if (page === 1) return { success: true, data: mkRecords(1, 12) };
+      if (page === 2) return { success: true, data: mkRecords(13, 12) };
+      if (page === 3) return { success: true, data: mkRecords(25, 7) };
+      return { success: true, data: [] };
+    });
+
+    const mockRange = { fromDate: '01/01/2026', toDate: '31/12/2026', label: '2026', level: 'YEAR' as const };
+    const all = await client.searchPaymentSlips(mockRange);
+
+    expect(all).toHaveLength(31);
+  });
+
+  it('should THROW instead of silently returning partial data when a mid-page fails', async () => {
+    const mockSession = new PortalSession();
+    const client = new PaymentSlipClient(mockSession);
+
+    const fullPage = Array.from({ length: 20 }, (_, i) => ({
+      id: `CTU_${i + 1}`,
+      stt: i + 1,
+      maGiaoDich: `TX_${i + 1}`,
+      soGnt: `GNT_${i + 1}`,
+      soTien: 1000000,
+      soTienFormatted: '1.000.000',
+      loaiTien: 'VND',
+      trangThai: 'Nộp thuế thành công',
+      ngayLapGnt: '15/01/2026',
+      downloadAvailable: true
+    })) as PaymentSlipRecord[];
+
+    vi.spyOn(client, 'queryPaymentSlips').mockImplementation(async (query) => {
+      if ((query.page || 1) === 1) return { success: true, data: fullPage };
+      return { success: false, data: [], error: 'Lỗi kết nối', errorCode: 'CONNECTIVITY_ERROR' };
+    });
+
+    const mockRange = { fromDate: '01/01/2026', toDate: '31/12/2026', label: '2026', level: 'YEAR' as const };
+
+    await expect(client.searchPaymentSlips(mockRange)).rejects.toMatchObject({ errorCode: 'CONNECTIVITY_ERROR' });
   });
 });

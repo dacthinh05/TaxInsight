@@ -909,12 +909,20 @@ export function setupIpcHandlers(
         return { success: false, error: 'Chưa có danh sách Giấy Nộp Tiền để thống kê' };
       }
 
-      // Lần lượt lấy chi tiết (đã có cache + single-flight trong PaymentSlipClient)
+      // Lấy chi tiết TẤT CẢ các GNT đã nộp (không cắt 200 — phần bị cắt sẽ làm
+      // tiền rơi vào NO_DETAIL khiến cột loại thuế thiếu mà không rõ lý do).
+      // Fetch song song có giới hạn (single-flight & cache vẫn hiệu lực trong client).
       const detailMap = new Map<string, Awaited<ReturnType<PaymentSlipClient['getPaymentSlipDetail']>>>();
       const paidCandidates = list.filter(s => s.ngayNopThue);
-      for (const slip of paidCandidates.slice(0, 200)) {
-        detailMap.set(slip.id, await paymentSlipClient.getPaymentSlipDetail(slip.id));
-      }
+      const GNT_DETAIL_CONCURRENCY = 4;
+      let cursor = 0;
+      const workerCount = Math.min(GNT_DETAIL_CONCURRENCY, paidCandidates.length);
+      await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (cursor < paidCandidates.length) {
+          const slip = paidCandidates[cursor++];
+          detailMap.set(slip.id, await paymentSlipClient.getPaymentSlipDetail(slip.id));
+        }
+      }));
 
       const stats = GntStatisticsEngine.build(list, detailMap);
       auditLogger.log('SUCCESS', `Thong ke GNT: ${stats.paidCount} da nop, tong ${stats.grandTotal} VND`);
