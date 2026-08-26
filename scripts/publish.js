@@ -13,9 +13,18 @@ const pkgPath = path.join(__dirname, '..', 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 
 async function getToken() {
+  // 1. Ưu tiên biến môi trường (không để lại dấu vết trên đĩa)
+  if (process.env.GH_TOKEN && process.env.GH_TOKEN.trim()) {
+    return process.env.GH_TOKEN.trim();
+  }
+
+  // 2. File local đã gitignore (từ phiên trước)
   if (fs.existsSync(tokenPath)) {
     const token = fs.readFileSync(tokenPath, 'utf-8').trim();
-    if (token) return token;
+    if (token) {
+      console.log('[*] Su dung token tu file .github_token (khuyen dung: dat GH_TOKEN trong moi truong).');
+      return token;
+    }
   }
 
   const rl = readline.createInterface({
@@ -24,7 +33,7 @@ async function getToken() {
   });
 
   return new Promise((resolve) => {
-    console.log('[*] Chua tim thay ma GitHub Token tren may cua ban.');
+    console.log('[*] Chua tim thay GitHub Token (env GH_TOKEN hoac file .github_token).');
     rl.question('[*] Vui long dan ma GitHub Token (bat dau bang ghp_) roi Enter: ', (answer) => {
       rl.close();
       const token = answer.trim();
@@ -32,8 +41,8 @@ async function getToken() {
         console.error('\n[!] Loi: Ma Token khong duoc de trong!');
         process.exit(1);
       }
-      fs.writeFileSync(tokenPath, token, 'utf-8');
-      console.log('[OK] Da luu ma Token vao file .github_token\n');
+      // KHONG tu ghi token ra file — ai muon luu thi tu luu, hoac dung env GH_TOKEN
+      console.log('[OK] Su dung token cho phien nay (khong luu vao dia).\n');
       resolve(token);
     });
   });

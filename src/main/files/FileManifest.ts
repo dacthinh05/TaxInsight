@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { FilingType } from '../../shared/types';
 import { atomicWriteJson } from '../persistence/atomicWrite';
+import { safePathSegment } from '../persistence/pathConfinement';
 
 export interface ManifestEntry {
   filingId: string;
@@ -25,8 +26,11 @@ export class FileManifest {
   constructor(targetDir: string, taxCode: string, year: number) {
     // Keep the manifest beside the files. The legacy nested path created a
     // second MST/year tree even though FileOrganizer uses MST_year.
-    this.manifestPath = path.join(targetDir, `${taxCode}_${year}`, '.tax_manifest.json');
-    this.legacyManifestPath = path.join(targetDir, taxCode, String(year), '.tax_manifest.json');
+    // safePathSegment: taxCode đến từ portal — chặn traversal defense-in-depth
+    const safeTaxCode = safePathSegment(taxCode);
+    const safeYear = Math.trunc(Number(year)) || new Date().getFullYear();
+    this.manifestPath = path.join(targetDir, `${safeTaxCode}_${safeYear}`, '.tax_manifest.json');
+    this.legacyManifestPath = path.join(targetDir, safeTaxCode, String(safeYear), '.tax_manifest.json');
     this.load();
   }
 
@@ -43,17 +47,39 @@ export class FileManifest {
         }
       }
     } catch {
-      this.entries.clear();
+      // FIX mất dữ liệu: trước đây manifest hỏng → entries.clear() → lần
+      // recordDownload kế tiếp GHI ĐÈ manifest chỉ còn entry mới, xóa sạch
+      // lịch sử download. Giờ giữ nguyên entries đã nạp (nếu có) và KHÔNG ghi
+      // đè manifest khi load lỗi — chỉ báo lỗi để điều tra.
+      if (this.entries.size === 0) {
+        console.warn('[FileManifest] Manifest hỏng/không đọc được — giữ nguyên file, không ghi đè cho tới khi có bản ghi mới được xác nhận.');
+      }
     }
   }
 
   public save() {
     try {
-      const obj: Record<string, ManifestEntry> = {};
-      for (const [k, v] of this.entries.entries()) {
-        obj[k] = v;
+      // Merge với nội dung trên đĩa: nếu load() lúc đầu hỏng (entries mất),
+      // ghi đè thẳng sẽ xóa sạch lịch sử download. Đọc lại file hiện có và
+      // overlay các entry mới/updated lên trên.
+      const merged: Record<string, ManifestEntry> = {};
+      try {
+        if (fs.existsSync(this.manifestPath)) {
+          const diskData = JSON.parse(fs.readFileSync(this.manifestPath, 'utf-8'));
+          if (typeof diskData === 'object' && diskData !== null) {
+            Object.assign(merged, diskData);
+          }
+        }
+      } catch {
+        // File đĩa hỏng — backup trước khi ghi đè để còn khôi phục thủ công
+        try {
+          fs.copyFileSync(this.manifestPath, `${this.manifestPath}.corrupt-${Date.now()}.bak`);
+        } catch {}
       }
-      atomicWriteJson(this.manifestPath, obj, true);
+      for (const [k, v] of this.entries.entries()) {
+        merged[k] = v;
+      }
+      atomicWriteJson(this.manifestPath, merged, true);
     } catch (err) {
       console.error('Không thể ghi file manifest:', err);
     }

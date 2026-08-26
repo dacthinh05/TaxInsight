@@ -11,6 +11,7 @@
  * Khoản tiền khi KHÔNG lấy được chi tiết sẽ vào cột "Chưa phân loại" (giữ bảo toàn tiền).
  */
 import { PaymentSlipDetail, PaymentSlipRecord } from '../../shared/types';
+import { parseMoneyToBigInt } from '../../shared/moneyUtils';
 import { TaxNdktClassifier } from './TaxNdktClassifier';
 
 export type GntStatBucket = 'VAT' | 'PIT' | 'CIT' | 'FCT' | 'HOUSE_LAND' | 'OTHER' | 'NO_DETAIL';
@@ -67,9 +68,9 @@ function isPaidSuccess(record: PaymentSlipRecord): boolean {
 }
 
 function parseVnd(formatted?: string): number {
-  if (!formatted) return 0;
-  const n = Number(String(formatted).replace(/[^\d-]/g, ''));
-  return Number.isFinite(n) ? n : 0;
+  // Ủy quyền cho parser BigInt chung: trước đây strip mọi ký tự non-digit khiến
+  // "99,921,049.00" thành 999210490 (sai ×10) và "1.234" thành 1234.
+  return Number(parseMoneyToBigInt(formatted ?? ''));
 }
 
 export class GntStatisticsEngine {

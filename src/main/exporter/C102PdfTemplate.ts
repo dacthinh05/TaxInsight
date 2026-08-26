@@ -13,7 +13,24 @@ function esc(v?: string | null): string {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Tổng tiền hiển thị trên mẫu C1-02: tổng chi tiết nếu hợp lệ (khác rỗng/"0"),
+ * không thì tự cộng các dòng khoản nộp. Tránh in "0" khi bảng chi tiết bị
+ * parse degenerate (tổng MISSING → backend trả rỗng).
+ */
+function resolveTotalVnd(detail: PaymentSlipDetail): string {
+  const fromDetail = (detail.tongTienVND || '').trim();
+  if (fromDetail && fromDetail !== '0') return fromDetail;
+  let sum = 0;
+  for (const it of detail.items) {
+    const n = Number((it.soTienVND || '').replace(/[,.]/g, ''));
+    if (Number.isFinite(n)) sum += n;
+  }
+  return sum > 0 ? String(sum) : '';
+}
+
 export function buildC102Html(detail: PaymentSlipDetail): string {
+  const totalVnd = resolveTotalVnd(detail);
   const rowsHtml = detail.items.length > 0
     ? detail.items.map((it, idx) => `
         <tr>
@@ -32,7 +49,7 @@ export function buildC102Html(detail: PaymentSlipDetail): string {
           <td class="c">1</td><td>&nbsp;</td><td>&nbsp;</td>
           <td>Khoản nộp thuế vào Ngân sách Nhà nước</td>
           <td class="r">&nbsp;</td>
-          <td class="r b">${esc(detail.tongTienVND)}</td>
+          <td class="r b">${esc(totalVnd) || '&nbsp;'}</td>
           <td class="c">&nbsp;</td><td class="c">&nbsp;</td><td class="c">&nbsp;</td>
         </tr>`;
 
@@ -155,7 +172,7 @@ export function buildC102Html(detail: PaymentSlipDetail): string {
       <tr class="total">
         <td colspan="4" class="total-label">TỔNG SỐ TIỀN:</td>
         <td class="r">&nbsp;</td>
-        <td class="r">${esc(detail.tongTienVND)}</td>
+        <td class="r">${esc(totalVnd) || '&nbsp;'}</td>
         <td colspan="3">&nbsp;</td>
       </tr>
     </tbody>

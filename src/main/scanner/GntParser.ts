@@ -365,11 +365,13 @@ export class GntParser {
           }
 
           // FIX 2: Detect duplicate rows bằng signature (period+ndkt+amount)
+          // Chỉ WARN, không ép integrity xuống PARTIAL: 2 khoản hợp lệ trùng
+          // kỳ+tiểu mục+số tiền (nộp 2 đợt giống hệt nhau) là dữ liệu THẬT.
+          // Nếu là duplicate do parse hỏng thì tổng các dòng sẽ lệch tổng header
+          // và bị bắt ở bước so sum → MISMATCH, không cần downgrade ở đây.
           const rowSig = `${taxPeriodRaw}|${ndktCode}|${chapterCode}|${vndAmount.raw}|${referenceDocumentNo}`;
           if (seenRowSignatures.has(rowSig)) {
-            // Duplicate row — đánh dấu invalid nhưng vẫn record để debug
-            hasInvalidRow = true;
-            console.warn(`[GntParser] Duplicate allocation row detected: ${rowSig}`);
+            console.warn(`[GntParser] Duplicate allocation row signature (có thể là 2 đợt nộp giống nhau): ${rowSig}`);
           } else {
             seenRowSignatures.add(rowSig);
           }
@@ -407,6 +409,12 @@ export class GntParser {
         totalVndAmount = { status: 'VALID', value: sumAllocationsVnd, raw: GntMoneyParser.formatVND(sumAllocationsVnd) };
       } else if (allocations.length > 0) {
         totalVndAmount = GntMoneyParser.parse(allocations[0].vndAmount.raw);
+      } else {
+        // Không parse được DÒNG NÀO và #sum = 0/missing → tổng tiền KHÔNG XÁC
+        // ĐỊNH (bảng chi tiết thường không khớp selector). Trước đây trả về
+        // { VALID, 0n } khiến UI hiển thị "TỔNG TIỀN: 0 đ" trong khi dòng tiền
+        // lấy từ danh sách vẫn đúng. MISSING để tầng trên biết phải fallback.
+        totalVndAmount = { status: 'MISSING', value: 0n, raw: totalRawVnd };
       }
     }
     const totalTextVnd = $('#sotienbangchu_VND').text().trim() || undefined;

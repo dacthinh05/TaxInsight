@@ -25,6 +25,22 @@ export interface GntCoverageSummary {
 
 export class TaxPaymentMatcher {
   /**
+   * Trạng thái GNT có phải là NỘP THÀNH CÔNG không.
+   * Dùng khớp CHÍNH XÁC thay vì includes('thành công') — trước đây
+   * 'không thành công'.includes('thành công') === true khiến GNT THẤT BẠI
+   * bị tính nhầm là đã nộp, đội số liệu coverage và phân bổ nghĩa vụ.
+   */
+  public static isPaidSuccessSlip(slip: { trangThai?: string }): boolean {
+    const s = (slip.trangThai || '').toLowerCase().trim();
+    if (!s) return false;
+    // Loại trừ rõ ràng các trạng thái phủ định trước khi khớp positive
+    if (s.includes('không thành công') || s.includes('ko thành công') || s.includes('thất bại') || s.includes('hủy')) {
+      return false;
+    }
+    return s.includes('thành công') || s.includes('đã nộp');
+  }
+
+  /**
    * Tính toán tóm tắt độ phủ và tính toàn vẹn của dữ liệu GNT
    */
   public static calculateCoverageSummary(
@@ -41,13 +57,21 @@ export class TaxPaymentMatcher {
 
     for (const slip of slips) {
       totalListAmount += parseMoneyToBigInt(slip.soTien ?? slip.soTienFormatted);
-      if (slip.trangThai?.toLowerCase().includes('thành công') || slip.trangThai?.toLowerCase().includes('đã nộp')) {
+      if (TaxPaymentMatcher.isPaidSuccessSlip(slip)) {
         detailRequested++;
         const detail = details?.get(slip.id);
         if (detail && detail.items && detail.items.length > 0) {
           detailParsed++;
           allocationCount += detail.items.length;
-          totalParsedAmount += parseMoneyToBigInt(detail.tongTienVND);
+          // Tổng chi tiết rỗng (bảng parse degenerate) → cộng tổng từ các dòng
+          const detailTotal = (detail.tongTienVND || '').trim();
+          if (detailTotal && detailTotal !== '0') {
+            totalParsedAmount += parseMoneyToBigInt(detailTotal);
+          } else {
+            for (const it of detail.items) {
+              totalParsedAmount += parseMoneyToBigInt(it.soTienVND || '0');
+            }
+          }
         } else if (details?.has(slip.id)) {
           detailFailed++;
         }
@@ -136,15 +160,9 @@ export class TaxPaymentMatcher {
         }> = [];
 
         for (const slip of sortedSlips) {
-          // Chỉ đối chiếu các GNT đã nộp thành công (PAID_SUCCESS)
-          const isSuccess = slip.trangThai?.toLowerCase().includes('thành công') ||
-                            slip.trangThai?.toLowerCase().startsWith('đã nộp');
-          // FIX 1 companion: không match GNT có status FAILED/PENDING
-          const isFailed = slip.trangThai?.toLowerCase().includes('không thành công') ||
-                           slip.trangThai?.toLowerCase().includes('thất bại') ||
-                           slip.trangThai?.toLowerCase().includes('hủy') ||
-                           slip.trangThai?.toLowerCase().includes('huỷ');
-          if (!isSuccess || isFailed) continue;
+          // Chỉ đối chiếu các GNT đã nộp thành công (PAID_SUCCESS) — khớp chính
+          // xác, loại trừ "không thành công" (tránh bug includes)
+          if (!this.isPaidSuccessSlip(slip)) continue;
 
           const detail = paymentDetails?.get(slip.id);
 
@@ -266,9 +284,7 @@ export class TaxPaymentMatcher {
         let hasPossibleCandidate = false;
         for (const slip of sortedSlips) {
           if (hasPossibleCandidate) break;
-          const isSuccess = slip.trangThai?.toLowerCase().includes('thành công') ||
-                            slip.trangThai?.toLowerCase().startsWith('đã nộp');
-          if (!isSuccess) continue;
+          if (!this.isPaidSuccessSlip(slip)) continue;
           const detail = paymentDetails?.get(slip.id);
           if (detail?.items?.length) {
             for (const item of detail.items) {

@@ -139,13 +139,16 @@ describe("FIX 2 (P1): detailIntegrity strict VERIFIED", () => {
     expect(r.detailIntegrity).toBe("PARTIAL");
     expect(r.detailIntegrity).not.toBe("VERIFIED");
   });
-  it("Duplicate rows same signature → PARTIAL", () => {
+  it("Duplicate rows same signature + sum khớp tổng → VERIFIED (2 đợt nộp giống nhau là dữ liệu THẬT)", () => {
     const html = makeDetailHtml(
       `<tr><td>1</td><td>TK001</td><td>00/12/2025</td><td>Thuế TNCN</td><td></td><td>50,000,000</td><td>557</td><td>1001</td></tr>
        <tr><td>2</td><td>TK001</td><td>00/12/2025</td><td>Thuế TNCN</td><td></td><td>50,000,000</td><td>557</td><td>1001</td></tr>`,
       "100,000,000"
     );
-    expect(GntParser.parseDetail(html, "c3").detailIntegrity).toBe("PARTIAL");
+    // Audit round 2: duplicate signature KHÔNG còn ép PARTIAL — 2 khoản hợp lệ
+    // trùng kỳ+tiểu mục+số tiền (nộp 2 đợt) là dữ liệu thật. Parse hỏng nhân
+    // đôi dòng vẫn bị bắt ở bước so sum (→ MISMATCH).
+    expect(GntParser.parseDetail(html, "c3").detailIntegrity).toBe("VERIFIED");
   });
   it("Sum mismatch → MISMATCH", () => {
     const html = makeDetailHtml(

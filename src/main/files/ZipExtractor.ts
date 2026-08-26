@@ -188,6 +188,9 @@ export class ZipExtractor {
     let pdfPath: string | undefined;
     let allIdentical = true;
     let totalUncompressed = 0;
+    // Đếm tên file đích đã dùng trong lần giải nén này: 2 entry khác thư mục
+    // trùng basename (a/x.xml, b/x.xml) trước đây GHI ĐÈ nhau im lặng
+    const usedTargetNames = new Set<string>();
 
     for (const entry of entries) {
       if (entry.isDirectory) continue;
@@ -213,9 +216,23 @@ export class ZipExtractor {
       const ext = path.extname(entryName).toLowerCase();
       const originalBasename = path.basename(entryName, ext);
 
-      const finalFileName = sanitizeFilename(
+      let finalFileName = sanitizeFilename(
         `${prefixCode}_${cleanPeriod}_${filingSuffix}_${originalBasename}${ext}`
       );
+
+      // Trùng tên trong cùng lần giải nén → thêm hậu tố _2, _3... thay vì ghi đè
+      if (usedTargetNames.has(finalFileName.toLowerCase())) {
+        let counter = 2;
+        let candidate: string;
+        do {
+          candidate = sanitizeFilename(
+            `${prefixCode}_${cleanPeriod}_${filingSuffix}_${originalBasename}_${counter}${ext}`
+          );
+          counter++;
+        } while (usedTargetNames.has(candidate.toLowerCase()));
+        finalFileName = candidate;
+      }
+      usedTargetNames.add(finalFileName.toLowerCase());
 
       const targetPath = path.join(destDir, finalFileName);
       const entryData = entry.getData();

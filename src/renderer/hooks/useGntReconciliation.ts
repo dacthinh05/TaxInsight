@@ -6,13 +6,12 @@ import {
   PaymentSlipRecord
 } from '../../shared/types';
 import { resolveScanDateRange } from '../../shared/dateUtils';
+// Dùng chung 1 định nghĩa duy nhất với phần còn lại của app (trước đây có 3 bản
+// isPaidSuccessSlip khác nhau rải rác — bản này thiếu 'thất bại')
+import { isPaidSuccessSlip } from '../../shared/paymentSlipAudit';
+export { isPaidSuccessSlip };
 
 export type PaymentQueryStatus = 'CONNECTED_WITH_DATA' | 'CONNECTED_NO_DATA' | 'QUERY_FAILED' | 'NOT_QUERIED';
-
-export const isPaidSuccessSlip = (slip: PaymentSlipRecord): boolean => {
-  const st = (slip.trangThai || '').toLowerCase();
-  return (st.includes('thành công') || st.startsWith('đã nộp')) && !st.includes('không thành công');
-};
 
 /** Lấy năm từ DateRange (dd/MM/yyyy) — dùng để gộp/trả phạm vi phủ theo từng năm */
 const yearOfRange = (range: DateRange): number => {

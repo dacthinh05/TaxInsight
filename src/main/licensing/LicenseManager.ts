@@ -51,7 +51,14 @@ export class LicenseManager {
   }
   private static _testPublicKeyHex: string | null = null;
 
+  /** @internal Chỉ dành cho unit test: trỏ toàn bộ storage vào thư mục tạm */
+  public static _testOverrideBaseDir(dir: string | null): void {
+    LicenseManager._testBaseDir = dir;
+  }
+  private static _testBaseDir: string | null = null;
+
   private static getUserDataPath(): string {
+    if (LicenseManager._testBaseDir) return LicenseManager._testBaseDir;
     if (app && typeof app.getPath === 'function') {
       return app.getPath('userData');
     }
@@ -60,6 +67,7 @@ export class LicenseManager {
   }
 
   private static getAppDataPath(): string {
+    if (LicenseManager._testBaseDir) return LicenseManager._testBaseDir;
     if (app && typeof app.getPath === 'function') {
       return app.getPath('appData');
     }
@@ -121,19 +129,77 @@ export class LicenseManager {
     return primaryPath;
   }
 
+  private static getShadowTrialFilePath(): string {
+    // Bản shadow nằm ở thư mục AppData/Roaming/TaxInsight (KHÁC userData) để
+    // xóa một mình file chính không reset được trial.
+    const base = this.getAppDataPath();
+    return path.join(base, 'TaxInsight', '.taxrecord_trial_shadow.dat');
+  }
+
+  /** Đọc 1 file trial: hỗ trợ định dạng V2 (có HMAC) và ISO trần (legacy) */
+  private static readTrialDateFile(filePath: string): Date | null {
+    try {
+      if (!fs.existsSync(filePath)) return null;
+      const raw = fs.readFileSync(filePath, 'utf-8').trim();
+      if (!raw) return null;
+
+      if (raw.startsWith('V2:')) {
+        const [, hmacHex, iso] = raw.split(':');
+        if (!hmacHex || !iso) return null;
+        const expected = crypto
+          .createHmac('sha256', LEGACY_HMAC_SECRET)
+          .update(iso)
+          .digest('hex')
+          .toUpperCase();
+        if (!this.safeEqualStr(hmacHex.toUpperCase(), expected)) return null; // bị sửa → bỏ qua
+        const d = new Date(iso);
+        return isNaN(d.getTime()) ? null : d;
+      }
+
+      // Legacy: ISO trần — chấp nhận nhưng sẽ được nâng cấp lên V2 khi ghi lại
+      const d = new Date(raw);
+      return isNaN(d.getTime()) ? null : d;
+    } catch {
+      return null;
+    }
+  }
+
+  private static writeTrialDateFile(filePath: string, d: Date): void {
+    try {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const iso = d.toISOString();
+      const hmac = crypto.createHmac('sha256', LEGACY_HMAC_SECRET).update(iso).digest('hex').toUpperCase();
+      fs.writeFileSync(filePath, `V2:${hmac}:${iso}`, 'utf-8');
+    } catch {
+      // Bỏ qua — không chặn việc khởi động app
+    }
+  }
+
   /**
-   * Lấy hoặc khởi tạo thời điểm dùng thử 7 ngày đầu tiên
+   * Lấy hoặc khởi tạo thời điểm dùng thử 7 ngày đầu tiên.
+   * Quản lý bằng 2 bản ghi (chính + shadow) đều có HMAC: sửa date trong file
+   * hoặc xóa 1 trong 2 file không còn reset được trial.
    */
   private static getTrialStartDate(): Date {
     try {
-      const trialFile = this.getTrialFilePath();
-      if (fs.existsSync(trialFile)) {
-        const raw = fs.readFileSync(trialFile, 'utf-8').trim();
-        const d = new Date(raw);
-        if (!isNaN(d.getTime())) return d;
+      const primaryPath = this.getTrialFilePath();
+      const shadowPath = this.getShadowTrialFilePath();
+      const primary = this.readTrialDateFile(primaryPath);
+      const shadow = this.readTrialDateFile(shadowPath);
+
+      const candidates = [primary, shadow].filter((d): d is Date => d instanceof Date && !isNaN(d.getTime()));
+      if (candidates.length > 0) {
+        // Chọn mốc SỚM NHẤT trong các bản ghi hợp lệ (thiên về fail-closed)
+        const earliest = candidates.reduce((a, b) => (a.getTime() <= b.getTime() ? a : b));
+        // Tự nâng cấp bản legacy (ISO trần) lên V2 và khôi phục bản bị xóa
+        this.writeTrialDateFile(primaryPath, earliest);
+        this.writeTrialDateFile(shadowPath, earliest);
+        return earliest;
       }
+
       const now = new Date();
-      fs.writeFileSync(trialFile, now.toISOString(), 'utf-8');
+      this.writeTrialDateFile(primaryPath, now);
+      this.writeTrialDateFile(shadowPath, now);
       return now;
     } catch {
       return new Date();
@@ -213,7 +279,16 @@ export class LicenseManager {
 
   /** Xác thực chữ ký HMAC của key ĐỊNH DẠNG CŨ (chỉ đọc, không cấp mới) */
   private static verifyLegacyHmacSignature(payload: LicensePayload): { ok: boolean; error?: string } {
-    if (payload.issuedAt && new Date(payload.issuedAt).getTime() >= new Date(LEGACY_HMAC_ACCEPT_BEFORE_ISO).getTime()) {
+    // BẮT BUỘC có issuedAt hợp lệ: không cho phép bỏ qua mốc cutoff bằng cách
+    // omit/trường rỗng (trước đây key thiếu issuedAt được chấp nhận vô thời hạn).
+    if (!payload.issuedAt) {
+      return { ok: false, error: 'Mã định dạng cũ thiếu ngày cấp — không còn được chấp nhận. Vui lòng liên hệ nhà cung cấp để nhận mã mới.' };
+    }
+    const issuedTime = new Date(payload.issuedAt).getTime();
+    if (isNaN(issuedTime)) {
+      return { ok: false, error: 'Mã định dạng cũ có ngày cấp không hợp lệ. Vui lòng liên hệ nhà cung cấp để nhận mã mới.' };
+    }
+    if (issuedTime >= new Date(LEGACY_HMAC_ACCEPT_BEFORE_ISO).getTime()) {
       return {
         ok: false,
         error: 'Đây là mã định dạng cũ đã ngừng cấp. Vui lòng liên hệ nhà cung cấp để nhận mã kích hoạt mới.'
@@ -365,9 +440,12 @@ export class LicenseManager {
       const licenseData = {
         key: keyStr.trim(),
         activatedAt: new Date().toISOString(),
-        // Ghi lại Machine ID khớp lúc kích hoạt: nếu sau này phần cứng đổi
-        // (cắm dock mạng, đổi hostname...), trạng thái kích hoạt vẫn được giữ
-        activatedMachineId: verification.payload.machineId.toUpperCase(),
+        // Ghi lại Machine ID CỦA MÁY HIỆN TẠI lúc kích hoạt (không phải machineId
+        // trong key): hồ sơ kích hoạt gắn với phần cứng này, copy file sang máy
+        // khác sẽ KHÔNG qua được bước sticky verification. Nếu sau này phần cứng
+        // đổi nhẹ (cắm dock, đổi hostname, đổi MAC — MachineGuid vẫn giữ nguyên),
+        // trạng thái kích hoạt vẫn được giữ.
+        activatedMachineId: MachineIdProvider.getMachineId().toUpperCase(),
         payload: verification.payload
       };
 
@@ -424,16 +502,16 @@ export class LicenseManager {
       let verification = this.verifyLicenseKey(keyToVerify);
 
       // Sticky activation: nếu phần cứng ĐỔI SAU KHI kích hoạt thành công
-      // (signature & hạn vẫn hợp lệ, máy hiện tại khác máy lúc kích hoạt),
-      // vẫn giữ nguyên hiệu lực dựa trên hồ sơ kích hoạt đã mã hóa trên chính máy này.
+      // (signature & hạn vẫn hợp lệ), vẫn giữ nguyên hiệu lực CHỈ KHI máy hiện
+      // tại trùng với máy đã kích hoạt hồ sơ này (activatedMachineId ghi lúc
+      // activate). Copy file license sang máy khác sẽ thất bại ở bước so này.
       if (!verification.success && verification.errorCode === 'MACHINE_MISMATCH' && activatedMachineId) {
-        const reParsed = this.verifySignatureAndExpiry(this.parseKeyPayload(keyToVerify));
-        if (
-          reParsed.success &&
-          reParsed.payload &&
-          this.safeEqualStr(reParsed.payload.machineId.toUpperCase(), activatedMachineId)
-        ) {
-          verification = { ...reParsed, payload: reParsed.payload };
+        const currentMachineId = MachineIdProvider.getMachineId().toUpperCase();
+        if (this.safeEqualStr(currentMachineId, activatedMachineId.toUpperCase())) {
+          const reParsed = this.verifySignatureAndExpiry(this.parseKeyPayload(keyToVerify));
+          if (reParsed.success && reParsed.payload) {
+            verification = { ...reParsed, payload: reParsed.payload };
+          }
         }
       }
 
@@ -503,5 +581,38 @@ export class LicenseManager {
     const cleanKey = keyStr.trim().replace(/\s+/g, '');
     const jsonStr = Buffer.from(cleanKey, 'base64').toString('utf-8');
     return JSON.parse(jsonStr);
+  }
+
+  // ─── TEST HOOKS (@internal — không dùng trong production) ────────────────
+
+  /** @internal Chỉ dành cho unit test: ghi sẵn hồ sơ license đã mã hóa */
+  public static _testSeedLicenseFile(keyStr: string, activatedMachineId?: string): void {
+    const licenseData = {
+      key: keyStr.trim(),
+      activatedAt: new Date().toISOString(),
+      activatedMachineId: (activatedMachineId || MachineIdProvider.getMachineId()).toUpperCase(),
+      payload: this.parseKeyPayload(keyStr)
+    };
+    fs.writeFileSync(
+      this.getLicenseFilePath(),
+      this.encryptLocalLicense(JSON.stringify(licenseData)),
+      'utf-8'
+    );
+  }
+
+  /** @internal Chỉ dành cho unit test: xóa hồ sơ license + trial */
+  public static _testRemoveLicenseAndTrialFiles(): void {
+    for (const p of [this.getLicenseFilePath(), this.getTrialFilePath(), this.getShadowTrialFilePath()]) {
+      try {
+        fs.rmSync(p, { force: true });
+      } catch {
+        // Bỏ qua
+      }
+    }
+  }
+
+  /** @internal Chỉ dành cho unit test: đường dẫn 2 file trial (chính + shadow) */
+  public static _testGetTrialFilePaths(): { primary: string; shadow: string } {
+    return { primary: this.getTrialFilePath(), shadow: this.getShadowTrialFilePath() };
   }
 }

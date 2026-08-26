@@ -76,6 +76,22 @@
         </div>
       </div>
 
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1">
+          Khóa ký legacy (HMAC secret) <span class="text-red-400">*</span>
+        </label>
+        <input
+          id="signingSecret"
+          type="password"
+          placeholder="Dán khóa ký legacy (không còn lưu trong file này)"
+          class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm text-amber-300 font-mono focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all"
+        />
+        <p class="text-[11px] text-amber-400/80 mt-1">
+          ⚠️ Công cụ này chỉ để cấp lại key legacy cho khách cũ. Key mới hãy dùng
+          <code class="text-slate-300">npx tsx scripts/keygen.ts</code> (Ed25519, an toàn hơn).
+        </p>
+      </div>
+
       <button
         onclick="generateKey()"
         class="w-full mt-2 bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-slate-950 font-bold py-3 px-4 rounded-xl shadow-lg shadow-teal-500/20 active:scale-[0.99] transition-all flex items-center justify-center space-x-2"
@@ -116,8 +132,8 @@
   </div>
 
   <script>
-    const SECRET_SIGN_KEY = 'TR_2026_MASTER_SECRET_KEY_TAXRECORD_VIETNAM_SECURE_AUTH';
-
+    // KHÔNG còn hardcode secret trong file (đã từng bị lộ qua git).
+    // Người vận hành phải dán khóa ký legacy vào ô nhập ở trên mỗi phiên.
     function updateExpiryHelp() {
       const tier = document.getElementById('tier').value;
       const expiryInput = document.getElementById('expiryDate');
@@ -135,17 +151,23 @@
       const customerName = document.getElementById('customerName').value.trim() || 'Khách hàng TaxInsight';
       const tier = document.getElementById('tier').value;
       const expiryDate = document.getElementById('expiryDate').value || '2099-12-31';
+      const signingSecret = document.getElementById('signingSecret').value.trim();
 
       if (!machineId) {
         alert('Vui lòng nhập Mã máy (Machine ID) của khách hàng!');
         document.getElementById('machineId').focus();
         return;
       }
+      if (!signingSecret) {
+        alert('Vui lòng nhập khóa ký legacy (HMAC secret)!');
+        document.getElementById('signingSecret').focus();
+        return;
+      }
 
       const issuedAt = new Date().toISOString();
       const dataToSign = `${machineId}|${customerName}|${tier}|${expiryDate}|${issuedAt}`;
       
-      const signature = CryptoJS.HmacSHA256(dataToSign, SECRET_SIGN_KEY).toString(CryptoJS.enc.Hex).toUpperCase();
+      const signature = CryptoJS.HmacSHA256(dataToSign, signingSecret).toString(CryptoJS.enc.Hex).toUpperCase();
 
       const payload = {
         machineId,

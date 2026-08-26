@@ -1,5 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { MachineIdProvider } from '../src/main/licensing/MachineIdProvider';
 import { LicenseManager, LicensePayload } from '../src/main/licensing/LicenseManager';
 
@@ -195,5 +198,133 @@ describe('TaxRecord Licensing (Ed25519) & Machine ID Engine', () => {
     const verification = LicenseManager.verifyLicenseKey(key);
     expect(verification.success).toBe(false);
     expect(verification.error).toContain('định dạng cũ đã ngừng cấp');
+  });
+});
+
+describe('License hardening — chống forge & chống copy hồ sơ sang máy khác', () => {
+  const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'taxrecord-lic-test-'));
+
+  beforeEach(() => {
+    LicenseManager._testOverrideEd25519PublicKey(TEST_PUBLIC_HEX);
+    LicenseManager._testOverrideBaseDir(tmpBase);
+    LicenseManager._testRemoveLicenseAndTrialFiles();
+  });
+
+  afterEach(() => {
+    LicenseManager._testRemoveLicenseAndTrialFiles();
+    LicenseManager._testOverrideBaseDir(null);
+    LicenseManager._testOverrideEd25519PublicKey(null);
+  });
+
+  it('KEY HMAC KHÔNG CÓ issuedAt bị từ chối tuyệt đối (không còn bỏ qua cutoff)', () => {
+    const currentMachineId = MachineIdProvider.getMachineId();
+    const payload: any = {
+      machineId: currentMachineId,
+      customerName: 'Kẻ cố tình bỏ issuedAt',
+      tier: 'LIFETIME',
+      expiryDate: '2099-12-31',
+      issuedAt: ''
+    };
+    // Ký đúng thuật toán legacy nhưng cố tình để issuedAt rỗng
+    const dataToSign = `${payload.machineId.toUpperCase()}|${payload.customerName}|${payload.tier}|${payload.expiryDate}|`;
+    const signature = crypto.createHmac('sha256', LEGACY_SECRET).update(dataToSign).digest('hex').toUpperCase();
+    const forgedKey = Buffer.from(JSON.stringify({ ...payload, signature }), 'utf-8').toString('base64');
+
+    const verification = LicenseManager.verifyLicenseKey(forgedKey);
+    expect(verification.success).toBe(false);
+    expect(verification.error).toContain('thiếu ngày cấp');
+  });
+
+  it('KEY HMAC issuedAt không parse được (garbage) bị từ chối', () => {
+    const currentMachineId = MachineIdProvider.getMachineId();
+    const payload: any = {
+      machineId: currentMachineId,
+      customerName: 'Issued At Rác',
+      tier: 'LIFETIME',
+      expiryDate: '2099-12-31',
+      issuedAt: 'not-a-date'
+    };
+    const dataToSign = `${payload.machineId.toUpperCase()}|${payload.customerName}|${payload.tier}|${payload.expiryDate}|not-a-date`;
+    const signature = crypto.createHmac('sha256', LEGACY_SECRET).update(dataToSign).digest('hex').toUpperCase();
+    const forgedKey = Buffer.from(JSON.stringify({ ...payload, signature }), 'utf-8').toString('base64');
+
+    const verification = LicenseManager.verifyLicenseKey(forgedKey);
+    expect(verification.success).toBe(false);
+    expect(verification.error).toContain('không hợp lệ');
+  });
+
+  it('STICKY: máy hiện tại = máy đã kích hoạt → giữ hiệu lực dù payload.machineId khác (đổi phần cứng)', () => {
+    const currentMachineId = MachineIdProvider.getMachineId();
+    // Key cấp cho machineId KHÁC máy hiện tại (giả lập payload cũ sau khi phần cứng đổi)
+    const key = LicenseManager.generateLicenseKey(
+      {
+        machineId: 'TR-AAAA-BBBB-CCCC-DDDD',
+        customerName: 'Khách đổi phần cứng',
+        tier: 'LIFETIME',
+        expiryDate: '2099-12-31',
+        issuedAt: new Date().toISOString()
+      },
+      TEST_PRIVATE_HEX
+    );
+    // Hồ sơ kích hoạt ghi Machine ID của máy này lúc activate
+    LicenseManager._testSeedLicenseFile(key, currentMachineId);
+
+    const status = LicenseManager.getLicenseStatus();
+    expect(status.isActivated).toBe(true);
+    expect(status.tier).toBe('LIFETIME');
+    expect(status.customerName).toBe('Khách đổi phần cứng');
+  });
+
+  it('CHỐNG COPY: hồ sơ kích hoạt của máy KHÁC copy sang máy này → mất hiệu lực', () => {
+    // Key hợp lệ cho máy "gốc", hồ sơ kích hoạt cũng ghi máy "gốc"
+    const key = LicenseManager.generateLicenseKey(
+      {
+        machineId: 'TR-AAAA-BBBB-CCCC-DDDD',
+        customerName: 'Khách copy file sang máy lạ',
+        tier: 'LIFETIME',
+        expiryDate: '2099-12-31',
+        issuedAt: new Date().toISOString()
+      },
+      TEST_PRIVATE_HEX
+    );
+    LicenseManager._testSeedLicenseFile(key, 'TR-FFFF-EEEE-DDDD-CCCC'); // ≠ máy hiện tại
+
+    const status = LicenseManager.getLicenseStatus();
+    expect(status.isActivated).toBe(false);
+    expect(status.tierLabel).toBe('Bản quyền không hợp lệ');
+  });
+
+  it('TRIAL: file trial ghi dạng V2 có HMAC, tự khôi phục khi 1 file bị xóa', () => {
+    // Lần gọi đầu: khởi tạo trial + ghi 2 file
+    const first = LicenseManager.getLicenseStatus();
+    expect(first.isTrial).toBe(true);
+
+    const { primary, shadow } = LicenseManager._testGetTrialFilePaths();
+    expect(fs.existsSync(primary)).toBe(true);
+    expect(fs.existsSync(shadow)).toBe(true);
+    expect(fs.readFileSync(primary, 'utf-8')).toMatch(/^V2:[0-9A-F]{64}:/);
+    expect(fs.readFileSync(shadow, 'utf-8')).toMatch(/^V2:[0-9A-F]{64}:/);
+
+    // Xóa file chính → shadow còn → trial KHÔNG reset
+    fs.rmSync(primary, { force: true });
+    const second = LicenseManager.getLicenseStatus();
+    expect(second.isTrial).toBe(true);
+    expect(fs.existsSync(primary)).toBe(true); // được khôi phục từ shadow
+    expect(fs.readFileSync(primary, 'utf-8')).toBe(fs.readFileSync(shadow, 'utf-8'));
+  });
+
+  it('TRIAL: sửa date trong file (HMAC lệch) → bỏ qua bản giả mạo, dùng bản còn nguyên', () => {
+    LicenseManager.getLicenseStatus(); // khởi tạo
+    const { primary, shadow } = LicenseManager._testGetTrialFilePaths();
+
+    // Giả mạo file chính: date lùi xa 100 ngày nhưng HMAC không khớp
+    const fakeDate = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString();
+    fs.writeFileSync(primary, `V2:${'0'.repeat(64)}:${fakeDate}`, 'utf-8');
+
+    const status = LicenseManager.getLicenseStatus();
+    expect(status.isTrial).toBe(true);
+    expect(status.daysRemaining).toBe(7); // không bị lợi 100 ngày
+    // File giả mạo được ghi đè lại bằng bản chuẩn từ shadow
+    expect(fs.readFileSync(primary, 'utf-8')).toBe(fs.readFileSync(shadow, 'utf-8'));
   });
 });

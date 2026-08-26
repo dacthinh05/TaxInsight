@@ -96,17 +96,28 @@ function createWindow() {
       preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // Preload chỉ dùng contextBridge + ipcRenderer — đều khả dụng trong sandbox.
+      // Trước đây sandbox:false vô ích làm giảm isolation của renderer.
+      sandbox: true,
       webSecurity: true
     },
     autoHideMenuBar: true
   });
 
   // ── TEMP DEBUG: ghi lỗi renderer ra file để chẩn đoán màn hình trắng ──
+  // (giới hạn kích thước: rotate khi vượt 2MB thay vì append vô hạn)
   try {
     const dbgLogPath = path.join(app.getPath('temp'), 'taxrecord_renderer.log');
     const dbgLog = (m: string) => {
-      try { fs.appendFileSync(dbgLogPath, `[${new Date().toISOString()}] ${m}\n`); } catch {}
+      try {
+        try {
+          const st = fs.statSync(dbgLogPath);
+          if (st.size > 2 * 1024 * 1024) {
+            fs.renameSync(dbgLogPath, `${dbgLogPath}.old`);
+          }
+        } catch {}
+        fs.appendFileSync(dbgLogPath, `[${new Date().toISOString()}] ${m}\n`);
+      } catch {}
     };
     dbgLog(`=== session start ===`);
     mainWindow.webContents.on('console-message', (_ev, _level, message, line, sourceId) => {
@@ -185,6 +196,58 @@ process.on('uncaughtException', err => {
 
 process.on('unhandledRejection', reason => {
   console.error('[Electron Unhandled Rejection]:', reason);
+});
+
+// ─── HARDENING TOÀN CỤC: chặn navigation/window.open trái phép ──────────────
+// Áp dụng cho MỌI webContents (cửa sổ chính, auth popup, window in PDF ẩn...)
+// để renderer bị chiếm (CDN hỏng, update poisoned) không điều hướng app sang
+// nội dung tấn công và không spawn cửa sổ kế thừa webPreferences.
+const ALLOWED_DEV_SERVER_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
+
+function isAllowedInternalUrl(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol === 'file:') {
+      // Chỉ cho phép file trong thư mục dist của app
+      const resolved = path.resolve(decodeURIComponent(u.hostname ? `//${u.hostname}${u.pathname}` : u.pathname));
+      const distDir = path.resolve(__dirname, '../../dist');
+      return resolved.startsWith(distDir + path.sep) || resolved === distDir;
+    }
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      // Dev server + host portal thuế (auth popup điều hướng trong dichvucong.gdt.gov.vn)
+      if (ALLOWED_DEV_SERVER_RE.test(rawUrl)) return true;
+      return u.hostname === 'dichvucong.gdt.gov.vn' || u.hostname.endsWith('.gdt.gov.vn');
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+app.on('web-contents-created', (_event, contents) => {
+  // Chặn điều hướng ra ngoài tập URL cho phép (window chính load dist/dev,
+  // auth popup điều hướng gdt.gov.vn)
+  contents.on('will-navigate', (event, url) => {
+    if (!isAllowedInternalUrl(url)) {
+      event.preventDefault();
+      console.warn(`[Security] Blocked navigation to: ${url}`);
+    }
+  });
+
+  // window.open / target=_blank: không mở cửa sổ kế thừa webPreferences;
+  // URL http(s) hợp lệ mở bằng trình duyệt hệ thống, còn lại từ chối.
+  contents.setWindowOpenHandler(({ url }) => {
+    try {
+      const u = new URL(url);
+      if ((u.protocol === 'https:' || u.protocol === 'http:') && /^https?:\/\//i.test(url)) {
+        const { shell } = require('electron') as typeof import('electron');
+        shell.openExternal(url).catch(() => {});
+      }
+    } catch {
+      // URL rác — bỏ qua
+    }
+    return { action: 'deny' };
+  });
 });
 
 app.whenReady().then(() => {

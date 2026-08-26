@@ -17,6 +17,7 @@ import {
 } from '../../shared/vatAnalyticsTypes';
 import { VatXmlParser } from './VatXmlParser';
 import { ParsedSnapshotStore } from '../persistence/ParsedSnapshotStore';
+import { isPathInsideBaseDir } from '../persistence/pathConfinement';
 
 export class VatAnalyticsEngine {
   private client: TaxPortalClient;
@@ -133,9 +134,12 @@ export class VatAnalyticsEngine {
         let snapshot: VatDeclarationSnapshot | null = null;
 
         // 3. Đọc từ file XML đã tải sẵn trong máy (1ms)
-        if (filing.downloadedFiles?.xml && fs.existsSync(filing.downloadedFiles.xml)) {
+        // Confinement: chỉ đọc file NẰM TRONG baseDir — path đến từ IPC payload,
+        // không kiểm tra thì renderer bị chiếm đọc được file tùy ý.
+        const xmlPath = filing.downloadedFiles?.xml;
+        if (xmlPath && this.baseDir && isPathInsideBaseDir(this.baseDir, xmlPath) && fs.existsSync(xmlPath)) {
           try {
-            const xml = fs.readFileSync(filing.downloadedFiles.xml, 'utf-8');
+            const xml = fs.readFileSync(xmlPath, 'utf-8');
             snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
           } catch {}
         }
@@ -144,7 +148,11 @@ export class VatAnalyticsEngine {
         // tra cứu manifest .tax_manifest.json trên đĩa theo filingId
         if (!snapshot) {
           const manifestXml = this.loadManifestXmlPaths().get(filing.id);
-          if (manifestXml && fs.existsSync(manifestXml)) {
+          if (
+            manifestXml &&
+            (!this.baseDir || isPathInsideBaseDir(this.baseDir, manifestXml)) &&
+            fs.existsSync(manifestXml)
+          ) {
             try {
               const xml = fs.readFileSync(manifestXml, 'utf-8');
               snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
@@ -159,12 +167,15 @@ export class VatAnalyticsEngine {
 
             if (res.content) {
               const zip = new AdmZip(Buffer.from(res.content, 'base64'));
+              // Cap giải nén: chặn zip-bomb (entry khai báo/giải nén > 50MB bỏ qua)
+              const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
               for (const entry of zip.getEntries()) {
-                if (entry.entryName.toLowerCase().endsWith('.xml')) {
-                  const xml = entry.getData().toString('utf-8');
-                  snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
-                  break;
-                }
+                if (!entry.entryName.toLowerCase().endsWith('.xml')) continue;
+                if (entry.header.size > MAX_ENTRY_BYTES) continue;
+                const xml = entry.getData().toString('utf-8');
+                if (Buffer.byteLength(xml) > MAX_ENTRY_BYTES) continue;
+                snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
+                break;
               }
             }
           } catch (dlErr: any) {

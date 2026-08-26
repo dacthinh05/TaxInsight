@@ -6,9 +6,27 @@ const crypto = require('crypto');
 const { exec } = require('child_process');
 
 const PORT = 3333;
-const SECRET_SIGN_KEY = 'TR_2026_MASTER_SECRET_KEY_TAXRECORD_VIETNAM_SECURE_AUTH';
+const HOST = '127.0.0.1'; // CHỈ lắng nghe loopback — không expose ra LAN
 const DATA_DIR = path.join(__dirname, '../data');
 const DB_FILE = path.join(DATA_DIR, 'customers_db.json');
+
+// Khóa ký Ed25519 — KHÔNG CÒN secret HMAC hardcode trong repo.
+// File khóa bí mật nằm ngoài git (scripts/.license_ed25519_private.hex).
+const PRIVATE_KEY_FILE = path.join(__dirname, '.license_ed25519_private.hex');
+
+function loadPrivateKey() {
+  if (!fs.existsSync(PRIVATE_KEY_FILE)) {
+    console.error('[KEYGEN] Thiếu khóa Ed25519! Chạy: node scripts/generate-key.js genkey');
+    process.exit(1);
+  }
+  const privHex = fs.readFileSync(PRIVATE_KEY_FILE, 'utf-8').trim();
+  return crypto.createPrivateKey({ key: Buffer.from(privHex, 'hex'), format: 'der', type: 'pkcs8' });
+}
+const PRIVATE_KEY = loadPrivateKey();
+
+// Token bearer bắt buộc cho mọi API — sinh ngẫu nhiên mỗi lần chạy server,
+// nhúng vào dashboard HTML được phục vụ (chỉ loopback mới thấy).
+const ADMIN_TOKEN = crypto.randomBytes(24).toString('hex');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -58,19 +76,23 @@ function getCurrentMachineId() {
   }
 }
 
-// 2. Ký và tạo License Key
+// 2. Ký và tạo License Key (Ed25519 — app xác thực bằng public key nhúng)
 function signPayload(payload) {
   const dataToSign = `${payload.machineId.toUpperCase()}|${payload.customerName.trim()}|${payload.tier}|${payload.expiryDate}|${payload.issuedAt}`;
-  return crypto.createHmac('sha256', SECRET_SIGN_KEY).update(dataToSign).digest('hex').toUpperCase();
+  const sig = crypto.sign(null, Buffer.from(dataToSign, 'utf-8'), PRIVATE_KEY);
+  return sig.toString('hex').toUpperCase();
 }
 
 function generateLicenseKey(payload) {
   const signature = signPayload(payload);
-  const fullPayload = { ...payload, signature };
+  const fullPayload = { ...payload, alg: 'ED25519', signature };
   return Buffer.from(JSON.stringify(fullPayload), 'utf-8').toString('base64');
 }
 
 // 3. Kích hoạt trực tiếp máy hiện tại
+// Ghi key dạng Base64 trần — app tự nhận diện và chuẩn hóa sang file mã hóa
+// ở lần đọc trạng thái đầu tiên (getLicenseStatus), nên server không cần
+// giữ khóa mã hóa local nào.
 function activateCurrentMachine(customerName = 'Admin / Chủ sở hữu', tier = 'LIFETIME') {
   const machineId = getCurrentMachineId();
   const payload = {
@@ -81,20 +103,6 @@ function activateCurrentMachine(customerName = 'Admin / Chủ sở hữu', tier 
     issuedAt: new Date().toISOString()
   };
   const key = generateLicenseKey(payload);
-
-  const licenseData = {
-    key: key.trim(),
-    activatedAt: new Date().toISOString(),
-    payload
-  };
-
-  const cipher = crypto.createCipheriv(
-    'aes-256-cbc',
-    crypto.createHash('sha256').update(SECRET_SIGN_KEY).digest(),
-    Buffer.alloc(16, 0)
-  );
-  let encrypted = cipher.update(JSON.stringify(licenseData), 'utf-8', 'hex');
-  encrypted += cipher.final('hex');
 
   const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
   const targetDirs = [
@@ -108,7 +116,7 @@ function activateCurrentMachine(customerName = 'Admin / Chủ sở hữu', tier 
   for (const dir of targetDirs) {
     try {
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, '.taxrecord_license.dat'), encrypted, 'utf-8');
+      fs.writeFileSync(path.join(dir, '.taxrecord_license.dat'), key, 'utf-8');
       successCount++;
     } catch {}
   }
@@ -133,25 +141,44 @@ function saveCustomers(customers) {
     const csvHeader = 'ID,Ten Khach Hang,So Dien Thoai,Ma May (Machine ID),Goi Ban Quyen,Han Su Dung,Ngay Cap,Gia Tien,Ghi Chu,License Key\n';
     const csvRows = customers.map(c => {
       const sanitize = (s = '') => `"${String(s).replace(/"/g, '""')}"`;
+      // Chống Excel formula injection: giá trị bắt đầu bằng = + - @ được prefix '
+      const safe = (v) => {
+        const raw = String(v ?? '');
+        return sanitize(/^[=+\-@]/.test(raw) ? `'${raw}` : raw);
+      };
       return [
-        sanitize(c.id),
-        sanitize(c.customerName),
-        sanitize(c.phone),
-        sanitize(c.machineId),
-        sanitize(c.tier),
-        sanitize(c.expiryDate),
-        sanitize(c.issuedAt?.split('T')[0]),
-        sanitize(c.price || 0),
-        sanitize(c.notes),
-        sanitize(c.licenseKey)
+        safe(c.id),
+        safe(c.customerName),
+        safe(c.phone),
+        safe(c.machineId),
+        safe(c.tier),
+        safe(c.expiryDate),
+        safe(c.issuedAt?.split('T')[0]),
+        safe(c.price || 0),
+        safe(c.notes),
+        safe(c.licenseKey)
       ].join(',');
     }).join('\n');
     fs.writeFileSync(path.join(DATA_DIR, 'danh_sach_khach_hang.csv'), '\uFEFF' + csvHeader + csvRows, 'utf-8');
   } catch {}
 }
 
+// Kiểm tra bearer token cho mọi API endpoint
+function isAuthorized(req) {
+  const header = req.headers['authorization'] || '';
+  return header === `Bearer ${ADMIN_TOKEN}`;
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  // Mọi API endpoint đều yêu cầu bearer token
+  if (url.pathname.startsWith('/api/')) {
+    if (!isAuthorized(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Unauthorized' }));
+    }
+  }
 
   // API Endpoints
   if (req.method === 'GET' && url.pathname === '/api/info') {
@@ -215,7 +242,7 @@ const server = http.createServer((req, res) => {
           tier: payload.tier,
           expiryDate: payload.expiryDate,
           issuedAt: payload.issuedAt,
-          price: data.price || 0,
+          price: Number(data.price) || 0, // ép kiểu: form gửi chuỗi "500000"
           notes: data.notes || '',
           licenseKey: licenseKey
         };
@@ -440,10 +467,22 @@ const server = http.createServer((req, res) => {
   </main>
 
   <script>
+    // Token bearer do server sinh mỗi lần khởi động (chỉ máy cục bộ nhận được)
+    const ADMIN_TOKEN = '${ADMIN_TOKEN}';
+
+    async function api(pathname, opts = {}) {
+      const res = await fetch(pathname, {
+        ...opts,
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + ADMIN_TOKEN, ...(opts.headers || {}) }
+      });
+      if (res.status === 401) throw new Error('Phiên không hợp lệ — hãy tải lại trang.');
+      return res;
+    }
+
     let globalInfo = { currentMachineId: '', customers: [] };
 
     async function loadInfo() {
-      const res = await fetch('/api/info');
+      const res = await api('/api/info');
       globalInfo = await res.json();
       document.getElementById('currentPcId').innerText = globalInfo.currentMachineId;
       document.getElementById('totalCustCount').innerText = globalInfo.customers.length;
@@ -472,9 +511,8 @@ const server = http.createServer((req, res) => {
 
     async function selfActivate() {
       if (!confirm('Kích hoạt bản quyền VĨNH VIỄN cho máy tính này?')) return;
-      const res = await fetch('/api/self-activate', {
+      const res = await api('/api/self-activate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customerName: 'Admin Chủ Sở Hữu' })
       });
       const data = await res.json();
@@ -497,9 +535,8 @@ const server = http.createServer((req, res) => {
         notes: document.getElementById('inNotes').value
       };
 
-      const res = await fetch('/api/create-license', {
+      const res = await api('/api/create-license', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
@@ -525,9 +562,8 @@ const server = http.createServer((req, res) => {
 
     async function deleteCust(id) {
       if (!confirm('Bạn có chắc muốn xóa khách hàng này khỏi danh sách?')) return;
-      await fetch('/api/delete-customer', {
+      await api('/api/delete-customer', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id })
       });
       loadInfo();
@@ -580,10 +616,13 @@ const server = http.createServer((req, res) => {
 </html>`);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   console.log(`========================================================`);
   console.log(`🔑 TAXINSIGHT KEYGEN & CUSTOMER MANAGER RUNNING!`);
   console.log(`🌐 URL: http://localhost:${PORT}`);
+  console.log(`🔒 API token (mỗi lần chạy đổi): ${ADMIN_TOKEN}`);
+  console.log(`🔒 Server chỉ lắng nghe trên ${HOST} (không mở ra LAN)`);
+  console.log(`✍️  Ký key bằng Ed25519: ${PRIVATE_KEY_FILE}`);
   console.log(`========================================================`);
 
   // Tự động kích hoạt luôn máy tính này khi khởi chạy server

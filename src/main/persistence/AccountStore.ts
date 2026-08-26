@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { app } from 'electron';
+import { app, safeStorage } from 'electron';
 import { MachineIdProvider } from '../licensing/MachineIdProvider';
 import { atomicWriteString } from './atomicWrite';
 
@@ -75,6 +75,42 @@ export class AccountStore {
       .createHash('sha256')
       .update(`${machineId}:${this.MASTER_SALT}`)
       .digest();
+  }
+
+  // ─── MẬT KHẨU: safeStorage (DPAPI Windows) TRƯỚC, AES machine-key SAU ────
+  // DPAPI gắn khóa với tài khoản Windows của user — malware chạy dưới user khác
+  // hoặc copy file sang máy khác KHÔNG giải mã được (trước đây key derive từ
+  // MachineGuid đọc được bởi bất kỳ process nào của user).
+
+  private static isSafeStorageAvailable(): boolean {
+    try {
+      return typeof safeStorage?.isEncryptionAvailable === 'function' && safeStorage.isEncryptionAvailable();
+    } catch {
+      return false;
+    }
+  }
+
+  private static encryptPassword(plain: string): string {
+    if (this.isSafeStorageAvailable()) {
+      try {
+        return `DPAPI:${safeStorage.encryptString(plain).toString('base64')}`;
+      } catch {
+        // rơi xuống AES legacy
+      }
+    }
+    return this.encrypt(plain);
+  }
+
+  private static decryptPassword(stored: string): string | null {
+    if (stored.startsWith('DPAPI:')) {
+      try {
+        if (!this.isSafeStorageAvailable()) return null;
+        return safeStorage.decryptString(Buffer.from(stored.slice('DPAPI:'.length), 'base64'));
+      } catch {
+        return null;
+      }
+    }
+    return this.decrypt(stored);
   }
 
   private static encrypt(text: string): string {
@@ -198,7 +234,7 @@ export class AccountStore {
 
       let passwordEncrypted: string | undefined = undefined;
       if (opts.savePassword && opts.password) {
-        passwordEncrypted = this.encrypt(opts.password);
+        passwordEncrypted = this.encryptPassword(opts.password);
       } else if (existingIdx >= 0 && opts.savePassword === undefined) {
         // Giữ nguyên mật khẩu cũ nếu không chỉ định
         passwordEncrypted = list[existingIdx].passwordEncrypted;
@@ -249,7 +285,7 @@ export class AccountStore {
 
       let password: string | undefined = undefined;
       if (found.passwordEncrypted) {
-        password = this.decrypt(found.passwordEncrypted) || undefined;
+        password = this.decryptPassword(found.passwordEncrypted) || undefined;
       }
 
       return {

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ScanCoverageRecord } from '../../shared/coverageTypes';
 import { atomicWriteJson } from './atomicWrite';
+import { safePathSegment } from './pathConfinement';
 
 export class CoverageStore {
   private baseDir: string;
@@ -15,7 +16,9 @@ export class CoverageStore {
   }
 
   private getCoverageFilePath(taxCode: string): string {
-    return path.join(this.baseDir, `.coverage_${taxCode}.json`);
+    // Defense-in-depth: taxpayerId đến từ portal/renderer — trước đây dùng
+    // nguyên bản nên `..\` trong MST thoát được baseDir
+    return path.join(this.baseDir, `.coverage_${safePathSegment(taxCode)}.json`);
   }
 
   public loadCoverage(taxCode: string): ScanCoverageRecord[] {

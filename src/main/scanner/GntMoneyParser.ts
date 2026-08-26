@@ -1,3 +1,5 @@
+import { formatMoneyGroups, parseMoneyToBigInt } from '../../shared/moneyUtils';
+
 export type MoneyParseStatus = 'VALID' | 'MISSING' | 'INVALID';
 
 export interface MoneyParseResult {
@@ -6,11 +8,21 @@ export interface MoneyParseResult {
   raw: string;
 }
 
+// Tập token coi là KHÔNG CÓ DỮ LIỆU — hợp của cả moneyUtils và các biến thể
+// từng xuất hiện trên portal (trước đây 2 parser nhận diện khác nhau khiến
+// cùng một ô trống bị xếp MISSING ở chỗ này, INVALID ở chỗ kia).
+const MISSING_TOKENS = new Set([
+  '', '-', '—', '--', 'blank', '&nbsp;', 'n/a', 'na', 'null', 'undefined'
+]);
+
+/**
+ * Parse chuỗi tiền từ Cổng Thuế thành BigInt an toàn tuyệt đối.
+ * Việc diễn giải số (dấu phân tách nghìn/thập phân, số âm trong ngoặc...) được
+ * ỦY QUYỀN cho parseMoneyToBigInt (shared/moneyUtils) để TOÀN APP chỉ có MỘT
+ * bộ quy tắc — trước đây nhánh else tự strip mọi dấu chấm/phẩy khiến "49.50"
+ * thành 4950n trong khi moneyUtils cho 49n.
+ */
 export class GntMoneyParser {
-  /**
-   * Parse chuỗi tiền từ Cổng Thuế thành BigInt an toàn tuyệt đối
-   * Không dùng float Number() làm mất độ chính xác với số tiền lớn.
-   */
   public static parse(rawInput?: string | number | bigint | null): MoneyParseResult {
     if (rawInput === undefined || rawInput === null) {
       return { status: 'MISSING', value: 0n, raw: '' };
@@ -28,49 +40,24 @@ export class GntMoneyParser {
     }
 
     const rawStr = String(rawInput).trim();
-    if (!rawStr || rawStr === '-' || rawStr === '—' || rawStr === 'blank' || rawStr === '&nbsp;') {
+    if (MISSING_TOKENS.has(rawStr.toLowerCase())) {
       return { status: 'MISSING', value: 0n, raw: rawStr };
     }
 
-    // Xóa dấu phân tách hàng nghìn
-    let cleaned = rawStr.replace(/[\s\t\r\n]/g, '');
-
-    // Nếu có dạng 99,921,049.00 -> bỏ phần thập phân .00
-    if (cleaned.includes('.') && cleaned.includes(',')) {
-      if (cleaned.lastIndexOf('.') > cleaned.lastIndexOf(',')) {
-        cleaned = cleaned.split('.')[0].replace(/,/g, '');
-      } else {
-        cleaned = cleaned.split(',')[0].replace(/\./g, '');
-      }
-    } else {
-      cleaned = cleaned.replace(/[,.]/g, '');
-    }
-
-    const isNegative = cleaned.startsWith('-');
-    const digitsOnly = isNegative ? cleaned.slice(1) : cleaned;
-
-    if (!/^\d+$/.test(digitsOnly)) {
+    // Không có chữ số nào → INVALID (giữ nguyên ngữ nghĩa cũ cho ô rác dữ liệu)
+    if (!/\d/.test(rawStr)) {
       return { status: 'INVALID', value: 0n, raw: rawStr };
     }
 
     try {
-      const val = BigInt(digitsOnly);
-      return {
-        status: 'VALID',
-        value: isNegative ? -val : val,
-        raw: rawStr
-      };
+      const value = parseMoneyToBigInt(rawStr);
+      return { status: 'VALID', value, raw: rawStr };
     } catch {
       return { status: 'INVALID', value: 0n, raw: rawStr };
     }
   }
 
   public static formatVND(amount: bigint | number): string {
-    const val = typeof amount === 'bigint' ? amount : BigInt(Math.round(amount));
-    const str = val.toString();
-    const isNegative = str.startsWith('-');
-    const absStr = isNegative ? str.slice(1) : str;
-    const formatted = absStr.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    return isNegative ? `-${formatted}` : formatted;
+    return formatMoneyGroups(amount);
   }
 }

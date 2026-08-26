@@ -25,9 +25,12 @@ export class PaymentSlipClient {
   private session: PortalSession;
   private currentDseState: DseFormState = { sessionId: '' };
   private isEtaxInitialized = false;
-
   private inFlightDetailRequests = new Map<string, Promise<PaymentSlipDetail | null>>();
+
   private detailCache = new Map<string, PaymentSlipDetail>();
+
+  /** ctuId -> chi tiết trong cache đã được đối chiếu khớp với danh sách chưa */
+  private detailCacheVerified = new Map<string, boolean>();
 
   private latestDiagnostic: GntDiagnosticReport = {
     checkpoints: {
@@ -59,6 +62,7 @@ export class PaymentSlipClient {
     this.isEtaxInitialized = false;
     this.inFlightDetailRequests.clear();
     this.detailCache.clear();
+    this.detailCacheVerified.clear();
     this.latestDiagnostic = {
       checkpoints: {
         GNT_01_DVC_SESSION_VALID: { status: 'SKIPPED' },
@@ -757,8 +761,20 @@ export class PaymentSlipClient {
   ): Promise<PaymentSlipDetail | null> {
     if (!ctuId) return null;
 
-    if (this.detailCache.has(ctuId)) {
-      return this.detailCache.get(ctuId)!;
+    // Cache chỉ được tin khi đã ĐỐI CHIẾU (verified) hoặc khi lần tải trước
+    // không có tham số đối chiếu. Nếu caller lần này cung cấp verify params mà
+    // entry trong cache CHƯA từng được đối chiếu → tải lại để kiểm chứng thay
+    // vì trả dữ liệu chưa verify (tránh cache poisoning giữa prefetch không
+    // verify và mở drawer có verify).
+    const cached = this.detailCache.get(ctuId);
+    if (cached) {
+      const cacheVerified = this.detailCacheVerified.get(ctuId) === true;
+      const needVerification = Boolean(verify?.maGiaoDich);
+      if (cacheVerified || !needVerification) {
+        return cached;
+      }
+      this.detailCache.delete(ctuId);
+      this.detailCacheVerified.delete(ctuId);
     }
 
     if (this.inFlightDetailRequests.has(ctuId)) {
@@ -828,12 +844,17 @@ export class PaymentSlipClient {
           maChuong: al.chapterCode,
           maNDKT: al.ndktCode
         })),
-        tongTienVND: GntMoneyParser.formatVND(parsed.totalVndAmount.value),
+        // Tổng tiền: chỉ điền khi parser xác định được GIÁ TRỊ THẬT. Khi bảng
+        // chi tiết degenerate (0 dòng, #sum=0) tổng là MISSING → để RỖNG để UI
+        // fallback về số tiền của bản ghi danh sách (trước đây "0" là chuỗi
+        // truthy khiến mọi fallback || chết và UI hiển thị "TỔNG TIỀN: 0 đ").
+        tongTienVND: parsed.totalVndAmount.status === 'VALID' ? GntMoneyParser.formatVND(parsed.totalVndAmount.value) : '',
         tongTienBangChu: parsed.totalTextVnd,
         signatures: parsed.signatures.map(s => ({
           signer: s.signerName,
           signedAt: s.signedAt || ''
         })),
+        detailIntegrity: parsed.detailIntegrity,
         rawHtml: parsed.rawHtml
       };
     };
@@ -866,7 +887,15 @@ export class PaymentSlipClient {
           return detail;
         }
 
-        this.detailCache.set(ctuId, detail);
+        // Chỉ cache khi (a) đã đối chiếu KHỚP, hoặc (b) không đủ dữ liệu đối
+        // chiếu VÀ trang chi tiết không degenerate (có ít nhất 1 dòng khoản
+        // nộp). Trang degenerate (0 dòng + tổng rỗng) là dấu hiệu parse hỏng —
+        // không cache để lần gọi sau (có thể kèm verify) tải lại.
+        const isDegenerate = detail.items.length === 0 && !detail.tongTienVND;
+        if (match === true || (match === null && !isDegenerate)) {
+          this.detailCache.set(ctuId, detail);
+          this.detailCacheVerified.set(ctuId, match === true);
+        }
         return detail;
       } catch (err: any) {
         const status = err.response?.status;

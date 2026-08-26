@@ -14,6 +14,7 @@ import {
   resolvePeriodSupplementalSequences
 } from '../../shared/dateUtils';
 import { ParsedSnapshotStore } from '../persistence/ParsedSnapshotStore';
+import { isPathInsideBaseDir } from '../persistence/pathConfinement';
 
 export class PitAnalyticsEngine {
   private client: TaxPortalClient;
@@ -94,9 +95,11 @@ export class PitAnalyticsEngine {
         let snapshot: PitDeclarationSnapshot | null = null;
 
         // 3. Đọc từ file XML đã tải sẵn trong máy (1ms)
-        if (filing.downloadedFiles?.xml && fs.existsSync(filing.downloadedFiles.xml)) {
+        // Confinement: chỉ đọc file nằm trong baseDir (path đến từ IPC payload)
+        const xmlPath = filing.downloadedFiles?.xml;
+        if (xmlPath && this.baseDir && isPathInsideBaseDir(this.baseDir, xmlPath) && fs.existsSync(xmlPath)) {
           try {
-            const xml = fs.readFileSync(filing.downloadedFiles.xml, 'utf-8');
+            const xml = fs.readFileSync(xmlPath, 'utf-8');
             snapshot = PitXmlParser.parsePitXml(xml, filing, taxpayerId);
           } catch {}
         }
@@ -111,12 +114,15 @@ export class PitAnalyticsEngine {
 
             if (res.content) {
               const zip = new AdmZip(Buffer.from(res.content, 'base64'));
+              // Cap giải nén: chặn zip-bomb (entry khai báo/giải nén > 50MB bỏ qua)
+              const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
               for (const entry of zip.getEntries()) {
-                if (entry.entryName.toLowerCase().endsWith('.xml')) {
-                  const xml = entry.getData().toString('utf-8');
-                  snapshot = PitXmlParser.parsePitXml(xml, filing, taxpayerId);
-                  break;
-                }
+                if (!entry.entryName.toLowerCase().endsWith('.xml')) continue;
+                if (entry.header.size > MAX_ENTRY_BYTES) continue;
+                const xml = entry.getData().toString('utf-8');
+                if (Buffer.byteLength(xml) > MAX_ENTRY_BYTES) continue;
+                snapshot = PitXmlParser.parsePitXml(xml, filing, taxpayerId);
+                break;
               }
             }
           } catch {}

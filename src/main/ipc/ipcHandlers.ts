@@ -120,6 +120,12 @@ export function setupIpcHandlers(
 
   ipcMain.handle('auth:solveCaptcha', async (_event, { imageBase64 }) => {
     try {
+      // Cap kích thước đầu vào: chuỗi base64 khổng lồ từ renderer sẽ cấp phát
+      // Buffer khổng lồ trong main process (memory DoS)
+      const MAX_CAPTCHA_BASE64 = 10 * 1024 * 1024; // 10MB — captcha thật < 100KB
+      if (typeof imageBase64 !== 'string' || imageBase64.length > MAX_CAPTCHA_BASE64) {
+        return { success: false, error: 'Ảnh captcha không hợp lệ hoặc quá lớn.' };
+      }
       const text = await CaptchaSolver.solve(imageBase64);
       return { success: true, text };
     } catch (err: any) {
@@ -291,15 +297,32 @@ export function setupIpcHandlers(
       return { success: false, error: 'Đường dẫn không hợp lệ' };
     }
     try {
-      SettingsStore.setDownloadDir(customPath);
-      fileOrganizer.setBaseDir(customPath);
-      checkpointStore.setBaseDir(customPath);
-      gntCheckpointStore.setBaseDir(customPath);
-      auditLogger.setBaseDir(customPath);
-      vatEngine.setBaseDir(customPath);
-      pitEngine.setBaseDir(customPath);
-      auditLogger.log('INFO', 'Đã thiết lập thư mục lưu trữ hồ sơ', customPath);
-      return { success: true, path: customPath };
+      // Hardening: thư mục lưu trữ phải là đường dẫn tuyệt đối, không nằm trong
+      // các thư mục hệ thống — renderer bị chiếm không được redirect toàn bộ
+      // bề mặt ghi file (download/export/checkpoint/audit log) vào Windows/Startup
+      const resolved = path.resolve(customPath.trim());
+      if (!path.isAbsolute(resolved)) {
+        return { success: false, error: 'Thư mục lưu trữ phải là đường dẫn tuyệt đối.' };
+      }
+      const blockedPrefixes = [
+        path.resolve(process.env.SystemRoot || 'C:\\Windows'),
+        path.resolve(process.env.ProgramFiles || 'C:\\Program Files'),
+        path.resolve(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)')
+      ].map(p => p.toLowerCase());
+      const resolvedLower = resolved.toLowerCase();
+      if (blockedPrefixes.some(bp => resolvedLower === bp || resolvedLower.startsWith(bp + path.sep))) {
+        return { success: false, error: 'Không được chọn thư mục hệ thống làm nơi lưu trữ hồ sơ.' };
+      }
+
+      SettingsStore.setDownloadDir(resolved);
+      fileOrganizer.setBaseDir(resolved);
+      checkpointStore.setBaseDir(resolved);
+      gntCheckpointStore.setBaseDir(resolved);
+      auditLogger.setBaseDir(resolved);
+      vatEngine.setBaseDir(resolved);
+      pitEngine.setBaseDir(resolved);
+      auditLogger.log('INFO', 'Đã thiết lập thư mục lưu trữ hồ sơ', resolved);
+      return { success: true, path: resolved };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -834,12 +857,20 @@ export function setupIpcHandlers(
           : firstItem?.noiDungKhoanNop?.toLowerCase().includes('tiền lương') ? 'TNCN'
           : 'NSNN';
         const kyStr = (firstItem?.kyThueNgayQd || '').replace(/[\/\\]/g, '-');
-        const tienStr = (detail.tongTienVND || '0').replace(/[,.]/g, '');
+        // Tổng tiền cho tên file: tổng chi tiết nếu hợp lệ, không thì tự cộng
+        // các dòng, cuối cùng mới là '0' (tổng rỗng = bảng chi tiết parse hỏng)
+        const parseVnd = (s?: string) => {
+          const n = Number((s || '').replace(/[,.]/g, ''));
+          return Number.isFinite(n) ? n : 0;
+        };
+        const totalFromDetail = parseVnd(detail.tongTienVND);
+        const totalFromItems = detail.items.reduce((acc, it) => acc + parseVnd(it.soTienVND), 0);
+        const tienStr = String(totalFromDetail > 0 ? totalFromDetail : (totalFromItems > 0 ? totalFromItems : 0));
         const dateRaw = detail.signatures[0]?.signedAt?.split(' ')[0] || '';
         const dateStr = dateRaw ? dateRaw.split('/').reverse().join('') : '';
         // Gắn ctuId vào tên file: 2 GNT khác nhau trùng loại thuế/kỳ/số tiền/ngày
         // trước đây ghi đè PDF của nhau im lặng
-        fileName = `GNT_${taxLabel}_${kyStr}_${tienStr}_${dateStr || detail.soGnt}_${ctuId}.pdf`;
+        fileName = sanitizeFilename(`GNT_${taxLabel}_${kyStr}_${tienStr}_${dateStr || detail.soGnt}_${ctuId}.pdf`);
       }
       if (!fileName.toLowerCase().endsWith('.pdf')) {
         fileName += '.pdf';
@@ -858,12 +889,15 @@ export function setupIpcHandlers(
       });
 
       try {
-        // Bọc HTML với CSS print-friendly và font tiếng Việt sắc nét
+        // Bọc HTML với CSS print-friendly và font tiếng Việt sắc nét.
+        // CSP chặn script trong rawHtml do server trả về (rawHtml được nạp vào
+        // window ẩn — không cho phép nó chạy JS hay gọi mạng khi render PDF).
         const styledHtml = `
           <!DOCTYPE html>
           <html>
           <head>
             <meta charset="utf-8" />
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:" />
             <style>
               @page { size: A4 portrait; margin: 10mm; }
               body { font-family: Arial, sans-serif; font-size: 11pt; color: #000; background: #fff; margin: 0; padding: 0; }
@@ -1115,6 +1149,9 @@ export function setupIpcHandlers(
   });
 
   ipcMain.handle('accounts:getCredentials', async (_event, { taxCode }: { taxCode: string }) => {
+    // Audit khi mật khẩu được giải mã & trả về renderer (truy vết nếu có truy
+    // cập nhật thường bất thường từ renderer bị chiếm)
+    auditLogger.log('INFO', 'Trả thông tin đăng nhập đã lưu cho renderer', `MST: ${taxCode}`);
     return AccountStore.getAccountCredentials(taxCode);
   });
 

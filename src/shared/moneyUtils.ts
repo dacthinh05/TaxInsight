@@ -160,6 +160,23 @@ export function formatMoneyVND(val: bigint | number | undefined, options?: { sho
 }
 
 /**
+ * Format số thành chuỗi nhóm 3 chữ số bằng dấu PHẨY (kiểu en-US, đúng định dạng
+ * eTax phục vụ: 154446648n -> "154,446,648"), không kèm đơn vị.
+ * Đây là implementation DUY NHẤT cho kiểu nhóm phẩy — trước đây GntMoneyParser
+ * và các chỗ toLocaleString('vi-VN') tự render 2 định dạng khác nhau trong
+ * cùng 1 màn hình (154,446,648 vs 154.446.648).
+ */
+export function formatMoneyGroups(val: bigint | number | undefined | null): string {
+  if (val === undefined || val === null) return '0';
+  const bigVal = typeof val === 'bigint' ? val : BigInt(Math.round(val));
+  const str = bigVal.toString();
+  const isNegative = str.startsWith('-');
+  const absStr = isNegative ? str.slice(1) : str;
+  const formatted = absStr.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return isNegative ? `-${formatted}` : formatted;
+}
+
+/**
  * Chuyển BigInt sang kiểu Number thuần túy cho Cell Excel (vẫn giữ đúng giá trị số)
  */
 export function bigIntToExcelNumber(val: bigint | undefined): number {

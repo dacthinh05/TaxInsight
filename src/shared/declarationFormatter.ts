@@ -1,4 +1,5 @@
 import { FilingMetricItem } from './types';
+import { parseMoneyToBigInt } from './moneyUtils';
 
 export interface FormattedDeclarationMetric {
   code?: string;
@@ -58,10 +59,23 @@ export function formatDeclarationValue(item: FilingMetricItem): FormattedDeclara
     };
   }
 
-  // Parse số học
-  const cleanNumStr = raw.replace(/[^\d.-]/g, '');
-  const num = Number(cleanNumStr);
-  const isNaNNum = isNaN(num) || cleanNumStr === '';
+  // Parse số học — dùng parser tiền chuẩn của app: trước đây Number("1.234")
+  // hiểu "1.234" là số thập phân 1.234 → làm tròn thành "1 ₫" (mất 3 bậc),
+  // chuỗi nhiều dấu chấm thành NaN rồi bị ép thành text.
+  if (!/\d/.test(raw)) {
+    return {
+      code,
+      label,
+      formattedValue: raw,
+      rawValue: raw,
+      type: 'text',
+      group,
+      isHighlight: item.isHighlight,
+      isAnomaly: false
+    };
+  }
+  const num = Number(parseMoneyToBigInt(raw));
+  const isNaNNum = !Number.isFinite(num);
 
   if (isNaNNum) {
     return {

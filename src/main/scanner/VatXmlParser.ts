@@ -151,6 +151,12 @@ export class VatXmlParser {
     const ct42Big = parseMoneyToBigInt(extractedCt42);
     const ct43Big = parseMoneyToBigInt(extractedCt43);
 
+    // Không khớp CHỈ TIÊU nào (schema lạ / fallback BangChiTiet bắt sai vùng):
+    // các con số 0n bên dưới là FABRICATED, không phải dữ liệu thật. Trước đây
+    // vẫn trả SUCCESS/xmlAvailable=true khiến analytics nhân bản mười sự im
+    // lặng thành số liệu 0đ.
+    const noIndicatorsExtracted = Object.keys(indicators).length === 0;
+
     return {
       taxpayerId,
       submissionId: filing.id,
@@ -178,7 +184,10 @@ export class VatXmlParser {
       ct43_thueKhauTruChuyenKySau: ct43Big,
       allIndicators: indicators,
       warnings,
-      parseStatus: 'SUCCESS',
+      parseStatus: noIndicatorsExtracted ? 'WARNING' : 'SUCCESS',
+      errorMessage: noIndicatorsExtracted
+        ? 'XML có nội dung nhưng không trích xuất được chỉ tiêu nào (schema không nhận diện) — số liệu 0 là placeholder, KHÔNG phải số thật'
+        : undefined,
       xmlAvailable: true,
       rawXml: xmlContent.slice(0, 4000)
     };

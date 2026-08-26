@@ -66,7 +66,14 @@ export class TaxNdktClassifier {
     // 1. Ưu tiên tra cứu chính xác theo mã NDKT
     if (ndktCode) {
       const cleanedCode = ndktCode.trim();
-      const entry = this.NDKT_MAP[cleanedCode];
+      // Portal dùng cả tiểu mục 5 chữ số (10001, 17001...) — dạng 4 số cổ điển
+      // chèn '0' vào vị trí thứ 4. Thử lần lượt các biến thể trước khi bỏ.
+      const entry =
+        this.NDKT_MAP[cleanedCode] ||
+        (cleanedCode.length === 5
+          ? this.NDKT_MAP[cleanedCode.slice(0, 3) + cleanedCode.slice(4)] ||
+            this.NDKT_MAP[cleanedCode.slice(0, 4)]
+          : undefined);
       if (entry) {
         return {
           taxType: entry.taxType,

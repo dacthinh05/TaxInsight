@@ -153,7 +153,10 @@ export class TaxFilingParser {
     }
 
     // 1. Khai bổ sung (1.008327 hoặc có chữ bổ sung / BS)
-    const bsNumberMatch = combined.match(/(?:bo\s*sung|\bbs\b)(?:\s*lan|\s*l)?\s*(\d+)/i);
+    // Số lần BS phải đứng ngay sau "bổ sung/bs [lần]" và KHÔNG được là phần đầu
+    // của một mã tài liệu ("bổ sung 05/QTT-TNCN" → 5, "bs 12/2026" → 12 là BẮT
+    // SAI — số theo sau bởi '/' là mã tờ khai, không phải số lần).
+    const bsNumberMatch = combined.match(/(?:bo\s*sung|\bbs\b)(?:\s*lan|\s*l)?\s*(\d{1,2})(?![/\d])/i);
     if (bsNumberMatch) {
       return { filingType: 'SUPPLEMENTAL', supplementalNo: parseInt(bsNumberMatch[1], 10), isSequenceInferred: false };
     }

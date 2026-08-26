@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Printer, CheckCircle2, ShieldCheck, Loader2, FileText, Scale, AlertTriangle, ArrowLeftRight, FolderOpen } from 'lucide-react';
 import { PaymentSlipDetail, PaymentSlipRecord } from '../../shared/types';
+import { formatMoneyGroups } from '../../shared/moneyUtils';
 import {
   SLIP_RECON_META,
   getSlipReconTooltip,
@@ -15,7 +16,22 @@ interface PaymentSlipPreviewDrawerProps {
   onClose: () => void;
 }
 
-const fmtBig = (n: bigint) => n.toLocaleString('vi-VN');
+// Nhóm 3 chữ số bằng PHẨY — cùng định dạng với soTienFormatted/soTienVND của
+// eTax (trước đây toLocaleString('vi-VN') render dấu chấm, lệch với phần còn
+// lại của drawer: 154.446.648 vs 154,446,648)
+const fmtBig = (n: bigint) => formatMoneyGroups(n);
+
+/**
+ * Tổng tiền hiển thị: tổng từ chi tiết CHỈ dùng khi là giá trị thực (khác rỗng
+ * và khác "0" — backend giờ trả rỗng khi không parse được bảng chi tiết; "0"
+ * là placeholder của eTax, một GNT hợp lệ không bao giờ có tổng 0 đồng).
+ * Ngược lại fallback về số tiền của bản ghi danh sách.
+ */
+const displayTotalVnd = (detail: PaymentSlipDetail | null, slip: PaymentSlipRecord): string => {
+  const fromDetail = detail?.tongTienVND?.trim();
+  if (fromDetail && fromDetail !== '0') return fromDetail;
+  return slip.soTienFormatted;
+};
 
 /** Verdict banner của khối ĐỐI CHIẾU */
 const ReconVerdictBadge: React.FC<{ info: SlipReconInfo }> = ({ info }) => {
@@ -269,9 +285,9 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
                 </span>
                 <span
                   className={`font-mono text-sm font-bold tabular-nums ${detail?.suspectedMismatch ? 'text-rose-700 line-through decoration-rose-400' : 'text-slate-900'}`}
-                  title={`${!detail?.suspectedMismatch ? (detail?.tongTienVND || slip.soTienFormatted) : slip.soTienFormatted} ${slip.loaiTien}`}
+                  title={`${!detail?.suspectedMismatch ? displayTotalVnd(detail, slip) : slip.soTienFormatted} ${slip.loaiTien}`}
                 >
-                  {!detail?.suspectedMismatch ? (detail?.tongTienVND || slip.soTienFormatted) : slip.soTienFormatted} ₫
+                  {!detail?.suspectedMismatch ? displayTotalVnd(detail, slip) : slip.soTienFormatted} ₫
                 </span>
               </div>
 
@@ -367,7 +383,7 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
                       <tr className="border-t border-slate-200 bg-slate-50/70 font-bold">
                         <td colSpan={3} className="px-4 py-1.5 text-right text-slate-500 uppercase text-[10.5px]">Tổng</td>
                         <td className="px-1 py-1.5 pr-4 text-right font-mono text-teal-900 tabular-nums whitespace-nowrap">
-                          {detail.tongTienVND || slip.soTienFormatted}
+                          {displayTotalVnd(detail, slip)}
                         </td>
                       </tr>
                     </tfoot>
@@ -575,7 +591,7 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
                           Tổng tiền:
                         </td>
                         <td className="border border-slate-300 p-2.5 text-right font-mono text-sm text-teal-900 whitespace-nowrap">
-                          {detail.tongTienVND || slip.soTienFormatted} ₫
+                          {displayTotalVnd(detail, slip)} ₫
                         </td>
                       </tr>
                     </tfoot>

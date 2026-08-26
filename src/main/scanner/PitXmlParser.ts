@@ -8,7 +8,9 @@ export class PitXmlParser {
     if (!xml) return undefined;
     for (const tag of tagNames) {
       // Hỗ trợ cả tag có namespace hoặc không có: <ct21>, <tns:ct21>, <CT21>...
-      const regex = new RegExp(`<(?:[a-zA-Z0-9_]+:)?${tag}[^>]*>([\\s\\S]*?)<\\/(?:[a-zA-Z0-9_]+:)?${tag}>`, 'i');
+      // Boundary chặt: sau tên tag phải là whitespace, '/', hoặc '>' — trước đây
+      // 'ct32' khớp cả <ct320>, 'ct31' khớp <ct310> → chỉ tiêu sai âm thầm.
+      const regex = new RegExp(`<(?:[a-zA-Z0-9_]+:)?${tag}(?:\\s+[^>]*)?>([\\s\\S]*?)<\\/(?:[a-zA-Z0-9_]+:)?${tag}\\s*>`, 'i');
       const match = xml.match(regex);
       if (match && match[1] !== undefined) {
         return match[1].trim();
