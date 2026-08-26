@@ -149,6 +149,7 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
     expect(summary.completed).toBe(3);
     expect(summary.pending).toBe(0);
     expect(summary.failed).toBe(0);
+    expect(client.validateIdTkhai).toHaveBeenCalled();
     expect(summary.state).toBe('COMPLETED');
 
     // Invariant

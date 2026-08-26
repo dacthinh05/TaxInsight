@@ -25,19 +25,15 @@ export class FileOrganizer {
   }
 
   /**
-   * Tính toán đường dẫn thư mục lưu trữ: Gom chung 1 thư mục cho cả MST/Năm: {baseDir}/{MST}_{Năm}/
+   * Thư mục lưu trữ: GOM CHUNG 1 THƯ MỨC duy nhất (yêu cầu người dùng) —
+   * không phân thư mục con theo MST/Năm. Tên file đã chứa mã tờ khai + kỳ +
+   * ID hồ sơ nên không cần cây thư mục để phân biệt.
    */
   public getDestinationDir(taxCode: string, filing: TaxFiling, year: number): string {
-    const safeTaxCode = sanitizeFilename(taxCode || 'DEFAULT_MST');
-    const safeYear = sanitizeFilename(String(year || new Date().getFullYear()));
-
-    // Gom chung toàn bộ hồ sơ vào 1 thư mục duy nhất theo MST và Năm (không chia nhỏ thư mục con)
-    const fullPath = path.join(this.baseDir, `${safeTaxCode}_${safeYear}`);
-    if (!fs.existsSync(fullPath)) {
-      fs.mkdirSync(fullPath, { recursive: true });
+    if (!fs.existsSync(this.baseDir)) {
+      fs.mkdirSync(this.baseDir, { recursive: true });
     }
-
-    return fullPath;
+    return this.baseDir;
   }
 
   /**

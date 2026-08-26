@@ -369,6 +369,15 @@ export class DownloadManager extends EventEmitter {
 
       let payload;
       try {
+        // Cổng Thuế yêu cầu/đồng bộ bước xác thực ID hồ sơ trước khi trả nội
+        // dung ở endpoint downloadhoso. TNCN thường bị ảnh hưởng rõ nhất vì
+        // các ID hồ sơ cũ/ID tham chiếu của nhóm này khác nhau.
+        // validateIdTkhai() là best-effort: nếu endpoint kiểm tra lỗi tạm thời
+        // thì vẫn để downloadHoSo tự thử các chiến lược và altIds như trước.
+        if (typeof (this.client as any).validateIdTkhai === 'function') {
+          await (this.client as any).validateIdTkhai(item.filingId);
+        }
+
         // 2. Tải Base64 ZIP — tự động route sang /downloadhoso-tdt nếu isThueDienTu=true
         payload = await this.client.downloadHoSo(
           item.filingId,
