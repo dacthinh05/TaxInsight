@@ -516,10 +516,60 @@ export class TaxPortalClient {
   }
 
   /**
+   * Phát hiện phản hồi HTML trang Đăng nhập / Hết phiên trong luồng tải file.
+   * Trước đây các nhánh download chỉ báo lỗi "Nội dung file Base64 không tồn tại"
+   * khiến DownloadManager đánh dấu FAILED thay vì tạm dừng chờ đăng nhập lại.
+   */
+  private throwIfLoginHtmlResponse(resData: any): void {
+    try {
+      let text = '';
+      if (Buffer.isBuffer(resData)) {
+        const header4 = resData.subarray(0, 4);
+        // File nhị phân thật (PDF/ZIP) không bao giờ là trang login
+        if (header4.equals(Buffer.from('%PDF')) || header4.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+          return;
+        }
+        text = resData.toString('utf-8');
+      } else if (typeof resData === 'string') {
+        text = resData;
+      } else {
+        return;
+      }
+
+      const trimmed = text.trim().toLowerCase();
+      if (!trimmed.startsWith('<!doctype html') && !trimmed.startsWith('<html')) {
+        return;
+      }
+
+      const loginMarkers = [
+        'name="tendn"',
+        "name='tendn'",
+        'name="matkhau"',
+        "name='matkhau'",
+        'submitldap',
+        'loginldap',
+        'hết phiên làm việc',
+        'đăng nhập lại'
+      ];
+      if (loginMarkers.some(m => trimmed.includes(m))) {
+        const err = new Error('Phiên làm việc đã hết hạn khi tải hồ sơ (Cổng Thuế trả về trang đăng nhập). Vui lòng đăng nhập lại.');
+        (err as any).code = 'SESSION_EXPIRED';
+        throw err;
+      }
+    } catch (err: any) {
+      if (err?.code === 'SESSION_EXPIRED') throw err;
+      // Lỗi phụ khi decode — bỏ qua, tiếp tục quy trình bóc tách bình thường
+    }
+  }
+
+  /**
    * Trích xuất nội dung file Base64 từ mọi biến thể phản hồi của máy chủ GDT
    */
   private extractPayloadContent(resData: any, defaultId: string): DownloadResponsePayload | null {
     if (!resData) return null;
+
+    // 0. Chặn sớm phản hồi trang đăng nhập (hết phiên) để phân loại đúng lỗi
+    this.throwIfLoginHtmlResponse(resData);
 
     // 1. Axios có thể trả cả file nhị phân và JSON dưới dạng Buffer khi dùng
     // responseType=arraybuffer, nên cần phân biệt trước khi giải mã.
@@ -651,27 +701,50 @@ export class TaxPortalClient {
     const cleanId = maHoSo.trim();
     const isTdtPreferred = filingMeta?.isThueDienTu === true;
 
-    if (isTdtPreferred) {
+    // Retry cấp trên cùng cho RATE_LIMIT: trước đây 429 ở nhánh TDT lập tức
+    // fallback sang nhánh Standard (cũng dính 429) rồi ném lỗi — khiến đợt tải
+    // hàng loạt fail hàng loạt dù chỉ cần chờ backoff rồi thử lại.
+    const maxRateRetries = 3;
+    for (let attempt = 1; attempt <= maxRateRetries; attempt++) {
       try {
-        return await this.downloadHoSoTdt(cleanId, filingMeta?.loaiTraCuu, abortSignal);
-      } catch (tdtErr: any) {
-        if (abortSignal?.aborted || tdtErr.code === 'CANCELLED' || tdtErr.code === 'SESSION_EXPIRED') {
-          throw tdtErr;
+        if (isTdtPreferred) {
+          return await this.downloadHoSoTdt(cleanId, filingMeta?.loaiTraCuu, abortSignal);
         }
-        console.warn(`[TaxPortalClient] Nhánh TDT thất bại cho ID ${cleanId}, tự động fallback sang nhánh Standard: ${tdtErr.message}`);
         return await this.downloadHoSoStandard(cleanId, abortSignal);
-      }
-    } else {
-      try {
-        return await this.downloadHoSoStandard(cleanId, abortSignal);
-      } catch (stdErr: any) {
-        if (abortSignal?.aborted || stdErr.code === 'CANCELLED' || stdErr.code === 'SESSION_EXPIRED') {
-          throw stdErr;
+      } catch (primaryErr: any) {
+        if (abortSignal?.aborted || primaryErr.code === 'CANCELLED' || primaryErr.code === 'SESSION_EXPIRED') {
+          throw primaryErr;
         }
-        console.warn(`[TaxPortalClient] Nhánh Standard thất bại cho ID ${cleanId}, tự động fallback sang nhánh TDT: ${stdErr.message}`);
-        return await this.downloadHoSoTdt(cleanId, filingMeta?.loaiTraCuu, abortSignal);
+
+        if (primaryErr.code === 'RATE_LIMIT' && attempt < maxRateRetries) {
+          const backoffDelay = 2000 * attempt + Math.random() * 500;
+          console.warn(`[TaxPortalClient] HTTP 429 khi tải hồ sơ ${cleanId}, chờ ${Math.round(backoffDelay)}ms rồi thử lại (lần ${attempt}/${maxRateRetries - 1})...`);
+          await new Promise(r => setTimeout(r, backoffDelay));
+          continue;
+        }
+
+        // Fallback sang nhánh còn lại với các lỗi khác
+        try {
+          if (isTdtPreferred) {
+            console.warn(`[TaxPortalClient] Nhánh TDT thất bại cho ID ${cleanId}, tự động fallback sang nhánh Standard: ${primaryErr.message}`);
+            return await this.downloadHoSoStandard(cleanId, abortSignal);
+          }
+          console.warn(`[TaxPortalClient] Nhánh Standard thất bại cho ID ${cleanId}, tự động fallback sang nhánh TDT: ${primaryErr.message}`);
+          return await this.downloadHoSoTdt(cleanId, filingMeta?.loaiTraCuu, abortSignal);
+        } catch (fallbackErr: any) {
+          if (abortSignal?.aborted || fallbackErr.code === 'CANCELLED' || fallbackErr.code === 'SESSION_EXPIRED') {
+            throw fallbackErr;
+          }
+          if (fallbackErr.code === 'RATE_LIMIT' && attempt < maxRateRetries) {
+            const backoffDelay = 2000 * attempt + Math.random() * 500;
+            await new Promise(r => setTimeout(r, backoffDelay));
+            continue;
+          }
+          throw fallbackErr;
+        }
       }
     }
+    throw new Error(`Tải hồ sơ ID: ${maHoSo} thất bại do máy chủ giới hạn tần suất yêu cầu (HTTP 429)`);
   }
 
   /**

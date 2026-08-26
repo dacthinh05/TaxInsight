@@ -53,9 +53,12 @@ export class VatAnalyticsEngine {
     const vatFilings = resolvePeriodSupplementalSequences(rawVatFilings);
     const total = vatFilings.length;
     const snapshots: VatDeclarationSnapshot[] = [];
+    const failedXmlDetails: Array<{ submissionId: string; periodLabel: string; reason: string }> = [];
 
-    // Tăng Concurrency lên 5 luồng tải song song
-    const concurrency = 5;
+    // Concurrency thấp (2 luồng) + nghỉ giữa các batch: Cổng Thuế GDT trả
+    // HTTP 429 / chặn tạm khi bị bấm tải song song dồn dập, khiến số liệu
+    // các kỳ trước rơi vào fallback toàn số 0 một cách ÂM THẦM.
+    const concurrency = 2;
     let completedCount = 0;
 
     for (let i = 0; i < total; i += concurrency) {
@@ -96,13 +99,10 @@ export class VatAnalyticsEngine {
           } catch {}
         }
 
-        // 4. Nếu chưa có XML, tải trực tuyến vào bộ nhớ RAM
+        // 4. Nếu chưa có XML, tải trực tuyến vào bộ nhớ RAM (có retry khi bị rate-limit/mạng)
         if (!snapshot && filing.downloadAvailable) {
           try {
-            const res = await this.client.downloadHoSo(filing.id, undefined, {
-              isThueDienTu: filing.isThueDienTu,
-              loaiTraCuu: filing.loaiTraCuu
-            });
+            const res = await this.downloadHoSoWithRetry(filing);
 
             if (res.content) {
               const zip = new AdmZip(Buffer.from(res.content, 'base64'));
@@ -114,13 +114,24 @@ export class VatAnalyticsEngine {
                 }
               }
             }
-          } catch {}
+          } catch (dlErr: any) {
+            if (dlErr?.code === 'CANCELLED') this.isCancelled = true;
+            failedXmlDetails.push({
+              submissionId: filing.id,
+              periodLabel: filing.period || filing.periodNormalized?.raw || '',
+              reason: dlErr?.message || 'Lỗi không xác định khi tải hồ sơ'
+            });
+          }
         }
 
-        // 5. Fallback metadata snapshot (khi không tải được XML)
+        // 5. Fallback metadata snapshot (khi không tải được XML) — KHÔNG được
+        // đánh dấu SUCCESS: phải gắn FAILED để UI cảnh báo "số liệu trống do
+        // chưa tải được XML" thay vì im lặng hiển thị số 0 như số thật.
         if (!snapshot) {
           const rawPeriod = filing.period || filing.periodNormalized?.raw || '';
           const norm = normalizeVatPeriod(rawPeriod, filing.submittedAt);
+          const failReason = failedXmlDetails.find(f => f.submissionId === filing.id)?.reason
+            || (filing.downloadAvailable ? 'Không tải được file XML từ Cổng Thuế' : 'Hồ sơ không cho phép tải file đính kèm');
           snapshot = {
             taxpayerId,
             submissionId: filing.id,
@@ -148,7 +159,8 @@ export class VatAnalyticsEngine {
             ct43_thueKhauTruChuyenKySau: 0n,
             allIndicators: {},
             warnings: [],
-            parseStatus: 'SUCCESS',
+            parseStatus: 'FAILED',
+            errorMessage: failReason,
             xmlAvailable: false
           };
         }
@@ -178,7 +190,38 @@ export class VatAnalyticsEngine {
       }
     }
 
-    return VatAnalyticsEngine.buildSummaryFromSnapshots(vatFilings, snapshots, taxpayerId);
+    return VatAnalyticsEngine.buildSummaryFromSnapshots(vatFilings, snapshots, taxpayerId, failedXmlDetails);
+  }
+
+  /**
+   * Tải hồ sơ kèm retry có backoff cho các lỗi tạm thời (429/timeout/mạng).
+   * Phiên bị hết hạn (SESSION_EXPIRED) hoặc bị hủy sẽ ném ra ngay lập tức.
+   */
+  private async downloadHoSoWithRetry(filing: TaxFiling, maxRetries = 3): Promise<{ fileName: string; fileType: string; content: string }> {
+    let lastErr: any;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      if (this.isCancelled) {
+        const cancelErr = new Error('Phân tích đã bị hủy');
+        (cancelErr as any).code = 'CANCELLED';
+        throw cancelErr;
+      }
+      try {
+        return await this.client.downloadHoSo(filing.id, undefined, {
+          isThueDienTu: filing.isThueDienTu,
+          loaiTraCuu: filing.loaiTraCuu
+        });
+      } catch (err: any) {
+        lastErr = err;
+        if (err?.code === 'CANCELLED' || err?.code === 'SESSION_EXPIRED') throw err;
+        const isTransient = err?.code === 'RATE_LIMIT' || err?.code === 'TIMEOUT' || err?.code === 'NETWORK';
+        if (isTransient && attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 2000 * attempt + Math.random() * 500));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr;
   }
 
   /**
@@ -187,7 +230,8 @@ export class VatAnalyticsEngine {
   public static buildSummaryFromSnapshots(
     vatFilings: TaxFiling[],
     snapshots: VatDeclarationSnapshot[],
-    taxpayerId: string
+    taxpayerId: string,
+    failedXmlDetails?: Array<{ submissionId: string; periodLabel: string; reason: string }>
   ): VatAnalyticsSummary {
     // ─── XÂY DỰNG CHUỖI KỲ & TÍNH TOÁN DELTA ─────────────────────────────
     const periodGroupMap = new Map<string, VatDeclarationSnapshot[]>();
@@ -266,6 +310,18 @@ export class VatAnalyticsEngine {
         periodsWithWarningCount++;
       }
 
+      // Cảnh báo hồ sơ KHÔNG có XML: số liệu đang hiển thị là fallback 0,
+      // người dùng phải biết đây là "thiếu dữ liệu" chứ không phải "không phát sinh"
+      const missingXmlSnaps = sorted.filter(s => !s.xmlAvailable);
+      if (missingXmlSnaps.length > 0) {
+        warnings.push({
+          code: 'XML_DOWNLOAD_FAILED',
+          message: `${missingXmlSnaps.length} tờ khai của kỳ ${finalSnapshot.period.value} chưa tải được file XML (${missingXmlSnaps.map(s => s.errorMessage || 'lỗi không rõ').join('; ')}). Số liệu hiển thị đang TRỐNG, không phải số liệu thật.`,
+          severity: 'WARNING'
+        });
+        periodsWithWarningCount++;
+      }
+
       const norm = normalizeVatPeriod(finalSnapshot.period.value, finalSnapshot.submittedAt);
       const groupFilings = vatFilings.filter(f => {
         const fNorm = normalizeVatPeriod(f.period || '', f.submittedAt);
@@ -308,6 +364,16 @@ export class VatAnalyticsEngine {
       ? 'COMPLETE'
       : (totalXmlAvailableCount > 0 ? 'PARTIAL' : 'UNAVAILABLE');
 
+    const failedXml = failedXmlDetails && failedXmlDetails.length > 0
+      ? failedXmlDetails
+      : snapshots
+          .filter(s => !s.xmlAvailable)
+          .map(s => ({
+            submissionId: s.submissionId,
+            periodLabel: s.period.value,
+            reason: s.errorMessage || 'Không tải được file XML từ Cổng Thuế'
+          }));
+
     return {
       taxpayerId,
       totalFilingsCount: vatFilings.length,
@@ -317,6 +383,8 @@ export class VatAnalyticsEngine {
       totalXmlAvailableCount,
       coverageRatio,
       coverageStatus: summaryCoverageStatus,
+      failedXmlCount: failedXml.length,
+      failedXmlDetails: failedXml,
       periodGroups,
       analyzedAt: new Date().toISOString()
     };

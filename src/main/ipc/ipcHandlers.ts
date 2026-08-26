@@ -365,7 +365,11 @@ export function setupIpcHandlers(
       const summary = await vatEngine.analyzeVatFilings(filings, taxCode, (current, total, message) => {
         sendToRenderer('vat:progress', { current, total, message });
       });
-      auditLogger.log('SUCCESS', `Phân tích hoàn tất: ${summary.totalPeriodsCount} kỳ (${summary.periodsWithSupplementalCount} kỳ có bổ sung)`);
+      auditLogger.log(
+        'SUCCESS',
+        `Phân tích hoàn tất: ${summary.totalPeriodsCount} kỳ (${summary.periodsWithSupplementalCount} kỳ có bổ sung)` +
+        (summary.failedXmlCount ? ` - CẢNH BÁO: ${summary.failedXmlCount}/${summary.totalFilingsCount} hồ sơ chưa tải được XML, số liệu đang trống` : ' - Đã có XML đầy đủ')
+      );
       return { success: true, summary };
     } catch (err: any) {
       auditLogger.log('ERROR', 'Phân tích GTGT thất bại', err.message);

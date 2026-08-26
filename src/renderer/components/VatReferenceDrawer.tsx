@@ -420,6 +420,32 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
           )}
         </div>
 
+        {/* ─── CẢNH BÁO XML THIẾU: số liệu trống do không tải được file từ Cổng Thuế ─── */}
+        {!isLoading && (summary?.failedXmlCount ?? 0) > 0 && (
+          <div className="px-6 py-2 bg-rose-50 border-b border-rose-200 text-xs text-rose-800 flex items-center justify-between gap-3">
+            <div className="flex items-start space-x-2 min-w-0">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <span className="font-bold">
+                  {summary!.failedXmlCount}/{summary!.totalFilingsCount} tờ khai GTGT chưa tải được file XML từ Cổng Thuế
+                </span>
+                <span> — số liệu các kỳ liên quan đang hiển thị TRỐNG (chỉ có metadata), không phải số liệu thật. Ảnh hưởng tới: </span>
+                <span className="font-semibold">
+                  {[...new Set((summary!.failedXmlDetails || []).map(d => d.periodLabel).filter(Boolean))].join(', ')}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onRefreshAnalytics}
+              className="shrink-0 h-7 px-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-[11px] font-semibold flex items-center space-x-1.5 shadow-2xs transition-all cursor-pointer"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Tải lại XML</span>
+            </button>
+          </div>
+        )}
+
         {/* ─── 3. MAIN WORKSPACE (BẢNG TRÁI + EVIDENCE INSPECTOR PHẢI) ─── */}
         <div className="flex-1 flex overflow-hidden bg-slate-50/40">
           

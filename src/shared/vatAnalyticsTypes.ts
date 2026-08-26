@@ -20,7 +20,8 @@ export type VatChainWarningCode =
   | 'UNPARSEABLE_DECLARATION'
   | 'MISSING_REQUIRED_INDICATOR'
   | 'SCHEMA_UNSUPPORTED'
-  | 'VALUE_CHANGED';
+  | 'VALUE_CHANGED'
+  | 'XML_DOWNLOAD_FAILED';
 
 export interface VatChainWarning {
   code: VatChainWarningCode;
@@ -105,6 +106,14 @@ export interface VatAnalyticsSummary {
   totalXmlAvailableCount?: number;
   coverageRatio?: number; // 0.0 -> 1.0 (vd: 1.0 = 100% hồ sơ có XML)
   coverageStatus?: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE';
+  // Số hồ sơ GTGT KHÔNG tải/bóc tách được XML (fallback metadata toàn 0) —
+  // bắt buộc hiển thị cảnh báo trên UI thay vì im lặng hiển thị "-"
+  failedXmlCount?: number;
+  failedXmlDetails?: Array<{
+    submissionId: string;
+    periodLabel: string;
+    reason: string;
+  }>;
   periodGroups: VatPeriodGroup[];
   analyzedAt: string;
 }
