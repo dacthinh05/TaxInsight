@@ -521,8 +521,29 @@ export class TaxPortalClient {
   private extractPayloadContent(resData: any, defaultId: string): DownloadResponsePayload | null {
     if (!resData) return null;
 
-    // 1. Nếu phản hồi là Buffer nhị phân (ZIP / XML / PDF tải trực tiếp)
+    // 1. Axios có thể trả cả file nhị phân và JSON dưới dạng Buffer khi dùng
+    // responseType=arraybuffer, nên cần phân biệt trước khi giải mã.
     if (Buffer.isBuffer(resData)) {
+      const header4 = resData.subarray(0, 4);
+      if (header4.equals(Buffer.from('%PDF')) || header4.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+        return {
+          fileName: `files_${defaultId}${header4.equals(Buffer.from('%PDF')) ? '.pdf' : '.zip'}`,
+          fileType: header4.equals(Buffer.from('%PDF')) ? 'application/pdf' : 'application/zip',
+          content: resData.toString('base64')
+        };
+      }
+
+      const decoded = resData.toString('utf-8').trim();
+      if (decoded) {
+        try {
+          return this.extractPayloadContent(JSON.parse(decoded), defaultId);
+        } catch {
+          const decodedPayload = this.extractPayloadContent(decoded, defaultId);
+          if (decodedPayload) return decodedPayload;
+        }
+      }
+      // Unknown binary formats are still valid download payloads; retain the
+      // historical ZIP-compatible fallback for the extractor/save pipeline.
       return {
         fileName: `files_${defaultId}.zip`,
         fileType: 'application/zip',
@@ -702,7 +723,7 @@ export class TaxPortalClient {
             const response = await this.session.client.post(
               tldUrl,
               { maHoSo: cleanId },
-              { signal: abortSignal, headers: baseHeaders, timeout: 8000 }
+              { signal: abortSignal, headers: baseHeaders, timeout: 8000, responseType: 'arraybuffer' }
             );
             const payload = this.extractPayloadContent(response?.data, cleanId);
             if (payload) return payload;
@@ -716,7 +737,7 @@ export class TaxPortalClient {
             const response2 = await this.session.client.post(
               tldUrl,
               { idTKhai: cleanId },
-              { signal: abortSignal, headers: baseHeaders, timeout: 6000 }
+              { signal: abortSignal, headers: baseHeaders, timeout: 6000, responseType: 'arraybuffer' }
             );
             const payload2 = this.extractPayloadContent(response2?.data, cleanId);
             if (payload2) return payload2;
@@ -784,6 +805,7 @@ export class TaxPortalClient {
             {
               signal: abortSignal,
               timeout: 10000,
+              responseType: 'arraybuffer',
               headers: {
                 ...baseHeaders,
                 'Content-Type': 'application/json;charset=UTF-8'
@@ -806,6 +828,7 @@ export class TaxPortalClient {
               {
                 signal: abortSignal,
                 timeout: 8000,
+                responseType: 'arraybuffer',
                 headers: {
                   ...baseHeaders,
                   'Content-Type': 'application/json;charset=UTF-8'
@@ -836,7 +859,8 @@ export class TaxPortalClient {
                   ...baseHeaders,
                   'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
                 },
-                timeout: 8000
+                timeout: 8000,
+                responseType: 'arraybuffer'
               }
             );
             const payload3 = this.extractPayloadContent(res3?.data, cleanId);
