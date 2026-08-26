@@ -236,8 +236,13 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
                 >
                   {statusView.label}
                 </span>
-                <span className="font-mono text-sm font-bold text-slate-900 tabular-nums" title={`${slip.soTienFormatted} ${slip.loaiTien}`}>
-                  {slip.soTienFormatted} ₫
+                {/* ƯU TIÊN tổng tiền từ chi tiết eTax vừa tải (nguồn chuẩn) —
+                    số tiền ở danh sách list có thể lệch do bảng GNT thay đổi cấu trúc cột */}
+                <span
+                  className="font-mono text-sm font-bold text-slate-900 tabular-nums"
+                  title={`${detail?.tongTienVND || slip.soTienFormatted} ${slip.loaiTien}`}
+                >
+                  {detail?.tongTienVND || slip.soTienFormatted} ₫
                 </span>
               </div>
 

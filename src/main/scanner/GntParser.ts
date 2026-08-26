@@ -3,7 +3,7 @@ import { TaxType } from '../../shared/types';
 import { GntMoneyParser, MoneyParseResult } from './GntMoneyParser';
 import { GntPeriodNormalizer, NormalizedTaxPeriod } from './GntPeriodNormalizer';
 import { TaxNdktClassifier } from '../engine/TaxNdktClassifier';
-import { resolveAllocationColumns } from './GntTableColumns';
+import { resolveAllocationColumns, resolveGntListColumns } from './GntTableColumns';
 
 export type GntStatus =
   | 'PAID_SUCCESS'
@@ -107,31 +107,76 @@ export class GntParser {
     const tbody = $('#allResultTableBody');
     if (!tbody.length) return results;
 
+    // ── Header mapping: đọc vị trí cột thật từ dòng header của bảng ─────────
+    const headerTexts: string[] = [];
+    tbody.closest('table').find('th').each((_, th) => {
+      headerTexts.push($(th).text().trim());
+    });
+    const col = resolveGntListColumns(headerTexts);
+
+    // ── Grid logic: xử lý rowspan/colspan ────────────────────────────────────
+    // eTax gộp ô theo nhóm lần nộp (rowspan): các dòng sau có ÍT td hơn → đọc
+    // theo vị trí cố định sẽ TRÔI CỘT (số tiền nhận nhầm giá trị cột khác).
+    // Thuật toán: theo dõi ô đang span, ánh xạ td vật lý về cột logic đúng.
+    const spanRemaining = new Map<number, number>();
+    const spanCarryText = new Map<number, string>();
+
+    const buildLogicalCells = ($tds: any): string[] => {
+      const logical: string[] = [];
+      let tdIdx = 0;
+      const maxCol = Math.max(headerTexts.length + 4, 24);
+      for (let c = 0; c < maxCol; c++) {
+        const remaining = spanRemaining.get(c) || 0;
+        if (remaining > 0) {
+          spanRemaining.set(c, remaining - 1);
+          logical[c] = spanCarryText.get(c) || '';
+          continue;
+        }
+        if (tdIdx >= $tds.length) break;
+        const $td = $($tds[tdIdx]);
+        const rowSpan = parseInt($td.attr('rowspan') || '1', 10) || 1;
+        const colSpan = parseInt($td.attr('colspan') || '1', 10) || 1;
+        const text = $td.text().trim();
+        for (let k = 0; k < colSpan; k++) {
+          logical[c + k] = text;
+          if (rowSpan > 1) {
+            spanRemaining.set(c + k, rowSpan - 1);
+            spanCarryText.set(c + k, text);
+          }
+        }
+        tdIdx++;
+      }
+      return logical;
+    };
+
     tbody.find('tr').each((_, tr) => {
       const $tr = $(tr);
       const $tds = $tr.find('td');
-      if ($tds.length < 8) return;
+      if ($tds.length < 4) return;
 
-      const cells: string[] = [];
-      $tds.each((_, td) => {
-        cells.push($(td).text().trim());
-      });
+      const cells = buildLogicalCells($tds);
+      const cellCount = cells.filter(c => c !== undefined && c !== '').length;
+      if (cellCount < 4) return;
 
-      const sttText = cells[0];
+      const sttText = cells[col.stt] || '';
       const stt = parseInt(sttText, 10);
       if (isNaN(stt)) return; // Bỏ qua các dòng thông báo con hoặc dòng rỗng
 
-      const maGiaoDich = cells[1] || undefined;
-      const maGiaoDichChiTiet = cells[2] || undefined;
-      const lanNop = cells[3] ? parseInt(cells[3], 10) : undefined;
+      const maGiaoDich = cells[col.maGiaoDich] || undefined;
+      const maGiaoDichChiTiet = cells[col.maGiaoDichChiTiet] || undefined;
+      const lanNop = cells[col.lanNop] ? parseInt(cells[col.lanNop], 10) : undefined;
 
-      // Cột 4: Số GNT và ctuId từ thẻ <a>
-      const $gntLink = $tds.eq(4).find('a');
-      const soGnt = ($gntLink.length ? $gntLink.text() : cells[4]).trim() || undefined;
+      // Cột Số GNT: lấy text từ grid logic (đúng cả khi ô bị rowspan từ dòng trên),
+      // còn ctuId thì quét toàn bộ anchor trong dòng vì ô GNT có thể nằm ở dòng trước
+      const soGnt = (cells[col.soGnt] || '').trim() || undefined;
 
       let ctuId = '';
-      const href = $gntLink.attr('href') || '';
-      const matchCtu = href.match(/chiTietCT\((\d+)\)/) || href.match(/downloadGNT\((\d+)\)/);
+      let gntHref = '';
+      $tr.find('a').each((_, a) => {
+        const h = $(a).attr('href') || '';
+        if (!gntHref && /chiTietCT|downloadGNT/.test(h)) gntHref = h;
+      });
+      const matchCtu = gntHref.match(/chiTietCT\((\d+)\)/) || gntHref.match(/downloadGNT\((\d+)\)/);
       if (matchCtu) {
         ctuId = matchCtu[1];
       }
@@ -149,17 +194,17 @@ export class GntParser {
 
       if (!ctuId) {
         // Fallback deterministic (không dùng Date.now() — tránh id thay đổi mỗi lần parse)
-        ctuId = soGnt || `gnt_${stt}_${maGiaoDich || 'NA'}_${lanNop || 1}_${cells[5] || ''}_${cells[9] || ''}`;
+        ctuId = soGnt || `gnt_${stt}_${maGiaoDich || 'NA'}_${lanNop || 1}_${cells[col.soTien] || ''}_${cells[col.ngayLap] || ''}`;
       }
 
-      // Cột 5: Số tiền
-      const amount = GntMoneyParser.parse(cells[5]);
+      // Cột Số tiền
+      const amount = GntMoneyParser.parse(cells[col.soTien]);
 
-      // Cột 6: Loại tiền
-      const currency = cells[6] || 'VND';
+      // Cột Loại tiền
+      const currency = cells[col.loaiTien] || 'VND';
 
-      // Cột 7: Trạng thái
-      const statusRaw = cells[7] || '';
+      // Cột Trạng thái
+      const statusRaw = cells[col.trangThai] || '';
       let statusNormalized: GntStatus = 'UNKNOWN';
       const statusLower = statusRaw.toLowerCase().trim();
       // P0 FIX: Kiểm tra các trạng thái phủ định TRƯỚC trạng thái dương
@@ -192,19 +237,19 @@ export class GntParser {
         statusNormalized = 'OTHER';
       }
 
-      // Cột 8: Số chứng từ ngân hàng
-      const bankDocumentNo = cells[8] || undefined;
+      // Cột Số chứng từ ngân hàng
+      const bankDocumentNo = cells[col.soChungTu] || undefined;
 
-      // Cột 9, 10, 11: Ngày lập, Ngày gửi, Ngày nộp
-      const createdAt = cells[9] || undefined;
-      const sentAt = cells[10] || undefined;
-      const paidAt = cells[11] || undefined;
+      // Cột Ngày lập, Ngày gửi, Ngày nộp
+      const createdAt = cells[col.ngayLap] || undefined;
+      const sentAt = cells[col.ngayGui] || undefined;
+      const paidAt = cells[col.ngayNop] || undefined;
 
       // Kênh nộp, Ngân hàng, Số TK
-      const paymentChannelText = cells[15] || '';
+      const paymentChannelText = cells[col.kenhNop] || '';
       const source: 'ETAX' | 'OTHER_CHANNEL' = paymentChannelText.toLowerCase().includes('khác') ? 'OTHER_CHANNEL' : 'ETAX';
-      const bankName = cells[16] || undefined;
-      const bankAccount = cells[17] || undefined;
+      const bankName = cells[col.nganHang] || undefined;
+      const bankAccount = cells[col.soTk] || undefined;
 
       const canDownload = Boolean($tr.find('a[href*="downloadGNT"]').length);
 
