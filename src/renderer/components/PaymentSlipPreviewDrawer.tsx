@@ -87,7 +87,7 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
     setError(null);
 
     window.taxPortalAPI
-      .getPaymentSlipDetail({ ctuId: slip.id })
+      .getPaymentSlipDetail({ ctuId: slip.id, soGnt: slip.soGnt, maGiaoDich: slip.maGiaoDich })
       .then(res => {
         if (!isMounted) return;
         if (res.success && res.detail) {
@@ -236,15 +236,23 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
                 >
                   {statusView.label}
                 </span>
-                {/* ƯU TIÊN tổng tiền từ chi tiết eTax vừa tải (nguồn chuẩn) —
-                    số tiền ở danh sách list có thể lệch do bảng GNT thay đổi cấu trúc cột */}
                 <span
-                  className="font-mono text-sm font-bold text-slate-900 tabular-nums"
-                  title={`${detail?.tongTienVND || slip.soTienFormatted} ${slip.loaiTien}`}
+                  className={`font-mono text-sm font-bold tabular-nums ${detail?.suspectedMismatch ? 'text-rose-700 line-through decoration-rose-400' : 'text-slate-900'}`}
+                  title={`${!detail?.suspectedMismatch ? (detail?.tongTienVND || slip.soTienFormatted) : slip.soTienFormatted} ${slip.loaiTien}`}
                 >
-                  {detail?.tongTienVND || slip.soTienFormatted} ₫
+                  {!detail?.suspectedMismatch ? (detail?.tongTienVND || slip.soTienFormatted) : slip.soTienFormatted} ₫
                 </span>
               </div>
+
+              {/* CẢNH BÁO: chi tiết trả về không khớp GNT đang chọn */}
+              {detail?.suspectedMismatch && (
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-rose-50 border border-rose-300 text-[11.5px] text-rose-800">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">Chi tiết trả về KHÔNG khớp giấy nộp tiền đang chọn</span> — số tham chiếu trên chứng từ ({detail.soThamChieu || '—'}) khác mã giao dịch của GNT này ({slip.maGiaoDich || '—'}). App đã tự làm mới phiên eTax và tải lại nhưng máy chủ vẫn trả chứng từ khác. Số liệu bên dưới CÓ THỂ của chứng từ khác — vui lòng đóng drawer, mở lại, hoặc đăng nhập lại eTax.
+                  </div>
+                </div>
+              )}
 
               {/* ─── Section: Chi tiết GNT ─── */}
               <section className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">

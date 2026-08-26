@@ -255,6 +255,10 @@ export interface PaymentSlipDetail {
   tongTienBangChu?: string;
   signatures: PaymentSlipSignatureInfo[];
   rawHtml?: string;
+  // Cảnh báo: nội dung chi tiết trả về KHÔNG khớp giấy nộp tiền đang chọn
+  // (số tham chiếu != mã giao dịch) — eTax trả lệch chứng từ do trạng thái
+  // phiên DSE. KHÔNG được dùng số liệu này làm số liệu của GNT đang mở.
+  suspectedMismatch?: boolean;
 }
 
 export type PeriodAnomalyType =

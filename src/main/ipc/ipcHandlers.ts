@@ -786,9 +786,9 @@ export function setupIpcHandlers(
     }
   });
 
-  ipcMain.handle('paymentSlips:getDetail', async (_event, { ctuId }) => {
+  ipcMain.handle('paymentSlips:getDetail', async (_event, { ctuId, soGnt, maGiaoDich }) => {
     try {
-      const detail = await paymentSlipClient.getPaymentSlipDetail(ctuId);
+      const detail = await paymentSlipClient.getPaymentSlipDetail(ctuId, { soGnt, maGiaoDich });
       return { success: true, detail };
     } catch (err: any) {
       return { success: false, error: err.message };

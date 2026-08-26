@@ -746,9 +746,15 @@ export class PaymentSlipClient {
   }
 
   /**
-   * Lấy chi tiết Mẫu C1-02/NS của một GNT (có Single-Flight Deduplication & Caching)
+   * Lấy chi tiết Mẫu C1-02/NS của một GNT (có Single-Flight Deduplication & Caching).
+   * verify: thông tin danh sách để ĐỐI CHIẾU chi tiết trả về — eTax nhiều lần
+   * trả chi tiết của CHỨNG TỪ KHÁC (lệch trạng thái phiên DSE, tham số pn/sct
+   * không khớp trang), trước đây bị cache vĩnh viễn và hiển thị sai số tiền.
    */
-  public async getPaymentSlipDetail(ctuId: string): Promise<PaymentSlipDetail | null> {
+  public async getPaymentSlipDetail(
+    ctuId: string,
+    verify?: { soGnt?: string; maGiaoDich?: string }
+  ): Promise<PaymentSlipDetail | null> {
     if (!ctuId) return null;
 
     if (this.detailCache.has(ctuId)) {
@@ -759,78 +765,106 @@ export class PaymentSlipClient {
       return this.inFlightDetailRequests.get(ctuId)!;
     }
 
+    const fetchOnce = async (forceRefreshSession: boolean): Promise<PaymentSlipDetail> => {
+      await this.ensureEtaxSession(forceRefreshSession);
+
+      const params = new URLSearchParams();
+      params.append('dse_sessionId', this.currentDseState.sessionId || '');
+      params.append('dse_applicationId', '-1');
+      params.append('dse_operationName', 'corpQueryTaxProc');
+      params.append('dse_pageId', this.currentDseState.pageId || '6');
+      params.append('dse_processorState', this.currentDseState.processorState || 'viewQueryPage');
+      params.append('dse_processorId', this.currentDseState.processorId || 'EWIGIUJSBZEDBFCOGFDXGTASFMGGCEEQCRAGGADP');
+      params.append('dse_errorPage', '/etax/query_tax_information.jsp');
+      params.append('dse_nextEventName', 'detail');
+      params.append('pn', '1');
+      params.append('sct', '');
+      params.append('ctuId', ctuId);
+      params.append('soGnt', verify?.soGnt || '');
+      params.append('idBke', '');
+      params.append('type_tax', PORTAL_CONFIG.GNT_TYPE_TAX);
+      params.append('isReport', 'N');
+      params.append('type', 'pdf');
+
+      const res = await this.session.client.post(PORTAL_CONFIG.ETAX_REQUEST_API, params.toString(), {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
+          'Referer': PORTAL_CONFIG.ETAX_REQUEST_API,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+        },
+        timeout: 25000
+      });
+
+      const html = String(res.data || '');
+      const parsed = GntParser.parseDetail(html, ctuId);
+
+      return {
+        id: parsed.id,
+        soGnt: parsed.gntNo,
+        maHieu: parsed.symbolCode,
+        soChungTu: parsed.documentNo,
+        soThamChieu: parsed.transactionRef,
+        hinhThucNopTien: 'CHUYEN_KHOAN',
+        loaiTien: parsed.currency || 'VND',
+        nguoiNopThue: parsed.taxpayerName,
+        maSoThue: parsed.taxpayerId,
+        diaChi: parsed.address,
+        tinhTp: parsed.province,
+        nganHangTrichTk: parsed.debitBank,
+        soTaiKhoanTrich: parsed.debitAccount,
+        loaiTaiKhoanThu: 'TK_THU_NSNN',
+        taiKhoanKbnn: parsed.treasuryAccount,
+        tinhTpKbnn: parsed.treasuryProvince,
+        nganHangUynhiemThu: parsed.collectingBank,
+        coQuanQuanLyThu: parsed.collectionAgency,
+        items: parsed.allocations.map(al => ({
+          stt: al.sequence || 1,
+          soToKhaiQuyetDinh: al.referenceDocumentNo,
+          kyThueNgayQd: al.taxPeriodRaw,
+          noiDungKhoanNop: al.description || '',
+          soTienNguyenTe: al.originalAmount.raw || undefined,
+          soTienVND: GntMoneyParser.formatVND(al.vndAmount.value),
+          maChuong: al.chapterCode,
+          maNDKT: al.ndktCode
+        })),
+        tongTienVND: GntMoneyParser.formatVND(parsed.totalVndAmount.value),
+        tongTienBangChu: parsed.totalTextVnd,
+        signatures: parsed.signatures.map(s => ({
+          signer: s.signerName,
+          signedAt: s.signedAt || ''
+        })),
+        rawHtml: parsed.rawHtml
+      };
+    };
+
+    // Đối chiếu chi tiết trả về với hồ sơ trên danh sách: Số tham chiếu (chi tiết) phải
+    // trùng Mã giao dịch (danh sách). Cả hai phải có mặt mới coi là kiểm chứng được.
+    const isVerifiedMatch = (d: PaymentSlipDetail): boolean | null => {
+      if (!verify?.maGiaoDich) return null; // không đủ dữ liệu để kết luận
+      const ref = (d.soThamChieu || '').trim();
+      if (!ref) return null;
+      return ref === verify.maGiaoDich.trim();
+    };
+
     const detailPromise = (async () => {
       try {
-        await this.ensureEtaxSession();
+        let detail = await fetchOnce(false);
+        let match = isVerifiedMatch(detail);
 
-        const params = new URLSearchParams();
-        params.append('dse_sessionId', this.currentDseState.sessionId || '');
-        params.append('dse_applicationId', '-1');
-        params.append('dse_operationName', 'corpQueryTaxProc');
-        params.append('dse_pageId', this.currentDseState.pageId || '6');
-        params.append('dse_processorState', this.currentDseState.processorState || 'viewQueryPage');
-        params.append('dse_processorId', this.currentDseState.processorId || 'EWIGIUJSBZEDBFCOGFDXGTASFMGGCEEQCRAGGADP');
-        params.append('dse_errorPage', '/etax/query_tax_information.jsp');
-        params.append('dse_nextEventName', 'detail');
-        params.append('pn', '1');
-        params.append('sct', '');
-        params.append('ctuId', ctuId);
-        params.append('soGnt', '');
-        params.append('idBke', '');
-        params.append('type_tax', PORTAL_CONFIG.GNT_TYPE_TAX);
-        params.append('isReport', 'N');
-        params.append('type', 'pdf');
+        if (match === false) {
+          // Lệch chứng từ → làm mới toàn bộ phiên eTax rồi tải lại ĐÚNG MỘT lần
+          console.warn(`[PaymentSlipClient] Chi tiết GNT ${ctuId} LỆCH chứng từ (tham chiếu ${detail.soThamChieu} != maGD ${verify?.maGiaoDich}) -> làm mới phiên & tải lại`);
+          this.currentDseState = { sessionId: '' };
+          detail = await fetchOnce(true);
+          match = isVerifiedMatch(detail);
+        }
 
-        const res = await this.session.client.post(PORTAL_CONFIG.ETAX_REQUEST_API, params.toString(), {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
-            'Referer': PORTAL_CONFIG.ETAX_REQUEST_API,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
-          },
-          timeout: 25000
-        });
-
-        const html = String(res.data || '');
-        const parsed = GntParser.parseDetail(html, ctuId);
-
-        const detail: PaymentSlipDetail = {
-          id: parsed.id,
-          soGnt: parsed.gntNo,
-          maHieu: parsed.symbolCode,
-          soChungTu: parsed.documentNo,
-          soThamChieu: parsed.transactionRef,
-          hinhThucNopTien: 'CHUYEN_KHOAN',
-          loaiTien: parsed.currency || 'VND',
-          nguoiNopThue: parsed.taxpayerName,
-          maSoThue: parsed.taxpayerId,
-          diaChi: parsed.address,
-          tinhTp: parsed.province,
-          nganHangTrichTk: parsed.debitBank,
-          soTaiKhoanTrich: parsed.debitAccount,
-          loaiTaiKhoanThu: 'TK_THU_NSNN',
-          taiKhoanKbnn: parsed.treasuryAccount,
-          tinhTpKbnn: parsed.treasuryProvince,
-          nganHangUynhiemThu: parsed.collectingBank,
-          coQuanQuanLyThu: parsed.collectionAgency,
-          items: parsed.allocations.map(al => ({
-            stt: al.sequence || 1,
-            soToKhaiQuyetDinh: al.referenceDocumentNo,
-            kyThueNgayQd: al.taxPeriodRaw,
-            noiDungKhoanNop: al.description || '',
-            soTienNguyenTe: al.originalAmount.raw || undefined,
-            soTienVND: GntMoneyParser.formatVND(al.vndAmount.value),
-            maChuong: al.chapterCode,
-            maNDKT: al.ndktCode
-          })),
-          tongTienVND: GntMoneyParser.formatVND(parsed.totalVndAmount.value),
-          tongTienBangChu: parsed.totalTextVnd,
-          signatures: parsed.signatures.map(s => ({
-            signer: s.signerName,
-            signedAt: s.signedAt || ''
-          })),
-          rawHtml: parsed.rawHtml
-        };
+        if (match === false) {
+          // Vẫn lệch: trả về kèm cờ cảnh báo, TUYỆT ĐỐI KHÔNG cache dữ liệu sai
+          detail.suspectedMismatch = true;
+          return detail;
+        }
 
         this.detailCache.set(ctuId, detail);
         return detail;

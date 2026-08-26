@@ -59,7 +59,7 @@ const api = {
     ipcRenderer.invoke('paymentSlips:openAuthWindow'),
   getPaymentSlipsDiagnostics: () =>
     ipcRenderer.invoke('paymentSlips:getDiagnostics'),
-  getPaymentSlipDetail: (params: { ctuId: string }) =>
+  getPaymentSlipDetail: (params: { ctuId: string; soGnt?: string; maGiaoDich?: string }) =>
     ipcRenderer.invoke('paymentSlips:getDetail', params),
   exportPaymentSlipsExcel: (params: { paymentSlips: any[]; year: number }) =>
     ipcRenderer.invoke('paymentSlips:exportExcel', params),
