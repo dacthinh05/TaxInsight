@@ -1065,16 +1065,29 @@ export class TaxPortalClient {
 
             if (detailRes.data && typeof detailRes.data === 'string') {
               const html = detailRes.data;
-              const dlMatch = html.match(/(?:href|onclick)=["']([^"']*(?:downloadhoso|downloadFile)[^"']*)["']/i);
-              if (dlMatch) {
-                const dlUrl = dlMatch[1].replace(/&amp;/g, '&');
+              // Dump trang chi tiết lần cuối — chẩn đoán cấu trúc nút tải thật
+              try {
+                const dumpPath = path.join(app.getPath('userData'), 'debug_last_detail.html');
+                fs.promises.writeFile(dumpPath, html).catch(() => {});
+              } catch {}
+
+              // Cổng Thuế đặt link tải trong trang chi tiết (danh sách "Hồ sơ đính
+              // kèm") với nhiều dạng tên hàm/URL — quét rộng rồi đi từng link
+              const linkMatches = html.match(/(?:href|onclick)\s*=\s*["']([^"']*(?:download|taifile|tai\-file|dinhkem|attach|files\/)[^"']*)["']/gi) || [];
+              const seen = new Set<string>();
+              for (const raw of linkMatches) {
+                const mUrl = raw.match(/["']([^"']+)["']/);
+                if (!mUrl) continue;
+                const dlUrl = mUrl[1].replace(/&amp;/g, '&').trim();
+                if (!dlUrl || dlUrl === '#' || dlUrl.startsWith('javascript:') || seen.has(dlUrl)) continue;
+                seen.add(dlUrl);
                 const fullDlUrl = dlUrl.startsWith('http') ? dlUrl : `${PORTAL_CONFIG.BASE_URL}${dlUrl.startsWith('/') ? '' : '/'}${dlUrl}`;
                 try {
-                  const directFileRes = await this.session.client.get(fullDlUrl, {
+                  const directFileRes = await this.diagRequest('STD-detail-file', fullDlUrl, () => this.session.client.get(fullDlUrl, {
                     headers: baseHeaders,
                     timeout: 10000,
                     responseType: 'arraybuffer'
-                  });
+                  }));
                   const payloadDirect = this.extractPayloadContent(Buffer.from(directFileRes.data), primaryId);
                   if (payloadDirect) return payloadDirect;
                 } catch {}

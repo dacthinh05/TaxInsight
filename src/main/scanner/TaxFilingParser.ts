@@ -45,16 +45,18 @@ export class TaxFilingParser {
       return 'REFUND';
     }
 
-    // Acronym tiếng Anh phải khớp theo WORD BOUNDARY: trước đây includes('vat')
-    // khớp cả 'vat tu' (vật tư sau khi bỏ dấu) khiến tờ khai REPORT/CIT/OTHER
-    // bị misclassify thành VAT, hỏng chuỗi nghĩa vụ & deadline.
-    const hasWord = (word: string): boolean =>
-      new RegExp(`(^|[^a-z0-9])${word}([^a-z0-9]|$)`).test(combined);
+    // Acronym tiếng Anh (VAT/PIT/CIT) chỉ nhận diện khi viết HOA trong chuỗi
+    // GỐC: tiếng Việt không viết hoa giữa từ, nên "Vật tư" (→ "vat tu" sau bỏ
+    // dấu) không bao giờ có 'VAT' hoa. Trước đây includes('vat') khớp nhầm cả
+    // "vật tư" khiến tờ khai REPORT/CIT/OTHER bị misclassify thành VAT.
+    const originalCombined = `${code || ''} ${title || ''} ${declarationCode || ''}`;
+    const hasAcronym = (acr: string): boolean =>
+      new RegExp(`(^|[^A-Za-z0-9])${acr}([^A-Za-z0-9]|$)`).test(originalCombined);
 
     if (
       combined.includes('gtgt') ||
       combined.includes('gia tri gia tang') ||
-      hasWord('vat') ||
+      hasAcronym('VAT') ||
       combined.includes('01/gtgt') ||
       combined.includes('02/gtgt') ||
       combined.includes('03/gtgt') ||
@@ -66,7 +68,7 @@ export class TaxFilingParser {
     if (
       combined.includes('tncn') ||
       combined.includes('thu nhap ca nhan') ||
-      hasWord('pit') ||
+      hasAcronym('PIT') ||
       combined.includes('05/kk-tncn') ||
       combined.includes('02/kk-tncn') ||
       combined.includes('02/qtt-tncn') ||
@@ -78,7 +80,7 @@ export class TaxFilingParser {
     if (
       combined.includes('tndn') ||
       combined.includes('thu nhap doanh nghiep') ||
-      hasWord('cit') ||
+      hasAcronym('CIT') ||
       combined.includes('03/tndn') ||
       combined.includes('02/tndn') ||
       combined.includes('04/tndn')
@@ -284,6 +286,13 @@ export class TaxFilingParser {
       const mTdt = rowHtml.match(/\b(G\d{2}\.\d{2}-\d{6}-\d{6,12})\b/);
       if (mTdt) idCandidates.push(mTdt[1]);
 
+      // Mã tờ khai (data-ma-tkhai trên nút thao tác, vd "842") — khóa phụ cho luồng tải
+      const $maTkhai = $tr.find("[data-ma-tkhai]").first();
+      if ($maTkhai.length) {
+        const maTkhai = ($maTkhai.attr("data-ma-tkhai") || "").trim();
+        if (maTkhai && /^\d+$/.test(maTkhai)) idCandidates.push(maTkhai);
+      }
+
       const m3 = rowHtml.match(/\b(\d{8,18})\b/);
       if (m3) idCandidates.push(m3[1]);
 
@@ -296,8 +305,19 @@ export class TaxFilingParser {
       let isThueDienTu: boolean | undefined;
       let loaiTraCuu: string | undefined;
 
+      // Cờ thật của Cổng Thuế hiện nay: data-is-tdt="Y"/"N" trên các nút thao tác.
+      // Trước đây chỉ tìm data-is-thue-dien-tu/... nên không đọc được, khiến mọi
+      // hồ sơ rơi vào nhánh TDT trước (treo ~80s) thay vì nhánh chuẩn.
+      const $tdtFlag = $tr.find("[data-is-tdt]").first();
+      if ($tdtFlag.length) {
+        const rawFlag = ($tdtFlag.attr("data-is-tdt") || "").trim().toUpperCase();
+        if (rawFlag === "Y" || rawFlag === "N") {
+          isThueDienTu = rawFlag === "Y";
+        }
+      }
+
       const $dl = $tr.find("[data-is-thue-dien-tu], [data-isthuedientu], [data-thue-dien-tu], [data-thuedientu], [data-tdt]").first();
-      if ($dl.length) {
+      if (isThueDienTu === undefined && $dl.length) {
         const rawTdt = $dl.attr("data-is-thue-dien-tu") ||
           $dl.attr("data-isthuedientu") ||
           $dl.attr("data-thue-dien-tu") ||
@@ -351,10 +371,10 @@ export class TaxFilingParser {
 
       const taxType = this.classifyTaxType(procedureCode, title, declarationCode);
 
-      // Nếu là tờ khai TNCN, mặc định ưu tiên hỗ trợ tải TDT nếu chưa có thông tin
-      if (isThueDienTu === undefined && (taxType === 'PIT' || (declarationCode || '').includes('TNCN'))) {
-        isThueDienTu = true;
-      }
+      // KHÔNG còn mặc định ép TNCN đi nhánh TDT: khi thiếu cờ data-is-tdt,
+      // để undefined để luồng tải đi nhánh CHUẨN trước (TDT chỉ là fallback) —
+      // trước đây nhánh TDT treo ~80s ăn hết deadline 60s khiến TNCN không bao
+      // giờ kịp chạy nhánh chuẩn.
 
       // ─── 6. Kỳ kê khai (Cột 5: 07/2025, 2025, 01/2026...) ──────────────────
       let periodNorm: PeriodNormalized | undefined;

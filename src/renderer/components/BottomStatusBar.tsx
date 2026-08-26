@@ -47,10 +47,14 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
   const allAccountedFor = downloadSummary
     ? (downloadSummary.completed + downloadSummary.existing + downloadSummary.failed) >= downloadSummary.total
     : false;
+  // Sau khi bấm DỪNG: state=CANCELLED nhưng remaining vẫn > 0 — trước đây bar
+  // cứ hiển thị "Đang tải... Đang xử lý gói dữ liệu" mãi mãi (stale UI)
+  const isCancelledState = downloadSummary?.state === 'CANCELLED';
   const isDownloading = downloadSummary && downloadSummary.total > 0 &&
+    !isCancelledState &&
     (downloadSummary.isRunning || downloadSummary.remaining > 0) && !allAccountedFor;
   const isFinished = downloadSummary && downloadSummary.total > 0 &&
-    (!downloadSummary.isRunning || allAccountedFor) && downloadSummary.remaining === 0;
+    ((!downloadSummary.isRunning || allAccountedFor) && downloadSummary.remaining === 0 || isCancelledState);
   const isAuthRequired = downloadSummary && (downloadSummary.state === 'AUTH_REQUIRED' || downloadSummary.state === 'PAUSED_AUTH_REQUIRED');
 
   // Tự động đóng thông báo hoàn tất sau 7 giây nếu không có lỗi
@@ -94,6 +98,8 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
             <span className="font-semibold text-slate-800 whitespace-nowrap">
               {isAuthRequired
                 ? 'Tạm dừng: Cần đăng nhập lại Cổng Thuế'
+                : isCancelledState
+                ? `Đã dừng theo yêu cầu — Đã tải ${successCount}/${total} hồ sơ`
                 : isDownloading
                 ? `Đang tải ${successCount}/${total} hồ sơ (${percent}%)`
                 : failed > 0
