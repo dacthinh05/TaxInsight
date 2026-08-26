@@ -1,5 +1,6 @@
 import AdmZip from 'adm-zip';
 import fs from 'fs';
+import path from 'path';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
 import { TaxFiling } from '../../shared/types';
 import {
@@ -22,6 +23,9 @@ export class VatAnalyticsEngine {
   private memoryCache = new Map<string, VatDeclarationSnapshot>();
   private isCancelled = false;
   private baseDir = '';
+  private taxpayerId = '';
+  // filingId -> xmlPath (gom từ TẤT CẢ manifest .tax_manifest.json của MST trên đĩa)
+  private manifestXmlPaths: Map<string, string> | null = null;
 
   constructor(client: TaxPortalClient, baseDir = '') {
     this.client = client;
@@ -37,6 +41,41 @@ export class VatAnalyticsEngine {
   }
 
   /**
+   * Nạp đường dẫn XML đã tải về máy từ các manifest tải hàng loạt
+   * ({baseDir}/{MST}_{Năm}/.tax_manifest.json). Trước đây phân tích chỉ đọc
+   * downloadedFiles trong bộ nhớ phiên — hồ sơ đã tải ở phiên TRƯỚC không
+   * được nhận diện, khiến bảng đối chiếu hiện trống dù file nằm sẵn trên đĩa.
+   */
+  private loadManifestXmlPaths(): Map<string, string> {
+    if (this.manifestXmlPaths) return this.manifestXmlPaths;
+    const map = new Map<string, string>();
+    try {
+      if (this.baseDir && fs.existsSync(this.baseDir)) {
+        for (const dirName of fs.readdirSync(this.baseDir)) {
+          if (!dirName.startsWith(`${this.taxpayerPrefix()}_`)) continue;
+          const manifestPath = path.join(this.baseDir, dirName, '.tax_manifest.json');
+          if (!fs.existsSync(manifestPath)) continue;
+          try {
+            const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+            for (const [filingId, entry] of Object.entries<any>(raw || {})) {
+              if (entry?.xmlPath && fs.existsSync(entry.xmlPath)) {
+                map.set(filingId, entry.xmlPath);
+              }
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+    this.manifestXmlPaths = map;
+    return map;
+  }
+
+  private taxpayerPrefix(): string {
+    // taxpayerId có thể là MST hoặc MST-tenDV; thư mục lưu trữ đặt theo MST_NĂM
+    return this.taxpayerId.split('-')[0] || this.taxpayerId;
+  }
+
+  /**
    * Phân tích toàn diện danh sách hồ sơ GTGT với bộ tăng tốc Local-First & Snapshot Cache
    */
   public async analyzeVatFilings(
@@ -45,6 +84,8 @@ export class VatAnalyticsEngine {
     onProgress?: (current: number, total: number, message: string) => void
   ): Promise<VatAnalyticsSummary> {
     this.isCancelled = false;
+    this.taxpayerId = taxpayerId;
+    this.manifestXmlPaths = null; // nạp lại trạng thái đĩa mới nhất mỗi lần phân tích
 
     // Lọc các hồ sơ thuộc nhóm GTGT (VAT) và phân giải chuỗi bổ sung chuẩn xác
     const rawVatFilings = filings.filter(
@@ -97,6 +138,18 @@ export class VatAnalyticsEngine {
             const xml = fs.readFileSync(filing.downloadedFiles.xml, 'utf-8');
             snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
           } catch {}
+        }
+
+        // 3b. XML đã tải về máy qua đợt tải hàng loạt (kể cả phiên TRƯỚC) —
+        // tra cứu manifest .tax_manifest.json trên đĩa theo filingId
+        if (!snapshot) {
+          const manifestXml = this.loadManifestXmlPaths().get(filing.id);
+          if (manifestXml && fs.existsSync(manifestXml)) {
+            try {
+              const xml = fs.readFileSync(manifestXml, 'utf-8');
+              snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
+            } catch {}
+          }
         }
 
         // 4. Nếu chưa có XML, tải trực tuyến vào bộ nhớ RAM (có retry khi bị rate-limit/mạng)
@@ -208,7 +261,8 @@ export class VatAnalyticsEngine {
       try {
         return await this.client.downloadHoSo(filing.id, undefined, {
           isThueDienTu: filing.isThueDienTu,
-          loaiTraCuu: filing.loaiTraCuu
+          loaiTraCuu: filing.loaiTraCuu,
+          altIds: filing.altIds
         });
       } catch (err: any) {
         lastErr = err;

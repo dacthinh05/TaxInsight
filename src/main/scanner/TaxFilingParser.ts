@@ -45,10 +45,16 @@ export class TaxFilingParser {
       return 'REFUND';
     }
 
+    // Acronym tiếng Anh phải khớp theo WORD BOUNDARY: trước đây includes('vat')
+    // khớp cả 'vat tu' (vật tư sau khi bỏ dấu) khiến tờ khai REPORT/CIT/OTHER
+    // bị misclassify thành VAT, hỏng chuỗi nghĩa vụ & deadline.
+    const hasWord = (word: string): boolean =>
+      new RegExp(`(^|[^a-z0-9])${word}([^a-z0-9]|$)`).test(combined);
+
     if (
       combined.includes('gtgt') ||
       combined.includes('gia tri gia tang') ||
-      combined.includes('vat') ||
+      hasWord('vat') ||
       combined.includes('01/gtgt') ||
       combined.includes('02/gtgt') ||
       combined.includes('03/gtgt') ||
@@ -60,7 +66,7 @@ export class TaxFilingParser {
     if (
       combined.includes('tncn') ||
       combined.includes('thu nhap ca nhan') ||
-      combined.includes('pit') ||
+      hasWord('pit') ||
       combined.includes('05/kk-tncn') ||
       combined.includes('02/kk-tncn') ||
       combined.includes('02/qtt-tncn') ||
@@ -72,7 +78,7 @@ export class TaxFilingParser {
     if (
       combined.includes('tndn') ||
       combined.includes('thu nhap doanh nghiep') ||
-      combined.includes('cit') ||
+      hasWord('cit') ||
       combined.includes('03/tndn') ||
       combined.includes('02/tndn') ||
       combined.includes('04/tndn')
@@ -248,10 +254,14 @@ export class TaxFilingParser {
       if ($tds.length < 3) return;
       const rowHtml = $tr.html() || "";
 
-      let filingId = "";
+      // ─── Thu THẬP MỌI dạng ID trên dòng (không chỉ 1): cùng một hồ sơ có thể
+      // mang maHoSo ngắn (G12.18-YYMMDD-...) và mã tham chiếu dài
+      // (000.701.18.G12-YYMMDD-...) — endpoint tải chỉ nhận đúng một trong hai.
+      const idCandidates: string[] = [];
+
       const $withDataMaHoSo = $tr.find("[data-ma-ho-so], [data-mahoso], [data-id], [data-id-tkhai], [data-idtkhai], [data-id-hoso], [data-idhoso]").first();
       if ($withDataMaHoSo.length) {
-        filingId = (
+        const dataId = (
           $withDataMaHoSo.attr("data-ma-ho-so") ||
           $withDataMaHoSo.attr("data-mahoso") ||
           $withDataMaHoSo.attr("data-id") ||
@@ -261,19 +271,26 @@ export class TaxFilingParser {
           $withDataMaHoSo.attr("data-idhoso") ||
           ""
         ).trim();
+        if (dataId) idCandidates.push(dataId);
       }
-      if (!filingId) {
-        const m = rowHtml.match(/(?:files\/detail\/|idTKhai=|maHoSo=|(?:downloadHoSo|downloadHoSoTdt|taiHoSo|chiTiet)\s*\(\s*['"]?)([0-9a-zA-Z.\-_]+)/i);
-        if (m) filingId = m[1];
-      }
-      if (!filingId) {
-        const m2 = rowHtml.match(/\b(\d{3}\.\d{3}\.\d{2}\.[A-Z0-9]+-\d+-\d+)\b/);
-        if (m2) filingId = m2[1];
-      }
-      if (!filingId) {
-        const m3 = rowHtml.match(/\b(\d{8,18})\b/);
-        if (m3) filingId = m3[1];
-      }
+
+      const m = rowHtml.match(/(?:files\/detail\/|idTKhai=|maHoSo=|(?:downloadHoSo|downloadHoSoTdt|taiHoSo|chiTiet)\s*\(\s*['"]?)([0-9a-zA-Z.\-_]+)/i);
+      if (m) idCandidates.push(m[1]);
+
+      const m2 = rowHtml.match(/\b(\d{3}\.\d{3}\.\d{2}\.[A-Z0-9]+-\d+-\d+)\b/);
+      if (m2) idCandidates.push(m2[1]);
+
+      // Định dạng maHoSo TDT ngắn: G12.18-260720-00116072
+      const mTdt = rowHtml.match(/\b(G\d{2}\.\d{2}-\d{6}-\d{6,12})\b/);
+      if (mTdt) idCandidates.push(mTdt[1]);
+
+      const m3 = rowHtml.match(/\b(\d{8,18})\b/);
+      if (m3) idCandidates.push(m3[1]);
+
+      const uniqueIds = idCandidates.map(v => String(v).trim()).filter(Boolean)
+        .filter((v, i, arr) => arr.indexOf(v) === i);
+      const filingId = uniqueIds[0] || "";
+      const altIds = uniqueIds.slice(1, 5);
       if (!filingId) return;
 
       let isThueDienTu: boolean | undefined;
@@ -405,7 +422,8 @@ export class TaxFilingParser {
         status: status.trim(),
         downloadAvailable: true,
         isThueDienTu,
-        loaiTraCuu
+        loaiTraCuu,
+        altIds: altIds.length > 0 ? altIds : undefined
       });
     });
 
@@ -480,7 +498,8 @@ export class TaxFilingParser {
           downloadStatus: curr.downloadStatus || f.downloadStatus,
           downloadedFiles: curr.downloadedFiles || f.downloadedFiles,
           isThueDienTu: f.isThueDienTu ?? curr.isThueDienTu,
-          loaiTraCuu: f.loaiTraCuu ?? curr.loaiTraCuu
+          loaiTraCuu: f.loaiTraCuu ?? curr.loaiTraCuu,
+          altIds: Array.from(new Set([...(curr.altIds || []), ...(f.altIds || [])])).slice(0, 5)
         });
       }
     }
