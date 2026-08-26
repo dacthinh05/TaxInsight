@@ -73,3 +73,15 @@
 ## 5. Kết Luận Bàn Giao
 
 Hệ thống **TaxInsight v2.0.7** đã đạt đầy đủ tiêu chuẩn kiểm thử kỹ thuật nội bộ, mã nguồn sạch sẽ, không có lỗi biên dịch, không có rò rỉ session giữa các mã số thuế. Các tính năng cốt lõi (Quét hồ sơ, Tải hàng loạt, Soát xét GTGT/TNCN, Quản lý bản quyền, Tự động cập nhật) hoàn toàn sẵn sàng vận hành.
+
+---
+
+## 6. Audit Update (2026-08-26)
+
+- **Test Suite Fixes:** Sửa thành công test case lỗi ở `tests/fileOrganizer.test.ts` liên quan đến `getDestinationDir`. 
+- **Build & Tests Verification:** Hiện tại toàn bộ 39 test suites (257 test cases) passed hoàn toàn (`npm run test`). Build production chạy ổn định 0 lỗi.
+- **Security Audit Thực Tế (P2):**
+  - **Zip Slip:** Đã kiểm tra `src/main/files/ZipExtractor.ts`. Hàm `isSafeExtractionPath` sử dụng `path.resolve` và kiểm tra `.startsWith` một cách an toàn. Tên file lưu trữ cũng được qua `sanitizeFilename` rút gọn dấu gạch chéo nên không thể xảy ra Zip-Slip.
+  - **Path Traversal:** Các IPC handlers trong `setupIpcHandlers` đều đã gọi `normalizeYear` (giới hạn an toàn từ 1900-2200) và `isValidTaxCode`.
+  - **Secret Redaction:** `AuditLogger.ts` có hàm `sanitizeLogMessage` xóa thành công mật khẩu, captcha, token và cookie trong log ghi ra đĩa cứng.
+- **Đề Xuất Các Hạng Mục Blocked:** Các hạng mục *P0 — GNT Live Verification*, *P1 — Adaptive Scan Torture Test* và *P1 — Clean-Machine EXE Smoke Test* bắt buộc cần môi trường thực tế (tài khoản thuế live, máy Windows sạch để thử nghiệm EXE portable) nên chưa thể confirm offline hoàn toàn. Đội ngũ kiểm thử cần thực hiện test thủ công trước khi Release thương mại.

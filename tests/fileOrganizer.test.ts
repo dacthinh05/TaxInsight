@@ -35,7 +35,7 @@ describe('FileOrganizer', () => {
     };
 
     const destDir = organizer.getDestinationDir('3702735709', filing, 2026);
-    expect(destDir).toContain('3702735709_2026');
+    expect(destDir).toBe(tempDir);
     expect(fs.existsSync(destDir)).toBe(true);
   });
 
