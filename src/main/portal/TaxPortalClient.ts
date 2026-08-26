@@ -486,13 +486,34 @@ export class TaxPortalClient {
   }
 
   /**
+   * Lấy XSRF token hợp lệ từ cookie jar để gửi trong header X-XSRF-TOKEN / field _csrf.
+   * QUAN TRỌNG: Cookie XSRF-TOKEN của Spring (Cổng Thuế) bị URL-encode
+   * (vd '+' -> '%2B', '/' -> '%2F', '=' -> '%3D'). Browser thật luôn
+   * decodeURIComponent trước khi gửi header — nếu gửi giá trị raw thì server
+   * so token lệch và trả HTTP 403 body rỗng, khiến TẤT CẢ các POST tải hồ sơ
+   * thất bại trong khi các GET tra cứu vẫn hoạt động bình thường.
+   */
+  private async resolveXsrfToken(): Promise<string> {
+    try {
+      const cookies = await this.session.getCookieJar().getCookies(PORTAL_CONFIG.BASE_URL);
+      const xsrfCookie = cookies.find(c => c.key === 'XSRF-TOKEN' || c.key.toLowerCase() === 'xsrf-token')?.value;
+      if (xsrfCookie) {
+        try {
+          return decodeURIComponent(xsrfCookie);
+        } catch {
+          return xsrfCookie;
+        }
+      }
+    } catch {}
+    return this.csrfToken;
+  }
+
+  /**
    * Xác thực ID tờ khai trước khi tải
    */
   public async validateIdTkhai(idTKhai: string): Promise<boolean> {
     try {
-      const cookies = await this.session.getCookieJar().getCookies(PORTAL_CONFIG.BASE_URL);
-      const xsrfCookie = cookies.find(c => c.key === 'XSRF-TOKEN' || c.key.toLowerCase() === 'xsrf-token')?.value;
-      const activeToken = xsrfCookie || this.csrfToken;
+      const activeToken = await this.resolveXsrfToken();
 
       const headers: Record<string, string> = {
         'Accept': '*/*',
@@ -716,6 +737,14 @@ export class TaxPortalClient {
           throw primaryErr;
         }
 
+        // HTTP 403 body rỗng = Spring từ chối CSRF/phiên. Tự chữa lành:
+        // tải lại trang TCHS để làm mới cookie + CSRF token rồi thử lại.
+        if (primaryErr.httpStatus === 403 && attempt < maxRateRetries) {
+          console.warn(`[TaxPortalClient] HTTP 403 khi tải hồ sơ ${cleanId}, làm mới phiên & CSRF rồi thử lại (lần ${attempt}/${maxRateRetries - 1})...`);
+          await this.checkSession().catch(() => false);
+          continue;
+        }
+
         if (primaryErr.code === 'RATE_LIMIT' && attempt < maxRateRetries) {
           const backoffDelay = 2000 * attempt + Math.random() * 500;
           console.warn(`[TaxPortalClient] HTTP 429 khi tải hồ sơ ${cleanId}, chờ ${Math.round(backoffDelay)}ms rồi thử lại (lần ${attempt}/${maxRateRetries - 1})...`);
@@ -735,7 +764,10 @@ export class TaxPortalClient {
           if (abortSignal?.aborted || fallbackErr.code === 'CANCELLED' || fallbackErr.code === 'SESSION_EXPIRED') {
             throw fallbackErr;
           }
-          if (fallbackErr.code === 'RATE_LIMIT' && attempt < maxRateRetries) {
+          if ((fallbackErr.code === 'RATE_LIMIT' || fallbackErr.httpStatus === 403) && attempt < maxRateRetries) {
+            if (fallbackErr.httpStatus === 403) {
+              await this.checkSession().catch(() => false);
+            }
             const backoffDelay = 2000 * attempt + Math.random() * 500;
             await new Promise(r => setTimeout(r, backoffDelay));
             continue;
@@ -760,9 +792,7 @@ export class TaxPortalClient {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const cookies = await this.session.getCookieJar().getCookies(PORTAL_CONFIG.BASE_URL);
-        const xsrfCookie = cookies.find(c => c.key === 'XSRF-TOKEN' || c.key.toLowerCase() === 'xsrf-token')?.value;
-        const activeToken = xsrfCookie || this.csrfToken;
+        const activeToken = await this.resolveXsrfToken();
 
         const baseHeaders: Record<string, string> = {
           'Origin': 'https://dichvucong.gdt.gov.vn',
@@ -851,9 +881,7 @@ export class TaxPortalClient {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const cookies = await this.session.getCookieJar().getCookies(PORTAL_CONFIG.BASE_URL);
-        const xsrfCookie = cookies.find(c => c.key === 'XSRF-TOKEN' || c.key.toLowerCase() === 'xsrf-token')?.value;
-        const activeToken = xsrfCookie || this.csrfToken;
+        const activeToken = await this.resolveXsrfToken();
 
         const baseHeaders: Record<string, string> = {
           'Origin': 'https://dichvucong.gdt.gov.vn',
@@ -1078,6 +1106,9 @@ export class TaxPortalClient {
 
     const customErr = new Error(`${contextMessage}: ${detail}`);
     (customErr as any).code = code;
+    if (axiosErr.response) {
+      (customErr as any).httpStatus = axiosErr.response.status;
+    }
     return customErr;
   }
 }
