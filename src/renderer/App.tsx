@@ -622,7 +622,13 @@ export const App: React.FC = () => {
       return;
     }
 
-    // 1. Gom hồ sơ năm hiện tại
+    // 1. Gom toàn bộ hồ sơ đã quét trong phiên. Phân tích theo kỳ kê khai
+    // cần dữ liệu năm trước để xác định [22] đầu kỳ, dù ngày nộp nằm ở năm sau.
+    const filingMap = new Map<string, TaxFiling>();
+    for (const yearFilings of Object.values(filingsByYear)) {
+      for (const filing of yearFilings) filingMap.set(filing.id, filing);
+    }
+    for (const filing of filings) filingMap.set(filing.id, filing);
     const currentYearFilings = filingsByYear[selectedYear] || filings;
     
     // 2. Gom thêm hồ sơ thuộc kỳ selectedYear nhưng nộp vào năm sau (như Tháng 12/YYYY nộp vào T01/YYYY+1)
@@ -632,8 +638,14 @@ export const App: React.FC = () => {
       return p.includes(String(selectedYear)) || p.includes(`12/${selectedYear}`) || p.includes(`q4/${selectedYear}`);
     });
 
-    const combined = [...currentYearFilings];
+    const combined = [...filingMap.values()];
     const existingIds = new Set(combined.map(f => f.id));
+    for (const filing of currentYearFilings) {
+      if (!existingIds.has(filing.id)) {
+        combined.push(filing);
+        existingIds.add(filing.id);
+      }
+    }
     for (const f of crossYearFilings) {
       if (!existingIds.has(f.id)) {
         combined.push(f);

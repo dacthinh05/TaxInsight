@@ -4,6 +4,7 @@ import {
   VatPeriodGroup
 } from './vatAnalyticsTypes';
 import { formatMoneyVND } from './moneyUtils';
+import { parseSubmissionTimestamp } from './dateUtils';
 
 export type FlowSemanticState =
   | 'NORMAL'
@@ -351,6 +352,25 @@ export class VatFlowEngine {
 
     if (sortedAvailable.length > 0 && sortedAvailable[0].finalSnapshot) {
       openingYearBalance = sortedAvailable[0].finalSnapshot.ct22_thueDauVaoKyTruoc;
+      runningPrevCarryForward = openingYearBalance;
+    }
+
+    // [22] đầu kỳ của năm phải nối với [43] cuối kỳ năm trước. Chỉ dùng
+    // tháng 12/Q4 của năm trước để tránh lấy nhầm một kỳ giữa năm khi dữ
+    // liệu lịch sử mới chỉ được quét một phần.
+    const previousYearClosingGroups = allGroups
+      .filter(g => g.year === targetYear - 1 &&
+        ((g.periodType === 'MONTH' && g.month === 12) ||
+         (g.periodType === 'QUARTER' && g.quarter === 4)) &&
+        g.finalSnapshot)
+      .sort((a, b) => {
+        const aTime = a.finalSnapshot?.submittedAt ? parseSubmissionTimestamp(a.finalSnapshot.submittedAt) : 0;
+        const bTime = b.finalSnapshot?.submittedAt ? parseSubmissionTimestamp(b.finalSnapshot.submittedAt) : 0;
+        return bTime - aTime;
+      });
+    const previousYearClosing = previousYearClosingGroups[0]?.finalSnapshot;
+    if (previousYearClosing) {
+      openingYearBalance = previousYearClosing.ct43_thueKhauTruChuyenKySau;
       runningPrevCarryForward = openingYearBalance;
     }
 

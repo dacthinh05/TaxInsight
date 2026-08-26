@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { sanitizeExcelCellValue } from '../src/shared/sanitizer';
 import { normalizeVatPeriod, getPeriodNumericSortKey } from '../src/shared/dateUtils';
 import { TaxFiling } from '../src/shared/types';
-import { VatDeclarationSnapshot, VatPeriodGroup } from '../src/shared/vatAnalyticsTypes';
+import { VatAnalyticsSummary, VatDeclarationSnapshot, VatPeriodGroup } from '../src/shared/vatAnalyticsTypes';
 import { VatFlowEngine } from '../src/shared/vatFlowEngine';
 import { generateVietQrEmvCoPayload } from '../src/shared/vietqr';
 import { VatXmlParser } from '../src/main/scanner/VatXmlParser';
@@ -220,6 +220,56 @@ describe('AUDIT FIXES — Regression', () => {
       expect(q3Row).toBeDefined();
       expect(q3Row!.incomingAdjustments.length).toBe(1);
       expect(q3Row!.incomingAdjustments[0].delta).toBe(5000000n);
+    });
+  });
+
+  describe('FIX: phân tích VAT nối số dư kỳ trước', () => {
+    it('lấy [43] của tháng 12 năm trước làm [22] đầu năm hiện tại', () => {
+      const snap = (periodKey: string, periodValue: string, submittedAt: string, values: Partial<VatDeclarationSnapshot> = {}) => ({
+        taxpayerId: '0102030405',
+        formCode: '01/GTGT',
+        period: { type: 'MONTH', value: periodValue, normalizedKey: periodKey },
+        declarationType: 'ORIGINAL',
+        sequenceSource: 'XML',
+        submissionId: periodKey,
+        submittedAt,
+        status: 'Đã chấp nhận',
+        ct22_thueDauVaoKyTruoc: 0n,
+        ct23_giaTriMuaVao: 0n,
+        ct24_thueMuaVao: 0n,
+        ct25_thueKhauTruKyNay: 0n,
+        ct34_doanhThuBanRa: 0n,
+        ct35_thueBanRa: 0n,
+        ct40_thuePhaiNop: 0n,
+        ct43_thueKhauTruChuyenKySau: 0n,
+        allIndicators: {},
+        warnings: [],
+        parseStatus: 'SUCCESS',
+        xmlAvailable: true,
+        ...values
+      } as VatDeclarationSnapshot);
+
+      const previous = snap('2025-M12', '12/2025', '20/01/2026 09:00', { ct43_thueKhauTruChuyenKySau: 125000000n });
+      const current = snap('2026-M01', '01/2026', '20/02/2026 09:00', { ct22_thueDauVaoKyTruoc: 125000000n });
+      const group = (key: string, year: number, month: number, snapshot: VatDeclarationSnapshot): VatPeriodGroup => ({
+        periodKey: key,
+        periodLabel: `${month}/${year}`,
+        periodType: 'MONTH',
+        year,
+        month,
+        filings: [],
+        snapshots: [snapshot],
+        finalSnapshot: snapshot,
+        hasSupplemental: false,
+        supplementalCount: 0,
+        hasValueDelta: false,
+        deltas: [],
+        warnings: []
+      });
+
+      const result = VatFlowEngine.normalizeYearFlow({ taxpayerId: '0102030405', periodGroups: [group('2025-M12', 2025, 12, previous), group('2026-M01', 2026, 1, current)] } as VatAnalyticsSummary, 2026);
+      expect(result.openingYearBalance).toBe(125000000n);
+      expect(result.flows[0].flowCheck.status).toBe('CONFIRMED');
     });
   });
 
