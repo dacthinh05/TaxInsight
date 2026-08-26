@@ -398,9 +398,17 @@ export class GntParser {
       }
     });
 
-    // Tổng tiền VND trên GNT
+    // Tổng tiền VND trên GNT: ưu tiên #sum của trang, nhưng eTax nhiều lần
+    // trả placeholder "0" → khi đó lấy TỔNG các dòng khoản nộp thay vì 0đ sai
     const totalRawVnd = $('#sum').text().trim();
-    const totalVndAmount = GntMoneyParser.parse(totalRawVnd || (allocations.length > 0 ? allocations[0].vndAmount.raw : '0'));
+    let totalVndAmount = GntMoneyParser.parse(totalRawVnd);
+    if (totalVndAmount.status !== 'VALID' || totalVndAmount.value === 0n) {
+      if (sumAllocationsVnd > 0n) {
+        totalVndAmount = { status: 'VALID', value: sumAllocationsVnd, raw: GntMoneyParser.formatVND(sumAllocationsVnd) };
+      } else if (allocations.length > 0) {
+        totalVndAmount = GntMoneyParser.parse(allocations[0].vndAmount.raw);
+      }
+    }
     const totalTextVnd = $('#sotienbangchu_VND').text().trim() || undefined;
 
     // FIX 2: Kiểm tra tính toàn vẹn nghiêm ngặt

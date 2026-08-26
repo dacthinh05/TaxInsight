@@ -894,8 +894,8 @@ export function setupIpcHandlers(
         });
 
         await fs.promises.writeFile(targetPath, pdfBuffer);
-        auditLogger.log('SUCCESS', `Lưu file PDF Giấy Nộp Tiền thành công: ${fileName}`, targetPath);
-        return { success: true, filePath: targetPath, fileName };
+        auditLogger.log('SUCCESS', `Luu file PDF Gi?y N?p Ti?n th?nh c?ng: ${fileName}`, targetPath);
+        return { success: true, filePath: targetPath, fileName, folderPath: gntDir };
       } finally {
         if (!win.isDestroyed()) win.destroy();
       }

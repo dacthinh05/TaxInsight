@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Printer, CheckCircle2, ShieldCheck, Loader2, FileText, Scale, AlertTriangle, ArrowLeftRight } from 'lucide-react';
+import { X, Printer, CheckCircle2, ShieldCheck, Loader2, FileText, Scale, AlertTriangle, ArrowLeftRight, FolderOpen } from 'lucide-react';
 import { PaymentSlipDetail, PaymentSlipRecord } from '../../shared/types';
 import {
   SLIP_RECON_META,
@@ -70,6 +70,8 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
   const [error, setError] = useState<string | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
+  // Thư mục chứa PDF GNT đã xuất — cho nút "Mở thư mục" truy cập nhanh
+  const [exportedFolder, setExportedFolder] = useState<string | null>(null);
   // 'overview': side panel tổng quan + đối chiếu | 'doc': bản gốc C1-02/NS
   const [view, setView] = useState<'overview' | 'doc'>('overview');
 
@@ -78,6 +80,7 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
       setDetail(null);
       setError(null);
       setView('overview');
+      setExportedFolder(null);
       return;
     }
     setView('overview');
@@ -121,7 +124,8 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
       const res = await window.taxPortalAPI.exportPaymentSlipPdf({ ctuId: slip.id });
       if (res.success) {
         setExportSuccessMsg(`Đã lưu file PDF: ${res.fileName}`);
-        setTimeout(() => setExportSuccessMsg(null), 4000);
+        if (res.folderPath) setExportedFolder(res.folderPath);
+        setTimeout(() => setExportSuccessMsg(null), 6000);
       } else {
         alert(`Lỗi khi xuất file PDF: ${res.error}`);
       }
@@ -159,10 +163,23 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
           </div>
 
           <div className="flex items-center space-x-1.5 shrink-0">
-            {exportSuccessMsg && view === 'doc' && (
+            {exportSuccessMsg && (
               <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md mr-1">
                 {exportSuccessMsg}
               </span>
+            )}
+
+            {/* Mở nhanh thư mục chứa PDF Giấy nộp tiền đã xuất */}
+            {exportedFolder && (
+              <button
+                type="button"
+                onClick={() => window.taxPortalAPI?.openPath(exportedFolder)}
+                className="h-8 px-3 rounded-lg border border-slate-300 text-slate-700 hover:bg-white hover:border-teal-500 hover:text-teal-800 text-xs font-medium flex items-center space-x-1.5 transition-colors cursor-pointer"
+                title="Mở thư mục chứa file PDF Giấy nộp tiền đã lưu"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                <span>Mở thư mục</span>
+              </button>
             )}
 
             {view === 'overview' ? (
@@ -194,6 +211,20 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
               </>
             ) : (
               <>
+                <button
+                  type="button"
+                  onClick={handleExportPdf}
+                  disabled={isExportingPdf || loading}
+                  className="h-8 px-3 rounded-lg bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white text-xs font-medium flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+                  title="Lưu file PDF Giấy Nộp Tiền (Mẫu C1-02/NS) vào máy"
+                >
+                  {isExportingPdf ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Printer className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isExportingPdf ? 'Đang lưu…' : 'Tải PDF'}</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => window.print()}

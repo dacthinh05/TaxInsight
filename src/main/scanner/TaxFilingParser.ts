@@ -304,6 +304,7 @@ export class TaxFilingParser {
 
       if (!loaiTraCuu) {
         const mLoai = rowHtml.match(/(?:downloadHoSo|downloadHoSoTdt)\s*\([^,]+,[^,]+,\s*['"]?([^'",\)\s]+)['"]?\)/i) ||
+          rowHtml.match(/loaiTraCuu['"]?\s*[:=,]\s*['"]?(\d+)/i) ||
           rowHtml.match(/loaiTraCuu=([^&"'\s]+)/i);
         if (mLoai) loaiTraCuu = mLoai[1];
       }

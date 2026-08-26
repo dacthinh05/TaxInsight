@@ -808,13 +808,18 @@ export class TaxPortalClient {
         }
 
         const urlsToTry: string[] = [];
-        if (loaiTraCuu) {
-          urlsToTry.push(`${PORTAL_CONFIG.DOWNLOAD_TDT_API}?loaiTraCuu=${encodeURIComponent(loaiTraCuu)}`);
+        // eTax phân loại hồ sơ theo loaiTraCuu (1 = nhóm tờ khai GTGT..., các giá
+        // trị khác cho TNCN/quyết toán...). Không biết giá trị đúng → quét lần
+        // lượt các giá trị chuẩn của portal, ưu tiên giá trị đính kèm hồ sơ nếu có.
+        const loaiCandidates: string[] = [];
+        if (loaiTraCuu) loaiCandidates.push(loaiTraCuu);
+        for (const v of ['1', '2', '3']) {
+          if (!loaiCandidates.includes(v)) loaiCandidates.push(v);
+        }
+        for (const v of loaiCandidates) {
+          urlsToTry.push(`${PORTAL_CONFIG.DOWNLOAD_TDT_API}?loaiTraCuu=${encodeURIComponent(v)}`);
         }
         urlsToTry.push(PORTAL_CONFIG.DOWNLOAD_TDT_API);
-        if (!loaiTraCuu) {
-          urlsToTry.push(`${PORTAL_CONFIG.DOWNLOAD_TDT_API}?loaiTraCuu=1`);
-        }
 
         let lastTdtError: any = null;
 

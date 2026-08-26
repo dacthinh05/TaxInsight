@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { PaymentSlipDetail, PaymentSlipRecord, PaymentSlipSignatureInfo, PaymentSlipSubItem } from '../../shared/types';
+import { GntMoneyParser } from './GntMoneyParser';
 import { resolveAllocationColumns } from './GntTableColumns';
 
 export class PaymentSlipParser {
@@ -188,8 +189,19 @@ export class PaymentSlipParser {
       }
     });
 
-    // Tổng tiền
-    const tongTienVND = $('#sum').text().trim() || (items.length > 0 ? items[0].soTienVND : '0');
+    // Tổng tiền: #sum của eTax nhiều lần trả placeholder "0" → dùng tổng các dòng
+    let tongTienVND = $('#sum').text().trim();
+    const parsedSum = GntMoneyParser.parse(tongTienVND);
+    if (!tongTienVND || parsedSum.status !== 'VALID' || parsedSum.value === 0n) {
+      let sum = 0n;
+      for (const it of items) {
+        const p = GntMoneyParser.parse(it.soTienVND);
+        if (p.status === 'VALID') sum += p.value;
+      }
+      tongTienVND = sum > 0n
+        ? GntMoneyParser.formatVND(sum)
+        : (items.length > 0 ? (items[0].soTienVND || '0') : (tongTienVND || '0'));
+    }
     const tongTienBangChu = $('#sotienbangchu_VND').text().trim() || undefined;
 
     // Chữ ký số

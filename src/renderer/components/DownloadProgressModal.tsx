@@ -32,6 +32,10 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
   const processedCount = summary.completed + summary.existing + summary.failed;
   const percent = summary.total > 0 ? Math.round((processedCount / summary.total) * 100) : 0;
   const isFinished = !summary.isRunning && summary.remaining === 0 && summary.total > 0;
+  // Sau khi bấm DỪNG/HỦY: remaining vẫn > 0 (các mục CANCELLED) — trước đây
+  // modal khi đó KHÔNG còn nút đóng nào khiến người dùng bị kẹt ở màn hình
+  const isStoppedManually = !summary.isRunning && !summary.isPaused && !isFinished && summary.state !== 'AUTH_REQUIRED' && summary.state !== 'PAUSED_AUTH_REQUIRED';
+  const canClose = isFinished || isStoppedManually;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fadeIn">
@@ -44,10 +48,11 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
               {isFinished ? 'Hoàn Tất Đợt Tải Hồ Sơ' : 'Đang Tải Hồ Sơ Thuế Hàng Loạt'}
             </h3>
           </div>
-          {isFinished && (
+          {(isFinished || canClose) && (
             <button
               onClick={onClose}
               className="text-emerald-200 hover:text-white transition-colors"
+              title={isFinished ? 'Đóng' : 'Đóng (tiến trình đã dừng)'}
             >
               <X className="w-5 h-5" />
             </button>
