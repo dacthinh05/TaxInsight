@@ -122,46 +122,50 @@ export class DownloadManager extends EventEmitter {
   }
 
   /**
-   * Thêm danh sách hồ sơ vào hàng đợi tải
+   * Thêm danh sách hồ sơ vào hàng đợi tải.
+   * Mỗi lô tải từ UI là DANH SÁCH ĐÍCH: thay thế toàn bộ hàng đợi thay vì
+   * cộng dồn. Trước đây hàng đợi giữ lại item của các lô cũ (kể cả item đã
+   * bị hủy, mà start() còn hồi phục về PENDING) khiến người dùng chọn 3 hồ sơ
+   * nhưng modal hiện "Tổng số 10" và tải cả hồ sơ cũ không liên quan.
    */
   public enqueueFilings(filings: TaxFiling[], taxCode?: string, year?: number) {
     if (taxCode) this.taxCode = taxCode;
     if (year) this.year = year;
 
-    for (const filing of filings) {
-      const existingItem = this.queue.find(q => q.filingId === filing.id);
-      if (!existingItem) {
-        // 🎯 TẦNG 1: LOGICAL MANIFEST PRE-CHECK
-        const preCheck = this.fileOrganizer.checkPreDownloadStatus(this.taxCode, filing, this.year);
+    // Vô hiệu hóa worker của lô cũ đang chạy: chúng tự thoát khi thấy
+    // generation đổi (processQueue/downloadItemWithWorker đều kiểm tra).
+    this.queueGeneration++;
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    this.activeDownloads = 0;
+    this.isCancelled = false;
+    this.isPaused = false;
+    this.queue = [];
 
-        if (preCheck.isAlreadyDownloaded) {
-          filing.downloadStatus = 'EXISTING';
-          this.queue.push({
-            filingId: filing.id,
-            filing,
-            status: 'EXISTING',
-            retries: 0,
-            progressPercent: 100,
-            savedPaths: preCheck.savedPaths
-          });
-        } else {
-          this.queue.push({
-            filingId: filing.id,
-            filing,
-            status: 'PENDING',
-            retries: 0,
-            progressPercent: 0
-          });
-        }
+    for (const filing of filings) {
+      // 🎯 TẦNG 1: LOGICAL MANIFEST PRE-CHECK
+      const preCheck = this.fileOrganizer.checkPreDownloadStatus(this.taxCode, filing, this.year);
+
+      if (preCheck.isAlreadyDownloaded) {
+        filing.downloadStatus = 'EXISTING';
+        this.queue.push({
+          filingId: filing.id,
+          filing,
+          status: 'EXISTING',
+          retries: 0,
+          progressPercent: 100,
+          savedPaths: preCheck.savedPaths
+        });
       } else {
-        // Hồ sơ đã có trong hàng đợi nhưng cần tải lại / thử lại (FAILED, CANCELLED, hoặc re-download)
-        existingItem.status = 'PENDING';
-        existingItem.retries = 0;
-        existingItem.progressPercent = 0;
-        existingItem.error = undefined;
-        filing.downloadStatus = 'PENDING';
-        filing.downloadError = undefined;
-        existingItem.filing = filing;
+        this.queue.push({
+          filingId: filing.id,
+          filing,
+          status: 'PENDING',
+          retries: 0,
+          progressPercent: 0
+        });
       }
     }
   }

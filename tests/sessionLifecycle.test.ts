@@ -203,4 +203,37 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
     expect(manager.getSummary().total).toBe(0);
     expect(organizer.saveExtractedFiling).not.toHaveBeenCalled();
   });
+
+  it('7. enqueueFilings thay thế hàng đợi: chọn 3 hồ sơ mới sau lô 5 hồ sơ đã hủy -> tổng số đúng 3', async () => {
+    const client = createMockClient({ isAlive: true });
+    const organizer = createMockOrganizer();
+    const manager = new DownloadManager(client, organizer);
+
+    // Lô cũ: 5 hồ sơ, chờ worker đầu tiên cầm item (progress event) rồi hủy
+    // (lib ES2022 chưa có Promise.withResolvers nên dùng resolver thủ công)
+    let resolveFirstProgress!: () => void;
+    const firstProgress = new Promise<void>(resolve => { resolveFirstProgress = resolve; });
+    manager.once('progress', () => resolveFirstProgress());
+
+    manager.enqueueFilings(sampleFilings, '3702735709', 2025);
+    await manager.start();
+    await firstProgress;
+    manager.cancel();
+    expect(manager.getSummary().total).toBe(5);
+
+    // Lô mới: người dùng chỉ chọn 3 hồ sơ -> hàng đợi phải chứa ĐÚNG 3 item,
+    // không hồi phục 2 hồ sơ cũ đã hủy
+    manager.enqueueFilings(sampleFilings.slice(0, 3), '3702735709', 2025);
+
+    const summary = manager.getSummary();
+    expect(summary.total).toBe(3);
+    expect(summary.remaining).toBe(3);
+
+    await manager.start();
+    const afterStart = manager.getSummary();
+    expect(afterStart.total).toBe(3);
+    // Không item nào của lô cũ sống sót trong hàng đợi
+    const queueIds = manager.getQueue().map(q => q.filingId);
+    expect(queueIds).toEqual(['F01', 'F02', 'F03']);
+  });
 });

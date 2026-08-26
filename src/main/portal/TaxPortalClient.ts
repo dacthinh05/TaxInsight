@@ -902,6 +902,10 @@ export class TaxPortalClient {
             } catch (e1: any) {
               lastTdtError = e1;
               if (e1.response?.status === 429) throw e1;
+              // Phiên hết hạn/hủy: dừng NGAY — trước đây lỗi bị nuốt và vòng lặp
+              // cứ thử nốt mọi biến thể ID với phiên chết, khiến hàng đợi đứng
+              // hình tới 60s/hồ sơ trước khi DownloadManager kịp yêu cầu đăng nhập lại.
+              if (e1.code === 'SESSION_EXPIRED' || e1.code === 'CANCELLED') throw e1;
             }
 
             // CHIẾN LƯỢC TDT 2: JSON { idTKhai: <biến thể ID> }
@@ -916,6 +920,7 @@ export class TaxPortalClient {
             } catch (e2: any) {
               lastTdtError = e2;
               if (e2.response?.status === 429) throw e2;
+              if (e2.code === 'SESSION_EXPIRED' || e2.code === 'CANCELLED') throw e2;
             }
           }
         }
@@ -990,6 +995,7 @@ export class TaxPortalClient {
           } catch (err1: any) {
             lastError = err1;
             if (err1.response?.status === 429) throw err1;
+            if (err1.code === 'SESSION_EXPIRED' || err1.code === 'CANCELLED') throw err1;
           }
 
           if (abortSignal?.aborted) break;
@@ -1013,6 +1019,7 @@ export class TaxPortalClient {
           } catch (err2: any) {
             lastError = err2;
             if (err2.response?.status === 429) throw err2;
+            if (err2.code === 'SESSION_EXPIRED' || err2.code === 'CANCELLED') throw err2;
           }
         }
 
@@ -1043,6 +1050,7 @@ export class TaxPortalClient {
           } catch (err3: any) {
             lastError = err3;
             if (err3.response?.status === 429) throw err3;
+            if (err3.code === 'SESSION_EXPIRED' || err3.code === 'CANCELLED') throw err3;
           }
         }
 
@@ -1090,11 +1098,18 @@ export class TaxPortalClient {
                   }));
                   const payloadDirect = this.extractPayloadContent(Buffer.from(directFileRes.data), primaryId);
                   if (payloadDirect) return payloadDirect;
-                } catch {}
+                } catch (eLink: unknown) {
+                  if (
+                    eLink instanceof Error &&
+                    ((eLink as { code?: unknown }).code === 'SESSION_EXPIRED' ||
+                      (eLink as { code?: unknown }).code === 'CANCELLED')
+                  ) throw eLink;
+                }
               }
             }
           } catch (err4: any) {
             lastError = err4;
+            if (err4.code === 'SESSION_EXPIRED' || err4.code === 'CANCELLED') throw err4;
           }
         }
 
