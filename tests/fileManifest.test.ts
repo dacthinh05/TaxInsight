@@ -68,4 +68,29 @@ describe('Two-Tier Deduplication & FileManifest', () => {
     const preCheck3 = organizer.checkPreDownloadStatus(taxCode, filing, year);
     expect(preCheck3.isAlreadyDownloaded).toBe(false);
   });
+
+  it('does not create a legacy nested MST/year folder when writing the manifest', () => {
+    const organizer = new FileOrganizer(tempDir);
+    const manifest = organizer.getManifest(taxCode, year);
+    const filing: TaxFiling = {
+      id: 'manifest-path-check',
+      title: 'Khai thuế GTGT',
+      taxType: 'VAT',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+    const destDir = organizer.getDestinationDir(taxCode, filing, year);
+    const filePath = path.join(destDir, 'check.xml');
+    fs.writeFileSync(filePath, '<xml />');
+
+    manifest.recordDownload({
+      filingId: filing.id,
+      filingType: filing.filingType,
+      savedPaths: [filePath],
+      downloadedAt: new Date().toISOString()
+    });
+
+    expect(fs.existsSync(path.join(tempDir, `${taxCode}_${year}`, '.tax_manifest.json'))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, taxCode, String(year)))).toBe(false);
+  });
 });

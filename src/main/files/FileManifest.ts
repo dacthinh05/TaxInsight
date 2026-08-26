@@ -19,17 +19,22 @@ export interface ManifestEntry {
 
 export class FileManifest {
   private manifestPath: string;
+  private legacyManifestPath: string;
   private entries: Map<string, ManifestEntry> = new Map();
 
   constructor(targetDir: string, taxCode: string, year: number) {
-    this.manifestPath = path.join(targetDir, taxCode, String(year), '.tax_manifest.json');
+    // Keep the manifest beside the files. The legacy nested path created a
+    // second MST/year tree even though FileOrganizer uses MST_year.
+    this.manifestPath = path.join(targetDir, `${taxCode}_${year}`, '.tax_manifest.json');
+    this.legacyManifestPath = path.join(targetDir, taxCode, String(year), '.tax_manifest.json');
     this.load();
   }
 
   private load() {
     try {
-      if (fs.existsSync(this.manifestPath)) {
-        const raw = fs.readFileSync(this.manifestPath, 'utf-8');
+      const sourcePath = fs.existsSync(this.manifestPath) ? this.manifestPath : this.legacyManifestPath;
+      if (fs.existsSync(sourcePath)) {
+        const raw = fs.readFileSync(sourcePath, 'utf-8');
         const data = JSON.parse(raw);
         if (typeof data === 'object' && data !== null) {
           for (const [key, val] of Object.entries(data)) {
