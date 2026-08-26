@@ -245,7 +245,21 @@ export const App: React.FC = () => {
           setIsUpdateModalOpen(true);
         }
       })
+
     ];
+
+    // Chủ động kiểm tra bản cập nhật NGAY khi mở ứng dụng (trước cả khi đăng nhập).
+    // Trước đây chỉ dựa vào timer phía main (check sau 4s) — khi đó renderer chưa
+    // kịp gắn listener nên sự kiện bị rơi, bảng cập nhật chỉ hiện ở lần check kế
+    // tiếp (1 tiếng sau) tức là khi người dùng đã đăng nhập và dùng app.
+    if (window.taxPortalAPI?.checkForUpdates) {
+      window.taxPortalAPI.checkForUpdates().then((res: UpdateInfo) => {
+        if (res && (res.state === 'AVAILABLE' || res.state === 'DOWNLOADED')) {
+          setUpdateInfo(res);
+          setIsUpdateModalOpen(true);
+        }
+      }).catch(() => {});
+    }
 
     return () => {
       unsubs.forEach(unsub => unsub && unsub());
