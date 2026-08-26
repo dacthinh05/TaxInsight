@@ -348,16 +348,42 @@ export class DownloadManager extends EventEmitter {
       return;
     }
 
+    // Cờ deadline đặt NGOÀI khối try để khối catch nhìn thấy được
+    let deadlineHit = false;
+
     try {
-      // 2. Tải Base64 ZIP — tự động route sang /downloadhoso-tdt nếu isThueDienTu=true
-      const payload = await this.client.downloadHoSo(
-        item.filingId,
-        this.abortController?.signal,
-        {
-          isThueDienTu: item.filing.isThueDienTu,
-          loaiTraCuu: item.filing.loaiTraCuu
+      // Deadline 60s/hồ sơ: trước đây 1 hồ sơ lỗi có thể treo nhiều phút qua
+      // chuỗi chiến lược + retry khiến hàng đợi trông như đứng hình ở 0%.
+      // Mỗi hồ sơ có AbortController riêng (vẫn bị hủy theo queue chung).
+      const ITEM_DEADLINE_MS = 60000;
+      const itemController = new AbortController();
+      const onQueueAbort = () => itemController.abort();
+      if (this.abortController) {
+        if (this.abortController.signal.aborted) itemController.abort();
+        else this.abortController.signal.addEventListener('abort', onQueueAbort);
+      }
+      const deadline = setTimeout(() => {
+        deadlineHit = true;
+        itemController.abort();
+      }, ITEM_DEADLINE_MS);
+
+      let payload;
+      try {
+        // 2. Tải Base64 ZIP — tự động route sang /downloadhoso-tdt nếu isThueDienTu=true
+        payload = await this.client.downloadHoSo(
+          item.filingId,
+          itemController.signal,
+          {
+            isThueDienTu: item.filing.isThueDienTu,
+            loaiTraCuu: item.filing.loaiTraCuu
+          }
+        );
+      } finally {
+        clearTimeout(deadline);
+        if (this.abortController) {
+          this.abortController.signal.removeEventListener('abort', onQueueAbort);
         }
-      );
+      }
 
       // clearQueue() may have replaced the queue while the request was in flight.
       if (generation !== this.queueGeneration) return;
@@ -394,7 +420,8 @@ export class DownloadManager extends EventEmitter {
       // Lỗi CANCELLED phát sinh khi AbortController bị hủy do PAUSE hoặc SESSION_EXPIRED.
       // Item đã được pause()/worker session-expired trả về PENDING — KHÔNG ĐƯỢC đánh dấu
       // CANCELLED ở đây (trước đây item bị kẹt trạng thái CANCELLED và mất khỏi resume).
-      if (err.code === 'CANCELLED') {
+      // TRỪ khi CANCELLED do deadline 60s của chính hồ sơ → xử lý ở khối deadline dưới.
+      if (err.code === 'CANCELLED' && !deadlineHit) {
         if (item.status === 'DOWNLOADING') {
           item.status = 'PENDING';
           item.progressPercent = 0;
@@ -437,7 +464,15 @@ export class DownloadManager extends EventEmitter {
       }
 
       // Xử lý retry đối với lỗi mạng / timeout thông thường
-      if (item.retries < PORTAL_CONFIG.MAX_RETRIES && (err.code === 'NETWORK' || err.code === 'TIMEOUT' || err.code === 'RATE_LIMIT')) {
+      if (deadlineHit && !(this.isCancelled || this.isPaused)) {
+        // Vượt deadline của chính hồ sơ này (không phải do user dừng) → FAILED
+        // với lý do rõ ràng thay vì treo vô hạn
+        item.status = 'FAILED';
+        item.error = `Vượt 60s không tải được — ` + this.formatDownloadError(err);
+        item.filing.downloadStatus = 'FAILED';
+        item.filing.downloadError = item.error;
+        this.emit('item_failed', { item, error: item.error });
+      } else if (item.retries < PORTAL_CONFIG.MAX_RETRIES && (err.code === 'NETWORK' || err.code === 'TIMEOUT' || err.code === 'RATE_LIMIT')) {
         item.retries++;
         const backoffMs = PORTAL_CONFIG.RETRY_BASE_DELAY_MS * Math.pow(2, item.retries);
         await new Promise(r => setTimeout(r, backoffMs));
@@ -446,7 +481,7 @@ export class DownloadManager extends EventEmitter {
         }
       } else {
         item.status = 'FAILED';
-        item.error = err.message || 'Lỗi khi tải';
+        item.error = this.formatDownloadError(err);
         item.filing.downloadStatus = 'FAILED';
         item.filing.downloadError = item.error;
         this.emit('item_failed', { item, error: item.error });
@@ -454,6 +489,21 @@ export class DownloadManager extends EventEmitter {
 
       this.emitProgress(item);
     }
+  }
+
+  /**
+   * Ghép chẩn đoán từng lần thử HTTP (do TaxPortalClient đính kèm trên err.attempts)
+   * vào thông báo lỗi — audit log sẽ chỉ ra chính xác server trả gì ở từng bước.
+   */
+  private formatDownloadError(err: any): string {
+    let base = err?.message || 'Lỗi khi tải';
+    const attempts = err?.attempts;
+    if (!Array.isArray(attempts) || attempts.length === 0) return base;
+    if (base.includes('đã bị dừng bởi người dùng')) base = 'Không nhận được file từ Cổng Thuế';
+    const parts = attempts.slice(-8).map(a =>
+      `${a.label}=${a.status || 'khong-PT'}/${a.ms}ms${a.head ? `«${String(a.head).slice(0, 70)}»` : ''}`
+    );
+    return `${base} || Thu: ${parts.join(' ;; ')}`;
   }
 
   private emitProgress(item?: DownloadQueueItem) {

@@ -1,4 +1,7 @@
 import { AxiosError } from 'axios';
+import { app } from 'electron';
+import fs from 'fs';
+import path from 'path';
 import { PORTAL_CONFIG } from '../../shared/constants';
 import { DateRange, FilingPreviewData, PortalErrorCode, TaxFiling } from '../../shared/types';
 import { FilingPreviewParser } from '../scanner/FilingPreviewParser';
@@ -22,9 +25,42 @@ export class TaxPortalClient {
   private session: PortalSession;
   private isSessionInitialized = false;
   private csrfToken = '';
+  // Chẩn đoán tải: ghi lại MỖI lần gọi HTTP trong chuỗi download (trạng thái,
+  // thời gian, đầu nội dung phản hồi) — đính kèm vào lỗi cuối để audit log
+  // cho biết CHÍNH XÁC server trả gì thay vì đoán mò.
+  private lastAttempts: Array<{ label: string; url: string; status: number; ms: number; contentType: string; head: string }> = [];
 
   constructor(session: PortalSession) {
     this.session = session;
+  }
+
+  private recordAttempt(label: string, url: string, status: number | undefined, ms: number, contentType: string | undefined, data: any): void {
+    let head = '';
+    try {
+      if (Buffer.isBuffer(data)) head = data.subarray(0, 150).toString('utf-8').replace(/\s+/g, ' ').trim();
+      else if (typeof data === 'string') head = data.slice(0, 150).replace(/\s+/g, ' ').trim();
+    } catch {}
+    this.lastAttempts.push({
+      label,
+      url: url.replace(PORTAL_CONFIG.BASE_URL, ''),
+      status: status || 0,
+      ms,
+      contentType: contentType || '',
+      head
+    });
+    if (this.lastAttempts.length > 60) this.lastAttempts.shift();
+  }
+
+  private async diagRequest(label: string, url: string, doReq: () => Promise<any>): Promise<any> {
+    const t0 = Date.now();
+    try {
+      const res = await doReq();
+      this.recordAttempt(label, url, res?.status, Date.now() - t0, res?.headers?.['content-type'], res?.data);
+      return res;
+    } catch (err: any) {
+      this.recordAttempt(label, url, err?.response?.status, Date.now() - t0, err?.response?.headers?.['content-type'], err?.response?.data);
+      throw err;
+    }
   }
 
   /**
@@ -431,6 +467,15 @@ export class TaxPortalClient {
       const data = response.data;
       let filings: TaxFiling[] = [];
 
+      // Dump trang kết quả tra cứu lần cuối ra userData — phục vụ chẩn đoán
+      // cấu trúc bảng/nút tải của từng loại hồ sơ (GTGT/TNCN/...) ngoài đời thật
+      if (typeof data === 'string' && data.length > 1000) {
+        try {
+          const dumpPath = path.join(app.getPath('userData'), 'debug_last_search.html');
+          fs.promises.writeFile(dumpPath, data).catch(() => {});
+        } catch {}
+      }
+
       if (typeof data === 'string') {
         if (data.includes('Mã captcha không đúng') || data.includes('Captcha không chính xác') || data.includes('captcha sai')) {
           const err = new Error('Mã CAPTCHA không chính xác');
@@ -721,62 +766,70 @@ export class TaxPortalClient {
   ): Promise<DownloadResponsePayload> {
     const cleanId = maHoSo.trim();
     const isTdtPreferred = filingMeta?.isThueDienTu === true;
+    this.lastAttempts = [];
 
-    // Retry cấp trên cùng cho RATE_LIMIT: trước đây 429 ở nhánh TDT lập tức
-    // fallback sang nhánh Standard (cũng dính 429) rồi ném lỗi — khiến đợt tải
-    // hàng loạt fail hàng loạt dù chỉ cần chờ backoff rồi thử lại.
-    const maxRateRetries = 3;
-    for (let attempt = 1; attempt <= maxRateRetries; attempt++) {
-      try {
-        if (isTdtPreferred) {
-          return await this.downloadHoSoTdt(cleanId, filingMeta?.loaiTraCuu, abortSignal);
-        }
-        return await this.downloadHoSoStandard(cleanId, abortSignal);
-      } catch (primaryErr: any) {
-        if (abortSignal?.aborted || primaryErr.code === 'CANCELLED' || primaryErr.code === 'SESSION_EXPIRED') {
-          throw primaryErr;
-        }
-
-        // HTTP 403 body rỗng = Spring từ chối CSRF/phiên. Tự chữa lành:
-        // tải lại trang TCHS để làm mới cookie + CSRF token rồi thử lại.
-        if (primaryErr.httpStatus === 403 && attempt < maxRateRetries) {
-          console.warn(`[TaxPortalClient] HTTP 403 khi tải hồ sơ ${cleanId}, làm mới phiên & CSRF rồi thử lại (lần ${attempt}/${maxRateRetries - 1})...`);
-          await this.checkSession().catch(() => false);
-          continue;
-        }
-
-        if (primaryErr.code === 'RATE_LIMIT' && attempt < maxRateRetries) {
-          const backoffDelay = 2000 * attempt + Math.random() * 500;
-          console.warn(`[TaxPortalClient] HTTP 429 khi tải hồ sơ ${cleanId}, chờ ${Math.round(backoffDelay)}ms rồi thử lại (lần ${attempt}/${maxRateRetries - 1})...`);
-          await new Promise(r => setTimeout(r, backoffDelay));
-          continue;
-        }
-
-        // Fallback sang nhánh còn lại với các lỗi khác
+    try {
+      // Retry cấp trên cùng cho RATE_LIMIT: trước đây 429 ở nhánh TDT lập tức
+      // fallback sang nhánh Standard (cũng dính 429) rồi ném lỗi — khiến đợt tải
+      // hàng loạt fail hàng loạt dù chỉ cần chờ backoff rồi thử lại.
+      const maxRateRetries = 3;
+      for (let attempt = 1; attempt <= maxRateRetries; attempt++) {
         try {
           if (isTdtPreferred) {
-            console.warn(`[TaxPortalClient] Nhánh TDT thất bại cho ID ${cleanId}, tự động fallback sang nhánh Standard: ${primaryErr.message}`);
-            return await this.downloadHoSoStandard(cleanId, abortSignal);
+            return await this.downloadHoSoTdt(cleanId, filingMeta?.loaiTraCuu, abortSignal);
           }
-          console.warn(`[TaxPortalClient] Nhánh Standard thất bại cho ID ${cleanId}, tự động fallback sang nhánh TDT: ${primaryErr.message}`);
-          return await this.downloadHoSoTdt(cleanId, filingMeta?.loaiTraCuu, abortSignal);
-        } catch (fallbackErr: any) {
-          if (abortSignal?.aborted || fallbackErr.code === 'CANCELLED' || fallbackErr.code === 'SESSION_EXPIRED') {
-            throw fallbackErr;
+          return await this.downloadHoSoStandard(cleanId, abortSignal);
+        } catch (primaryErr: any) {
+          if (abortSignal?.aborted || primaryErr.code === 'CANCELLED' || primaryErr.code === 'SESSION_EXPIRED') {
+            throw primaryErr;
           }
-          if ((fallbackErr.code === 'RATE_LIMIT' || fallbackErr.httpStatus === 403) && attempt < maxRateRetries) {
-            if (fallbackErr.httpStatus === 403) {
-              await this.checkSession().catch(() => false);
-            }
+
+          // HTTP 403 body rỗng = Spring từ chối CSRF/phiên. Tự chữa lành:
+          // tải lại trang TCHS để làm mới cookie + CSRF token rồi thử lại.
+          if (primaryErr.httpStatus === 403 && attempt < maxRateRetries) {
+            console.warn(`[TaxPortalClient] HTTP 403 khi tải hồ sơ ${cleanId}, làm mới phiên & CSRF rồi thử lại (lần ${attempt}/${maxRateRetries - 1})...`);
+            await this.checkSession().catch(() => false);
+            continue;
+          }
+
+          if (primaryErr.code === 'RATE_LIMIT' && attempt < maxRateRetries) {
             const backoffDelay = 2000 * attempt + Math.random() * 500;
+            console.warn(`[TaxPortalClient] HTTP 429 khi tải hồ sơ ${cleanId}, chờ ${Math.round(backoffDelay)}ms rồi thử lại (lần ${attempt}/${maxRateRetries - 1})...`);
             await new Promise(r => setTimeout(r, backoffDelay));
             continue;
           }
-          throw fallbackErr;
+
+          // Fallback sang nhánh còn lại với các lỗi khác
+          try {
+            if (isTdtPreferred) {
+              console.warn(`[TaxPortalClient] Nhánh TDT thất bại cho ID ${cleanId}, tự động fallback sang nhánh Standard: ${primaryErr.message}`);
+              return await this.downloadHoSoStandard(cleanId, abortSignal);
+            }
+            console.warn(`[TaxPortalClient] Nhánh Standard thất bại cho ID ${cleanId}, tự động fallback sang nhánh TDT: ${primaryErr.message}`);
+            return await this.downloadHoSoTdt(cleanId, filingMeta?.loaiTraCuu, abortSignal);
+          } catch (fallbackErr: any) {
+            if (abortSignal?.aborted || fallbackErr.code === 'CANCELLED' || fallbackErr.code === 'SESSION_EXPIRED') {
+              throw fallbackErr;
+            }
+            if ((fallbackErr.code === 'RATE_LIMIT' || fallbackErr.httpStatus === 403) && attempt < maxRateRetries) {
+              if (fallbackErr.httpStatus === 403) {
+                await this.checkSession().catch(() => false);
+              }
+              const backoffDelay = 2000 * attempt + Math.random() * 500;
+              await new Promise(r => setTimeout(r, backoffDelay));
+              continue;
+            }
+            throw fallbackErr;
+          }
         }
       }
+      throw new Error(`Tải hồ sơ ID: ${maHoSo} thất bại do máy chủ giới hạn tần suất yêu cầu (HTTP 429)`);
+    } catch (err: any) {
+      // Đính kèm toàn bộ chẩn đoán từng lần thử để audit log/UI chỉ ra chính xác
+      // server trả gì ở từng bước thay vì một câu lỗi chung chung
+      (err as any).attempts = [...this.lastAttempts];
+      throw err;
     }
-    throw new Error(`Tải hồ sơ ID: ${maHoSo} thất bại do máy chủ giới hạn tần suất yêu cầu (HTTP 429)`);
   }
 
   /**
@@ -808,12 +861,12 @@ export class TaxPortalClient {
         }
 
         const urlsToTry: string[] = [];
-        // eTax phân loại hồ sơ theo loaiTraCuu (1 = nhóm tờ khai GTGT..., các giá
-        // trị khác cho TNCN/quyết toán...). Không biết giá trị đúng → quét lần
-        // lượt các giá trị chuẩn của portal, ưu tiên giá trị đính kèm hồ sơ nếu có.
+        // eTax phân loại hồ sơ theo loaiTraCuu (giá trị khác nhau theo nhóm tờ
+        // khai). Không biết giá trị đúng → quét lần lượt 1..5, ưu tiên giá trị
+        // đính kèm hồ sơ nếu có.
         const loaiCandidates: string[] = [];
         if (loaiTraCuu) loaiCandidates.push(loaiTraCuu);
-        for (const v of ['1', '2', '3']) {
+        for (const v of ['1', '2', '3', '4', '5']) {
           if (!loaiCandidates.includes(v)) loaiCandidates.push(v);
         }
         for (const v of loaiCandidates) {
@@ -828,11 +881,11 @@ export class TaxPortalClient {
 
           // CHIẾN LƯỢC TDT 1: JSON { maHoSo }
           try {
-            const response = await this.session.client.post(
+            const response = await this.diagRequest('TDT-maHoSo', tldUrl, () => this.session.client.post(
               tldUrl,
               { maHoSo: cleanId },
               { signal: abortSignal, headers: baseHeaders, timeout: 8000, responseType: 'arraybuffer' }
-            );
+            ));
             const payload = this.extractPayloadContent(response?.data, cleanId);
             if (payload) return payload;
           } catch (e1: any) {
@@ -842,11 +895,11 @@ export class TaxPortalClient {
 
           // CHIẾN LƯỢC TDT 2: JSON { idTKhai }
           try {
-            const response2 = await this.session.client.post(
+            const response2 = await this.diagRequest('TDT-idTKhai', tldUrl, () => this.session.client.post(
               tldUrl,
               { idTKhai: cleanId },
               { signal: abortSignal, headers: baseHeaders, timeout: 6000, responseType: 'arraybuffer' }
-            );
+            ));
             const payload2 = this.extractPayloadContent(response2?.data, cleanId);
             if (payload2) return payload2;
           } catch (e2: any) {
@@ -905,7 +958,7 @@ export class TaxPortalClient {
 
         // BƯỚC 1: JSON payload với maHoSo (Chuẩn Cổng Thuế GDT - Tải trực tiếp siêu tốc)
         try {
-          const res1 = await this.session.client.post(
+          const res1 = await this.diagRequest('STD-maHoSo', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
             PORTAL_CONFIG.DOWNLOAD_API,
             { maHoSo: cleanId },
             {
@@ -917,7 +970,7 @@ export class TaxPortalClient {
                 'Content-Type': 'application/json;charset=UTF-8'
               }
             }
-          );
+          ));
           const payload1 = this.extractPayloadContent(res1?.data, cleanId);
           if (payload1) return payload1;
         } catch (err1: any) {
@@ -928,7 +981,7 @@ export class TaxPortalClient {
         // CHIẾN LƯỢC 2: JSON payload với idTKhai nếu Chiến lược 1 không có content
         if (!abortSignal?.aborted) {
           try {
-            const res2 = await this.session.client.post(
+            const res2 = await this.diagRequest('STD-idTKhai', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
               PORTAL_CONFIG.DOWNLOAD_API,
               { idTKhai: cleanId },
               {
@@ -940,7 +993,7 @@ export class TaxPortalClient {
                   'Content-Type': 'application/json;charset=UTF-8'
                 }
               }
-            );
+            ));
             const payload2 = this.extractPayloadContent(res2?.data, cleanId);
             if (payload2) return payload2;
           } catch (err2: any) {
@@ -956,7 +1009,7 @@ export class TaxPortalClient {
             formParams.append('maHoSo', cleanId);
             if (activeToken) formParams.append('_csrf', activeToken);
 
-            const res3 = await this.session.client.post(
+            const res3 = await this.diagRequest('STD-form', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
               PORTAL_CONFIG.DOWNLOAD_API,
               formParams.toString(),
               {
@@ -968,7 +1021,7 @@ export class TaxPortalClient {
                 timeout: 8000,
                 responseType: 'arraybuffer'
               }
-            );
+            ));
             const payload3 = this.extractPayloadContent(res3?.data, cleanId);
             if (payload3) return payload3;
           } catch (err3: any) {
@@ -980,7 +1033,7 @@ export class TaxPortalClient {
         // CHIẾN LƯỢC 4: GET chi tiết hồ sơ trực tiếp từ Cổng Thuế
         if (!abortSignal?.aborted) {
           try {
-            const detailRes = await this.session.client.get(
+            const detailRes = await this.diagRequest('STD-detail', `${PORTAL_CONFIG.DETAIL_FILE_URL}/${cleanId}?loai=`, () => this.session.client.get(
               `${PORTAL_CONFIG.DETAIL_FILE_URL}/${cleanId}?loai=`,
               {
                 signal: abortSignal,
@@ -990,7 +1043,7 @@ export class TaxPortalClient {
                 },
                 timeout: 8000
               }
-            );
+            ));
             const payload4 = this.extractPayloadContent(detailRes?.data, cleanId);
             if (payload4) return payload4;
 
