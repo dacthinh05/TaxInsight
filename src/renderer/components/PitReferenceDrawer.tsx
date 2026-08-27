@@ -241,7 +241,7 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
 
                           {/* Số lao động */}
                           <td className="px-3 py-2 border-r border-slate-200 text-right font-mono text-slate-700">
-                            {qBlock.quarterFiling ? (qBlock.quarterFiling.employeeCountCt21 > 0n ? Number(qBlock.quarterFiling.employeeCountCt21) : '—') : '—'}
+                            {qBlock.maxEmployeeCount > 0n ? Number(qBlock.maxEmployeeCount) : '—'}
                           </td>
 
                           {/* Tổng TNCT [24] */}
@@ -251,14 +251,13 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
 
                           {/* Cư trú [31] */}
                           <td className="px-3.5 py-2 border-r border-slate-200 text-right font-mono">
-                            {qBlock.quarterFiling ? formatMoney(qBlock.quarterFiling.residentTaxCt32) : '—'}
+                            {formatMoney(qBlock.totalResidentTax)}
                           </td>
 
                           {/* Không cư trú [32] */}
                           <td className="px-3.5 py-2 border-r border-slate-200 text-right font-mono">
-                            {qBlock.quarterFiling ? formatMoney(qBlock.quarterFiling.nonResidentTaxCt33) : '—'}
+                            {formatMoney(qBlock.totalNonResidentTax)}
                           </td>
-
                           {/* Tổng khấu trừ [30/34] */}
                           <td className="px-3.5 py-2 border-r border-slate-200 text-right font-mono font-bold text-teal-950 bg-teal-50/40">
                             {formatMoney(qBlock.totalWithheldTax)}

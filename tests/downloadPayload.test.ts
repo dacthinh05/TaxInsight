@@ -41,4 +41,43 @@ describe('Tax filing download payload decoding', () => {
 
     expect(Buffer.from(result?.content || '', 'base64')).toEqual(Buffer.from(base64, 'base64'));
   });
+
+  it('extracts CSRF token from portal meta tags and script variables', () => {
+    const client = new TaxPortalClient(new PortalSession());
+    const sampleHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="csrf-token" content="GMllQCb9U_eLBP94B1eOpciXSXE4W-PCSOUx9fCsC4QJbCUvKPtceETJZ8amZ8hLP3q6wamjZBAJPYXvKoAJw8OfbbQ-WEZO"/>
+        <meta name="csrf-header" content="X-XSRF-TOKEN"/>
+      </head>
+      <body>
+        <script>
+          var token = "GMllQCb9U_eLBP94B1eOpciXSXE4W-PCSOUx9fCsC4QJbCUvKPtceETJZ8amZ8hLP3q6wamjZBAJPYXvKoAJw8OfbbQ-WEZO";
+        </script>
+      </body>
+      </html>
+    `;
+    const token = client.extractCsrfFromHtml(sampleHtml);
+    expect(token).toBe('GMllQCb9U_eLBP94B1eOpciXSXE4W-PCSOUx9fCsC4QJbCUvKPtceETJZ8amZ8hLP3q6wamjZBAJPYXvKoAJw8OfbbQ-WEZO');
+  });
+
+  it('correctly extracts TNCN declaration download response matching GDT format', () => {
+    const sampleZipBase64 = 'UEsDBBQAAAAIAAAABAAAAA==';
+    const serverResponse = {
+      fileName: 'files_000.701.18.G12-260210-27110000007182.zip',
+      fileType: 'application/zip',
+      content: sampleZipBase64
+    };
+    const client = new TaxPortalClient(new PortalSession());
+    const payload = (client as any).extractPayloadContent(
+      Buffer.from(JSON.stringify(serverResponse)),
+      '000.701.18.G12-260210-27110000007182'
+    );
+    expect(payload).toEqual({
+      fileName: 'files_000.701.18.G12-260210-27110000007182.zip',
+      fileType: 'application/zip',
+      content: sampleZipBase64
+    });
+  });
 });

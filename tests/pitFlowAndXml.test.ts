@@ -199,4 +199,130 @@ describe('PIT XML Parser & Flow Engine Test Suite', () => {
     expect(result.mismatchDelta).toBe(0n);
     expect(result.auditStatus).toBe('MATCHED');
   });
+
+  it('4. TT80 05/QTT-TNCN với <ct30> (tổng) và <ct31> (cư trú có HĐLĐ) -> Lấy đúng tổng ct30, không nhầm ct31', () => {
+    const mockXmlQtt = `<?xml version="1.0" encoding="UTF-8"?>
+    <HSoThueDTu xmlns:dvc="http://dvc.gdt.gov.vn">
+      <dvc:TTinChung>
+        <dvc:maTKhai>05/QTT-TNCN</dvc:maTKhai>
+        <dvc:kyKKhai>2025</dvc:kyKKhai>
+        <dvc:soLan>0</dvc:soLan>
+      </dvc:TTinChung>
+      <dvc:NDungTKhai>
+        <dvc:ct21>200</dvc:ct21>
+        <dvc:ct22>190</dvc:ct22>
+        <dvc:ct24>3500000000</dvc:ct24>
+        <dvc:ct27>1500000000</dvc:ct27>
+        <dvc:ct30>250000000</dvc:ct30>
+        <dvc:ct31>200000000</dvc:ct31>
+        <dvc:ct32>50000000</dvc:ct32>
+        <dvc:ct41>250000000</dvc:ct41>
+      </dvc:NDungTKhai>
+    </HSoThueDTu>`;
+
+    const mockFiling: TaxFiling = {
+      id: 'PIT_2025_QTT_TT80',
+      procedureCode: '1.008346',
+      declarationCode: '05/QTT-TNCN',
+      title: 'Tờ khai quyết toán thuế thu nhập cá nhân',
+      taxType: 'PIT',
+      period: 'Năm 2025',
+      submittedAt: '28/03/2026 10:00:00',
+      filingType: 'FINALIZATION',
+      status: 'Đã chấp nhận',
+      downloadAvailable: true
+    };
+
+    const snap = PitXmlParser.parsePitXml(mockXmlQtt, mockFiling, '3702735709');
+    expect(snap).not.toBeNull();
+    expect(snap?.isFinalization).toBe(true);
+    // ct36_qtt phải là 250.000.000 (từ ct30), KHÔNG PHẢI 200.000.000 (từ ct31)
+    expect(snap?.ct36_qtt_tongThueDaKhauTruTrongNam).toBe(250000000n);
+    expect(snap?.ct32_khauTruCaNhanCuTru).toBe(250000000n); // 200M (có HĐ) + 50M (không HĐ)
+    expect(snap?.ct34_tongThueKhauTru).toBe(250000000n);
+    expect(snap?.versionType).toBe('ORIGINAL');
+    expect(snap?.supplementalNo).toBe(0);
+  });
+
+  it('5. Kiểm tra PitQuarterBlock tính đủ totalResidentTax và totalNonResidentTax cho người khai Tháng', () => {
+    const snapT1: PitDeclarationSnapshot = {
+      submissionId: 'SUB_T1',
+      formCode: '05/KK-TNCN',
+      periodKey: '2025-M01',
+      periodLabel: 'Tháng 01/2025',
+      year: 2025,
+      month: 1,
+      isQuarter: false,
+      isYear: false,
+      versionType: 'ORIGINAL',
+      supplementalNo: 0,
+      status: 'Đã chấp nhận',
+      ct21_tongSoNguoiLaoDong: 50n,
+      ct22_caNhanCuTru: 48n,
+      ct24_tongThuNhapChiuThue: 500000000n,
+      ct27_tongThuNhapChiuThueKhauTru: 200000000n,
+      ct31_tongThueTncnDaKhauTru: 25000000n,
+      ct32_khauTruCaNhanCuTru: 20000000n,
+      ct33_khauTruCaNhanKhongCuTru: 5000000n,
+      ct34_tongThueKhauTru: 25000000n,
+      ct35_tongThuePhaiNop: 25000000n,
+      isFinalization: false
+    };
+
+    const snapT2: PitDeclarationSnapshot = {
+      ...snapT1,
+      submissionId: 'SUB_T2',
+      periodKey: '2025-M02',
+      periodLabel: 'Tháng 02/2025',
+      month: 2,
+      ct21_tongSoNguoiLaoDong: 60n,
+      ct32_khauTruCaNhanCuTru: 30000000n,
+      ct33_khauTruCaNhanKhongCuTru: 2000000n,
+      ct34_tongThueKhauTru: 32000000n
+    };
+
+    const snapT3: PitDeclarationSnapshot = {
+      ...snapT1,
+      submissionId: 'SUB_T3',
+      periodKey: '2025-M03',
+      periodLabel: 'Tháng 03/2025',
+      month: 3,
+      ct21_tongSoNguoiLaoDong: 55n,
+      ct32_khauTruCaNhanCuTru: 28000000n,
+      ct33_khauTruCaNhanKhongCuTru: 3000000n,
+      ct34_tongThueKhauTru: 31000000n
+    };
+
+    const mockSummary: PitAnalyticsSummary = {
+      taxpayerId: '3702735709',
+      totalFilingsAnalyzed: 3,
+      periodGroups: [snapT1, snapT2, snapT3].map(s => ({
+        periodKey: s.periodKey,
+        periodLabel: s.periodLabel,
+        year: s.year,
+        month: s.month,
+        periodType: 'MONTH',
+        snapshots: [s],
+        finalSnapshot: s,
+        hasSupplemental: false,
+        supplementalCount: 0
+      })),
+      finalizationSnapshot: null,
+      analyzedAt: new Date().toISOString()
+    };
+
+    const result = PitFlowEngine.normalizeYearFlow(mockSummary, 2025);
+    const q1Block = result.quarterBlocks[0];
+
+    // Khối Quý 1 tổng hợp từ T1, T2, T3
+    expect(q1Block.monthFilings.length).toBe(3);
+    expect(q1Block.quarterFiling).toBeNull();
+    expect(q1Block.maxEmployeeCount).toBe(60n); // max(50, 60, 55)
+    expect(q1Block.totalResidentTax).toBe(20000000n + 30000000n + 28000000n); // 78M
+    expect(q1Block.totalNonResidentTax).toBe(5000000n + 2000000n + 3000000n); // 10M
+    expect(q1Block.totalWithheldTax).toBe(88000000n);
+    expect(result.totalResidentTax32).toBe(78000000n);
+    expect(result.totalNonResidentTax33).toBe(10000000n);
+    expect(result.totalWithheldTax34).toBe(88000000n);
+  });
 });

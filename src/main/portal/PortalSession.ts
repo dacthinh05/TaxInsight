@@ -3,6 +3,7 @@ import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
 import { PORTAL_CONFIG } from '../../shared/constants';
 import { UserSessionInfo } from '../../shared/types';
+import { ApiInspectorManager } from '../inspector/ApiInspectorManager';
 
 export class PortalSession {
   private jar: CookieJar;
@@ -25,6 +26,7 @@ export class PortalSession {
         withCredentials: true
       })
     );
+    ApiInspectorManager.getInstance().attachAxios(this.client);
   }
 
   public getSessionInfo(): UserSessionInfo {

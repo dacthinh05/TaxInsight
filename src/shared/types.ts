@@ -301,4 +301,47 @@ export interface UpdateInfo {
   error?: string;
 }
 
+// ─── API INSPECTOR TYPES (ADMIN / DEVELOPER DIAGNOSTICS) ────────────────
+export type ApiInspectorModule =
+  | 'AUTH'
+  | 'SCAN'
+  | 'DOWNLOAD'
+  | 'ETAX_GNT'
+  | 'VAT'
+  | 'PIT'
+  | 'SYSTEM';
 
+export interface ApiInspectorEntry {
+  id: string;
+  timestamp: string; // ISO 8601
+  timeFormatted: string; // HH:mm:ss.SSS
+  method: string; // GET, POST, etc.
+  url: string;
+  endpoint: string; // Relative path or concise label (e.g., /tthc/login, /tthc/tchs/downloadhoso)
+  module: ApiInspectorModule;
+  status: number | 'PENDING' | 'FAILED' | 'TIMEOUT' | 'CANCELLED';
+  statusText?: string;
+  durationMs?: number;
+  requestHeaders: Record<string, string>;
+  requestParams?: Record<string, any> | string;
+  requestBody?: any;
+  responseHeaders?: Record<string, string>;
+  responseContentType?: string;
+  responseBody?: any;
+  responseSize?: number;
+  isError?: boolean;
+  errorDetail?: {
+    message: string;
+    code?: string;
+    httpStatus?: number;
+    stack?: string;
+  };
+  diagnosticHint?: string; // Gợi ý chẩn đoán & khắc phục tự động
+  curl: string; // Lệnh cURL sẵn sàng copy & test
+}
+
+export interface AdminAuthStatus {
+  isAdmin: boolean;
+  isDev: boolean;
+  unlockedAt?: string;
+}

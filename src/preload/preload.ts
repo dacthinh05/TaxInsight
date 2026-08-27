@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CaptchaChallenge, DateRange, ScanProgressState, TaxFiling, TaxType } from '../shared/types';
+import { AdminAuthStatus, ApiInspectorEntry, CaptchaChallenge, DateRange, ScanProgressState, TaxFiling, TaxType } from '../shared/types';
 
 const api = {
   // Auth
@@ -146,6 +146,29 @@ const api = {
     const handler = (_: any, data: any) => callback(data);
     ipcRenderer.on('updater:status', handler);
     return () => ipcRenderer.removeListener('updater:status', handler);
+  },
+
+  // API Inspector (Admin / Developer Diagnostics)
+  inspectorGetEntries: (): Promise<ApiInspectorEntry[]> => ipcRenderer.invoke('inspector:getEntries'),
+  inspectorClear: (): Promise<{ success: boolean }> => ipcRenderer.invoke('inspector:clear'),
+  inspectorExport: (): Promise<string> => ipcRenderer.invoke('inspector:export'),
+  inspectorVerifyAdminPin: (pin: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('inspector:verifyAdminPin', { pin }),
+  inspectorGetAdminStatus: (): Promise<AdminAuthStatus> => ipcRenderer.invoke('inspector:getAdminStatus'),
+  onInspectorNewEntry: (callback: (entry: ApiInspectorEntry) => void) => {
+    const handler = (_: any, data: ApiInspectorEntry) => callback(data);
+    ipcRenderer.on('inspector:new_entry', handler);
+    return () => ipcRenderer.removeListener('inspector:new_entry', handler);
+  },
+  onInspectorEntryUpdated: (callback: (entry: ApiInspectorEntry) => void) => {
+    const handler = (_: any, data: ApiInspectorEntry) => callback(data);
+    ipcRenderer.on('inspector:entry_updated', handler);
+    return () => ipcRenderer.removeListener('inspector:entry_updated', handler);
+  },
+  onInspectorCleared: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('inspector:cleared', handler);
+    return () => ipcRenderer.removeListener('inspector:cleared', handler);
   }
 };
 

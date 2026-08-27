@@ -46,10 +46,10 @@ export class VatXmlParser {
     let supplementalNo = filing.supplementalNo;
     let sequenceSource: 'API' | 'XML' | 'DERIVED' | 'UNKNOWN' = 'API';
 
-    // Tìm tag soLan trong XML
-    const soLanMatch = xmlContent.match(/<soLan[^>]*>(\d+)<\/soLan>/i) ||
-                        xmlContent.match(/<lanBS[^>]*>(\d+)<\/lanBS>/i) ||
-                        xmlContent.match(/<soLanBS[^>]*>(\d+)<\/soLanBS>/i);
+    // Tìm tag soLan trong XML (hỗ trợ cả namespace prefix: <tns:soLan>...)
+    const soLanMatch = xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?soLan[^>]*>(\d+)<\/(?:[a-zA-Z0-9_]+:)?soLan\s*>/i) ||
+                        xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?lanBS[^>]*>(\d+)<\/(?:[a-zA-Z0-9_]+:)?lanBS\s*>/i) ||
+                        xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?soLanBS[^>]*>(\d+)<\/(?:[a-zA-Z0-9_]+:)?soLanBS\s*>/i);
     if (soLanMatch) {
       const parsedLan = parseInt(soLanMatch[1], 10);
       if (!isNaN(parsedLan)) {
@@ -70,8 +70,8 @@ export class VatXmlParser {
     let periodVal = filing.period || '';
     let normalizedKey = '';
 
-    const kyKKMatch = xmlContent.match(/<kyKKhai[^>]*>([^<]+)<\/kyKKhai>/i) ||
-                      xmlContent.match(/<kyTinhThue[^>]*>([^<]+)<\/kyTinhThue>/i);
+    const kyKKMatch = xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?kyKKhai[^>]*>([^<]+)<\/(?:[a-zA-Z0-9_]+:)?kyKKhai\s*>/i) ||
+                      xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?kyTinhThue[^>]*>([^<]+)<\/(?:[a-zA-Z0-9_]+:)?kyTinhThue\s*>/i);
     if (kyKKMatch && kyKKMatch[1].trim()) {
       periodVal = kyKKMatch[1].trim();
     }
@@ -82,12 +82,11 @@ export class VatXmlParser {
     periodVal = norm.label;
     normalizedKey = norm.key;
 
-    // 3. Trích xuất các chỉ tiêu [22] -> [43] (Ưu tiên vùng CTietTKhaiChinh hoặc CTietKHBS chính thống)
-    const mainSectionMatch = xmlContent.match(/<CTietTKhaiChinh[^>]*>([\s\S]*?)<\/CTietTKhaiChinh>/i) ||
-                             xmlContent.match(/<CTietKHBS[^>]*>([\s\S]*?)<\/CTietKHBS>/i) ||
-                             xmlContent.match(/<BangChiTiet[^>]*>([\s\S]*?)<\/BangChiTiet>/i);
+    // 3. Trích xuất các chỉ tiêu [22] -> [43] (Ưu tiên vùng CTietTKhaiChinh hoặc CTietKHBS chính thống, hỗ trợ namespace XML)
+    const mainSectionMatch = xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?CTietTKhaiChinh[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?CTietTKhaiChinh\s*>/i) ||
+                             xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?CTietKHBS[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?CTietKHBS\s*>/i) ||
+                             xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?BangChiTiet[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?BangChiTiet\s*>/i);
     const targetXml = mainSectionMatch ? mainSectionMatch[1] : xmlContent;
-
     const extractedCt22 = this.findTag(targetXml, ['ct22', 'thueDauVaoKyTruoc', 'ct_22', 'ct22_thueDauVao']) || this.findTag(xmlContent, ['ct22']);
     const extractedCt23 = this.findTag(targetXml, ['ct23', 'giaTriHHDVMuaVao', 'ct_23', 'ct23_giaTriHHDVMuaVao']) || this.findTag(xmlContent, ['ct23']);
     const extractedCt24 = this.findTag(targetXml, ['ct24', 'thueHHDVMuaVao', 'ct_24', 'ct24_thueHHDVMuaVao']) || this.findTag(xmlContent, ['ct24']);
@@ -99,12 +98,12 @@ export class VatXmlParser {
     const extractedCt34 = this.findTag(targetXml, ['ct34', 'tongDoanhThuBanRa', 'ct_34', 'ct34_tongDoanhThuBanRa']) || this.findTag(xmlContent, ['ct34']);
     const extractedCt35 = this.findTag(targetXml, ['ct35', 'tongThueBanRa', 'ct_35', 'ct35_tongThueBanRa']) || this.findTag(xmlContent, ['ct35']);
     const extractedCt36 = this.findTag(targetXml, ['ct36', 'thuePhatSinhKyNay', 'ct_36']) || this.findTag(xmlContent, ['ct36']);
-    const extractedCt37 = this.findTag(targetXml, ['ct37', 'dChinhGiamThueKTru', 'ct_37']) || this.findTag(xmlContent, ['ct37']);
-    const extractedCt38 = this.findTag(targetXml, ['ct38', 'dChinhTangThueKTru', 'ct_38']) || this.findTag(xmlContent, ['ct38']);
-    const extractedCt40 = this.findTag(targetXml, ['ct40', 'thuePhaiNopKyNay', 'ct_40', 'ct40_thuePhaiNopKyNay']) || this.findTag(xmlContent, ['ct40']);
-    const extractedCt41 = this.findTag(targetXml, ['ct41', 'thueChuaKTruHetKyNay', 'ct_41']) || this.findTag(xmlContent, ['ct41']);
-    const extractedCt42 = this.findTag(targetXml, ['ct42', 'thueDeNghiHoanKyNay', 'ct_42']) || this.findTag(xmlContent, ['ct42']);
-    const extractedCt43 = this.findTag(targetXml, ['ct43', 'thueConDuocKhauTruChuyenKySau', 'ct_43', 'ct43_thueConDuocKhauTruChuyenKySau']) || this.findTag(xmlContent, ['ct43']);
+    const extractedCt37 = this.findTag(targetXml, ['ct37', 'dChinhGiamThueKTru', 'ct_37', 'ct37_dChinhGiamThueKTru', 'ct37_dChinhGiam']) || this.findTag(xmlContent, ['ct37']);
+    const extractedCt38 = this.findTag(targetXml, ['ct38', 'dChinhTangThueKTru', 'ct_38', 'ct38_dChinhTangThueKTru', 'ct38_dChinhTang']) || this.findTag(xmlContent, ['ct38']);
+    const extractedCt40 = this.findTag(targetXml, ['ct40', 'thuePhaiNopKyNay', 'ct_40', 'ct40_thuePhaiNopKyNay', 'ct40_thuePhaiNop']) || this.findTag(xmlContent, ['ct40']);
+    const extractedCt41 = this.findTag(targetXml, ['ct41', 'thueChuaKTruHetKyNay', 'ct_41', 'ct41_thueChuaKTruHetKyNay', 'ct41_thueChuaKTruHet']) || this.findTag(xmlContent, ['ct41']);
+    const extractedCt42 = this.findTag(targetXml, ['ct42', 'thueDeNghiHoanKyNay', 'ct_42', 'ct42_thueDeNghiHoanKyNay', 'ct42_thueDeNghiHoan']) || this.findTag(xmlContent, ['ct42']);
+    const extractedCt43 = this.findTag(targetXml, ['ct43', 'thueConDuocKhauTruChuyenKySau', 'ct_43', 'ct43_thueConDuocKhauTruChuyenKySau', 'ct43_thueKhauTruChuyenKySau', 'ct43_thueConDuocKT']) || this.findTag(xmlContent, ['ct43']);
 
     // Đăng ký vào allIndicators
     const rawMap: Record<string, string | undefined> = {
@@ -233,8 +232,8 @@ export class VatXmlParser {
 
   private static findTag(xml: string, tags: string[]): string | undefined {
     for (const tag of tags) {
-      // Sử dụng strict tag boundary: chỉ match chính xác <tag> hoặc <tag attr="...">
-      const regex = new RegExp(`<${tag}(?:\\s+[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, 'i');
+      // Sử dụng strict tag boundary hỗ trợ cả tag có namespace hoặc không có: <ct22>, <tns:ct22>, <CT22>...
+      const regex = new RegExp(`<(?:[a-zA-Z0-9_]+:)?${tag}(?:\\s+[^>]*)?>([\\s\\S]*?)<\\/(?:[a-zA-Z0-9_]+:)?${tag}\\s*>`, 'i');
       const match = xml.match(regex);
       if (match && match[1] !== undefined) {
         return match[1].trim();

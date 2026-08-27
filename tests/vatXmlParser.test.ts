@@ -85,4 +85,47 @@ describe('VAT XML Parser Tests', () => {
     expect(snapshot.ct35_thueBanRa).toBe(180000000n);
     expect(snapshot.ct40_thuePhaiNop).toBe(10000000n);
   });
+
+  it('3. Parse file XML có XML Namespaces (tns:, dvc:)', () => {
+    const mockXmlNs = `<?xml version="1.0" encoding="UTF-8"?>
+<tns:HSoThueDTu xmlns:tns="http://kekhaithue.gdt.gov.vn">
+  <tns:TTinChung>
+    <tns:kyKKhai>02/2026</tns:kyKKhai>
+    <tns:soLan>1</tns:soLan>
+  </tns:TTinChung>
+  <tns:CTietTKhaiChinh>
+    <tns:ct22>30000000</tns:ct22>
+    <tns:ct23>500000000</tns:ct23>
+    <tns:ct24>50000000</tns:ct24>
+    <tns:ct25>50000000</tns:ct25>
+    <tns:ct34>800000000</tns:ct34>
+    <tns:ct35>80000000</tns:ct35>
+    <tns:ct40>0</tns:ct40>
+    <tns:ct43>0</tns:ct43>
+  </tns:CTietTKhaiChinh>
+</tns:HSoThueDTu>`;
+
+    const filing: TaxFiling = {
+      id: 'TK_NS_003',
+      title: 'Tờ khai bổ sung GTGT',
+      taxType: 'VAT',
+      declarationCode: '01/GTGT',
+      period: '02/2026',
+      submittedAt: '20/03/2026 09:00',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    const snapshot = VatXmlParser.parseVatXml(mockXmlNs, filing, '3702735709');
+
+    expect(snapshot.period.normalizedKey).toBe('2026-M02');
+    expect(snapshot.declarationType).toBe('SUPPLEMENTAL');
+    expect(snapshot.supplementalNo).toBe(1);
+    expect(snapshot.ct22_thueDauVaoKyTruoc).toBe(30000000n);
+    expect(snapshot.ct25_thueKhauTruKyNay).toBe(50000000n);
+    expect(snapshot.ct34_doanhThuBanRa).toBe(800000000n);
+    expect(snapshot.ct35_thueBanRa).toBe(80000000n);
+    expect(snapshot.parseStatus).toBe('SUCCESS');
+    expect(snapshot.xmlAvailable).toBe(true);
+  });
 });

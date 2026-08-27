@@ -3,6 +3,7 @@
  * Không phụ thuộc CSS/tài nguyên bên ngoài nên bản PDF luôn nguyên vẹn.
  */
 import { PaymentSlipDetail } from '../../shared/types';
+import { GntMoneyParser } from '../scanner/GntMoneyParser';
 
 function esc(v?: string | null): string {
   if (!v) return '';
@@ -15,18 +16,18 @@ function esc(v?: string | null): string {
 
 /**
  * Tổng tiền hiển thị trên mẫu C1-02: tổng chi tiết nếu hợp lệ (khác rỗng/"0"),
- * không thì tự cộng các dòng khoản nộp. Tránh in "0" khi bảng chi tiết bị
+ * không thì tự cộng các dòng khoản nộp bằng GntMoneyParser. Tránh in "0" khi bảng chi tiết bị
  * parse degenerate (tổng MISSING → backend trả rỗng).
  */
 function resolveTotalVnd(detail: PaymentSlipDetail): string {
   const fromDetail = (detail.tongTienVND || '').trim();
   if (fromDetail && fromDetail !== '0') return fromDetail;
-  let sum = 0;
+  let sum = 0n;
   for (const it of detail.items) {
-    const n = Number((it.soTienVND || '').replace(/[,.]/g, ''));
-    if (Number.isFinite(n)) sum += n;
+    const parsed = GntMoneyParser.parse(it.soTienVND);
+    if (parsed.status === 'VALID') sum += parsed.value;
   }
-  return sum > 0 ? String(sum) : '';
+  return sum > 0n ? GntMoneyParser.formatVND(sum) : '';
 }
 
 export function buildC102Html(detail: PaymentSlipDetail): string {
@@ -38,7 +39,7 @@ export function buildC102Html(detail: PaymentSlipDetail): string {
           <td>${esc(it.soToKhaiQuyetDinh) || '&nbsp;'}</td>
           <td class="c">${esc(it.kyThueNgayQd) || '&nbsp;'}</td>
           <td>${esc(it.noiDungKhoanNop) || '&nbsp;'}</td>
-          <td class="r">&nbsp;</td>
+          <td class="r">${esc(it.soTienNguyenTe) || '&nbsp;'}</td>
           <td class="r b">${esc(it.soTienVND)}</td>
           <td class="c">${esc(it.maChuong) || '&nbsp;'}</td>
           <td class="c b">${esc(it.maNDKT) || '&nbsp;'}</td>
@@ -55,7 +56,7 @@ export function buildC102Html(detail: PaymentSlipDetail): string {
 
   const sigHtml = detail.signatures.length > 0
     ? detail.signatures.map(s => `
-        <div class="sig">
+        <div class="sig-block">
           <div>Người ký: <b>${esc(s.signer)}</b></div>
           ${s.signedAt ? `<div>Ngày ký: ${esc(s.signedAt)}</div>` : ''}
         </div>`).join('')

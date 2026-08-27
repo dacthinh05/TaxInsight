@@ -291,11 +291,10 @@ export class TaxFilingParser {
       const mTdt = rowHtml.match(/\b(G\d{2}\.\d{2}-\d{6}-\d{6,12})\b/);
       if (mTdt) idCandidates.push(mTdt[1]);
 
-      // Mã tờ khai (data-ma-tkhai trên nút thao tác, vd "842") là khóa phụ
-      // của luồng tải, không được trộn với mã số thuế vào danh sách ID.
+      // Mã tờ khai (data-ma-tkhai trên nút thao tác, vd "864", "842") là metadata mẫu tờ khai,
+      // được lưu vào filing.maTkhai, KHÔNG đưa vào idCandidates để tránh gửi nhầm ID số mẫu.
       const $maTkhai = $tr.find("[data-ma-tkhai]").first();
       const maTkhai = ($maTkhai.attr("data-ma-tkhai") || "").trim();
-      if (maTkhai && /^\d+$/.test(maTkhai)) idCandidates.push(maTkhai);
 
       // Chỉ dùng chuỗi số tổng quát khi dòng không có bất kỳ ID có cấu trúc
       // nào. Bản HTML thật có cả MST và maTkhai; đưa MST vào altIds tạo thêm

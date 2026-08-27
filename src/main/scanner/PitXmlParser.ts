@@ -42,7 +42,34 @@ export class PitXmlParser {
         xmlContent.includes('05/QTT-TNCN') ||
         xmlContent.includes('05_QTT_TNCN');
 
-      const rawPeriod = filing.period || filing.periodNormalized?.raw || '';
+      // 1. Trích xuất loại tờ khai và lần bổ sung từ XML nếu có
+      let versionType: 'ORIGINAL' | 'SUPPLEMENTAL' = filing.filingType === 'SUPPLEMENTAL' ? 'SUPPLEMENTAL' : 'ORIGINAL';
+      let supplementalNo = filing.supplementalNo || 0;
+
+      const soLanMatch = xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?soLan[^>]*>(\d+)<\/(?:[a-zA-Z0-9_]+:)?soLan\s*>/i) ||
+                         xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?lanBS[^>]*>(\d+)<\/(?:[a-zA-Z0-9_]+:)?lanBS\s*>/i) ||
+                         xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?soLanBS[^>]*>(\d+)<\/(?:[a-zA-Z0-9_]+:)?soLanBS\s*>/i);
+      if (soLanMatch) {
+        const parsedLan = parseInt(soLanMatch[1], 10);
+        if (!isNaN(parsedLan)) {
+          if (parsedLan > 0) {
+            versionType = 'SUPPLEMENTAL';
+            supplementalNo = parsedLan;
+          } else if (parsedLan === 0) {
+            versionType = 'ORIGINAL';
+            supplementalNo = 0;
+          }
+        }
+      }
+
+      // 2. Trích xuất kỳ kê khai từ XML nếu có
+      let rawPeriod = filing.period || filing.periodNormalized?.raw || '';
+      const kyKKMatch = xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?kyKKhai[^>]*>([^<]+)<\/(?:[a-zA-Z0-9_]+:)?kyKKhai\s*>/i) ||
+                        xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?kyTinhThue[^>]*>([^<]+)<\/(?:[a-zA-Z0-9_]+:)?kyTinhThue\s*>/i);
+      if (kyKKMatch && kyKKMatch[1].trim()) {
+        rawPeriod = kyKKMatch[1].trim();
+      }
+
       const norm = normalizeVatPeriod(rawPeriod, filing.submittedAt);
 
       // ─── TỜ KHAI KHẤU TRỪ KỲ 05/KK-TNCN (Thông tư 80/2021/TT-BTC & TT92) ───
@@ -50,9 +77,9 @@ export class PitXmlParser {
       let ct22 = 0n; // Cá nhân cư trú có HĐLĐ (người)
       let ct24 = 0n; // Tổng thu nhập chịu thuế (TNCT) trả cho cá nhân
       let ct27 = 0n; // Tổng TNCT trả cho cá nhân thuộc diện phải khấu trừ
-      let ct31 = 0n; // Thuế TNCN khấu trừ của cá nhân cư trú (hoặc ct29/ct31)
-      let ct32 = 0n; // Thuế TNCN khấu trừ của cá nhân không cư trú (hoặc ct30/ct32)
-      let ct34 = 0n; // Tổng số thuế TNCN đã khấu trừ (ct30 trên TT80 hoặc ct34/ct31 trên TT92)
+      let ct31 = 0n; // Thuế TNCN khấu trừ của cá nhân cư trú
+      let ct32 = 0n; // Thuế TNCN khấu trừ của cá nhân không cư trú
+      let ct34 = 0n; // Tổng số thuế TNCN đã khấu trừ
       let ct35 = 0n; // Thuế phải nộp
 
       // ─── TỜ KHAI QUYẾT TOÁN NĂM 05/QTT-TNCN ───
@@ -75,8 +102,8 @@ export class PitXmlParser {
 
       if (!isFinalization) {
         // ─── XỬ LÝ CHO TỜ KHAI KỲ 05/KK-TNCN ───
-        // TT80: <ct30> là Tổng thuế khấu trừ, <ct31> là Cư trú, <ct32> là Không cư trú
-        // TT92: <ct34> là Tổng thuế khấu trừ, <ct32> là Cư trú, <ct33> là Không cư trú
+        // TT80: <ct30> là Tổng thuế khấu trừ, <ct31> là Cư trú, <ct32> là Không cư trú, <ct33> là Thuế phải nộp
+        // TT92: <ct34> là Tổng thuế khấu trừ, <ct32> là Cư trú, <ct33> là Không cư trú, <ct35> là Thuế phải nộp
         const valCt30 = this.findTag(xmlContent, ['ct30', 'tongThueKhauTru', 'ct_30']);
         const valCt31 = this.findTag(xmlContent, ['ct31', 'thueCuTru', 'khauTruCuTru', 'ct_31']);
         const valCt32 = this.findTag(xmlContent, ['ct32', 'thueKhongCuTru', 'khauTruKhongCuTru', 'ct_32']);
@@ -89,7 +116,7 @@ export class PitXmlParser {
         }
         if (valCt32 !== undefined) {
           // Nếu đã có ct31 thì ct32 là Không cư trú (TT80)
-          // Nếu không có ct31 mà có ct33 thì ct32 là Cư trú (TT92)
+          // Nếu không có ct31 mà có ct33 thì ct32 là Cư trú, ct33 là Không cư trú (TT92)
           if (valCt31 !== undefined) {
             ct32 = this.parseBigIntSafe(valCt32);
           } else if (valCt33 !== undefined) {
@@ -104,8 +131,6 @@ export class PitXmlParser {
           ct34 = this.parseBigIntSafe(valCt30);
         } else if (valCt34 !== undefined && this.parseBigIntSafe(valCt34) > 0n) {
           ct34 = this.parseBigIntSafe(valCt34);
-        } else if (valCt35 !== undefined && this.parseBigIntSafe(valCt35) > 0n) {
-          ct34 = this.parseBigIntSafe(valCt35);
         }
 
         // Tự động suy luận nếu có tổng mà thiếu thành phần hoặc ngược lại
@@ -115,28 +140,47 @@ export class PitXmlParser {
         if (ct31 === 0n && ct34 > 0n && ct32 === 0n) {
           ct31 = ct34; // Mặc định phần lớn khấu trừ rơi vào cá nhân cư trú
         }
-        ct35 = ct34;
+
+        // Thuế phải nộp: ưu tiên ct35 (TT92) hoặc ct33 (TT80), fallback sang ct34
+        if (valCt35 !== undefined && this.parseBigIntSafe(valCt35) > 0n) {
+          ct35 = this.parseBigIntSafe(valCt35);
+        } else {
+          ct35 = ct34;
+        }
       } else {
         // ─── XỬ LÝ CHO TỜ KHAI QUYẾT TOÁN NĂM 05/QTT-TNCN ───
         // TT80:
-        // [31] / [36]: Tổng số thuế TNCN đã khấu trừ
-        // [32]: Thuế TNCN đã khấu trừ của cá nhân cư trú
+        // [30] / [36]: Tổng số thuế TNCN đã khấu trừ
+        // [31]: Thuế TNCN đã khấu trừ của cá nhân cư trú có HĐLĐ
+        // [32]: Thuế TNCN đã khấu trừ của cá nhân cư trú không HĐLĐ (hoặc cư trú TT92)
         // [33]: Thuế TNCN đã khấu trừ của cá nhân không cư trú
-        // [41]: Tổng số thuế TNCN phải nộp quyết toán
+        // [41]: Tổng số thuế TNCN còn phải nộp quyết toán
         // [44]: Tổng số thuế TNCN nộp thừa
-        const val36_qtt = this.findTag(xmlContent, ['ct36', 'tongThueKhauTruTrongNam', 'ct_36', 'ct31']);
+        const val30_qtt = this.findTag(xmlContent, ['ct30', 'ct36', 'tongThueKhauTruTrongNam', 'ct_30', 'ct_36']);
+        const val31_qtt = this.findTag(xmlContent, ['ct31', 'thueCuTruCoHDLD', 'ct_31']);
         const val32_qtt = this.findTag(xmlContent, ['ct32', 'thueKhauTruCuTruTrongNam', 'ct_32']);
         const val33_qtt = this.findTag(xmlContent, ['ct33', 'thueKhauTruKhongCuTruTrongNam', 'ct_33']);
         const val41_qtt = this.findTag(xmlContent, ['ct41', 'tongThuePhaiNopQTT', 'ct_41', 'ct35']);
         const val44_qtt = this.findTag(xmlContent, ['ct44', 'tongThueNopThuaQTT', 'ct_44']);
 
-        if (val36_qtt !== undefined) ct36_qtt = this.parseBigIntSafe(val36_qtt);
-        if (val32_qtt !== undefined) ct31 = this.parseBigIntSafe(val32_qtt);
-        if (val33_qtt !== undefined) ct32 = this.parseBigIntSafe(val33_qtt);
+        const val31Big = val31_qtt !== undefined ? this.parseBigIntSafe(val31_qtt) : 0n;
+        const val32Big = val32_qtt !== undefined ? this.parseBigIntSafe(val32_qtt) : 0n;
+        const val33Big = val33_qtt !== undefined ? this.parseBigIntSafe(val33_qtt) : 0n;
+
+        if (val31_qtt !== undefined && val32_qtt !== undefined) {
+          ct31 = val31Big + val32Big; // Tổng cư trú = có HĐLĐ + không có HĐLĐ
+        } else if (val32_qtt !== undefined) {
+          ct31 = val32Big;
+        } else if (val31_qtt !== undefined) {
+          ct31 = val31Big;
+        }
+
+        if (val33_qtt !== undefined) ct32 = val33Big;
         if (val41_qtt !== undefined) ct41_qtt = this.parseBigIntSafe(val41_qtt);
         if (val44_qtt !== undefined) ct44_qtt = this.parseBigIntSafe(val44_qtt);
 
-        if (ct36_qtt !== undefined && ct36_qtt > 0n) {
+        if (val30_qtt !== undefined && this.parseBigIntSafe(val30_qtt) > 0n) {
+          ct36_qtt = this.parseBigIntSafe(val30_qtt);
           ct34 = ct36_qtt;
         } else if (ct31 > 0n || ct32 > 0n) {
           ct34 = ct31 + ct32;
@@ -158,8 +202,8 @@ export class PitXmlParser {
         quarter: isFinalization ? undefined : norm.quarter,
         isQuarter: norm.type === 'QUARTER' && !isFinalization,
         isYear: isFinalization,
-        versionType: filing.filingType === 'SUPPLEMENTAL' ? 'SUPPLEMENTAL' : 'ORIGINAL',
-        supplementalNo: filing.supplementalNo || 0,
+        versionType,
+        supplementalNo,
         submittedAt: filing.submittedAt,
         status: filing.status || 'Đã tiếp nhận',
         ct21_tongSoNguoiLaoDong: ct21,

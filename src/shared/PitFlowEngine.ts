@@ -44,7 +44,11 @@ export interface PitQuarterBlock {
   quarterFiling: PitPeriodFlowItem | null; // Tờ khai nộp theo Quý (nếu có)
   monthFilings: PitPeriodFlowItem[];     // Các tờ khai nộp theo Tháng trong quý (nếu có)
   totalIncomeCt24: bigint;               // Tổng TNCT của Quý
+  totalTaxableIncomeCt27: bigint;        // Tổng TNCT thuộc diện khấu trừ của Quý
+  totalResidentTax: bigint;              // Tổng thuế khấu trừ cư trú của Quý
+  totalNonResidentTax: bigint;           // Tổng thuế khấu trừ không cư trú của Quý
   totalWithheldTax: bigint;              // Tổng phát sinh thuế khấu trừ của Quý
+  maxEmployeeCount: bigint;              // Số lao động của Quý
   hasHybridFiling: boolean;              // Vừa có tháng vừa có quý trong cùng 1 quý
 }
 
@@ -185,48 +189,48 @@ export class PitFlowEngine {
 
       const hasHybrid = quarterFilingItem !== null && monthFilings.length > 0;
 
-      // Tính tổng Quý (chống double counting khi có cả tháng và quý)
+      // Tính tổng Quý (hỗ trợ cả khai tháng, khai quý và kỳ chuyển đổi hỗn hợp)
       let qTotalIncome = 0n;
+      let qTotalTaxable = 0n;
+      let qTotalResident = 0n;
+      let qTotalNonResident = 0n;
       let qTotalWithheld = 0n;
+      let qTotalPayable = 0n;
+      let qMaxEmployee = 0n;
 
       if (quarterFilingItem) {
         qTotalIncome += quarterFilingItem.totalIncomeCt24;
+        qTotalTaxable += quarterFilingItem.taxableIncomeCt27;
+        qTotalResident += quarterFilingItem.residentTaxCt32;
+        qTotalNonResident += quarterFilingItem.nonResidentTaxCt33;
         qTotalWithheld += quarterFilingItem.totalWithheldTaxCt34;
-        totalIncomeCt24 += quarterFilingItem.totalIncomeCt24;
-        totalTaxableIncomeCt27 += quarterFilingItem.taxableIncomeCt27;
-        totalResidentTax32 += quarterFilingItem.residentTaxCt32;
-        totalNonResidentTax33 += quarterFilingItem.nonResidentTaxCt33;
-        totalTaxPayable35 += quarterFilingItem.taxPayableCt35;
-        if (quarterFilingItem.employeeCountCt21 > maxEmployeeCount) {
-          maxEmployeeCount = quarterFilingItem.employeeCountCt21;
+        qTotalPayable += quarterFilingItem.taxPayableCt35;
+        if (quarterFilingItem.employeeCountCt21 > qMaxEmployee) {
+          qMaxEmployee = quarterFilingItem.employeeCountCt21;
         }
       }
 
       for (const mItem of monthFilings) {
-        if (!quarterFilingItem) {
-          qTotalIncome += mItem.totalIncomeCt24;
-          qTotalWithheld += mItem.totalWithheldTaxCt34;
-          totalIncomeCt24 += mItem.totalIncomeCt24;
-          totalTaxableIncomeCt27 += mItem.taxableIncomeCt27;
-          totalResidentTax32 += mItem.residentTaxCt32;
-          totalNonResidentTax33 += mItem.nonResidentTaxCt33;
-          totalTaxPayable35 += mItem.taxPayableCt35;
-          if (mItem.employeeCountCt21 > maxEmployeeCount) {
-            maxEmployeeCount = mItem.employeeCountCt21;
-          }
-        } else {
-          // Có cả tháng và quý trong cùng quý (kỳ chuyển đổi)
-          qTotalIncome += mItem.totalIncomeCt24;
-          qTotalWithheld += mItem.totalWithheldTaxCt34;
-          totalIncomeCt24 += mItem.totalIncomeCt24;
-          totalTaxableIncomeCt27 += mItem.taxableIncomeCt27;
-          totalResidentTax32 += mItem.residentTaxCt32;
-          totalNonResidentTax33 += mItem.nonResidentTaxCt33;
-          totalTaxPayable35 += mItem.taxPayableCt35;
+        qTotalIncome += mItem.totalIncomeCt24;
+        qTotalTaxable += mItem.taxableIncomeCt27;
+        qTotalResident += mItem.residentTaxCt32;
+        qTotalNonResident += mItem.nonResidentTaxCt33;
+        qTotalWithheld += mItem.totalWithheldTaxCt34;
+        qTotalPayable += mItem.taxPayableCt35;
+        if (mItem.employeeCountCt21 > qMaxEmployee) {
+          qMaxEmployee = mItem.employeeCountCt21;
         }
       }
 
+      totalIncomeCt24 += qTotalIncome;
+      totalTaxableIncomeCt27 += qTotalTaxable;
+      totalResidentTax32 += qTotalResident;
+      totalNonResidentTax33 += qTotalNonResident;
       totalWithheldTax34 += qTotalWithheld;
+      totalTaxPayable35 += qTotalPayable;
+      if (qMaxEmployee > maxEmployeeCount) {
+        maxEmployeeCount = qMaxEmployee;
+      }
 
       quarterBlocks.push({
         quarter: q,
@@ -234,10 +238,13 @@ export class PitFlowEngine {
         quarterFiling: quarterFilingItem,
         monthFilings,
         totalIncomeCt24: qTotalIncome,
+        totalTaxableIncomeCt27: qTotalTaxable,
+        totalResidentTax: qTotalResident,
+        totalNonResidentTax: qTotalNonResident,
         totalWithheldTax: qTotalWithheld,
+        maxEmployeeCount: qMaxEmployee,
         hasHybridFiling: hasHybrid
       });
-
       // Flat Flows
       if (monthFilings.length > 0) {
         flatFlows.push(...monthFilings);

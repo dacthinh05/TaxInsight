@@ -52,18 +52,50 @@ export class VatAnalyticsEngine {
     const map = new Map<string, string>();
     try {
       if (this.baseDir && fs.existsSync(this.baseDir)) {
+        const rawTaxCode = this.taxpayerId.trim();
+        const baseTaxCode = this.taxpayerPrefix().trim();
+        const safeTaxCode = rawTaxCode.replace(/[^a-zA-Z0-9_-]/g, '_');
+
         for (const dirName of fs.readdirSync(this.baseDir)) {
-          if (!dirName.startsWith(`${this.taxpayerPrefix()}_`)) continue;
-          const manifestPath = path.join(this.baseDir, dirName, '.tax_manifest.json');
-          if (!fs.existsSync(manifestPath)) continue;
+          const fullDirPath = path.join(this.baseDir, dirName);
+          let stat: fs.Stats | null = null;
           try {
-            const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-            for (const [filingId, entry] of Object.entries<any>(raw || {})) {
-              if (entry?.xmlPath && fs.existsSync(entry.xmlPath)) {
-                map.set(filingId, entry.xmlPath);
+            stat = fs.statSync(fullDirPath);
+          } catch {
+            continue;
+          }
+
+          if (stat.isDirectory()) {
+            const isMatchingTaxDir =
+              dirName.startsWith(`${rawTaxCode}_`) ||
+              dirName.startsWith(`${safeTaxCode}_`) ||
+              dirName.startsWith(`${baseTaxCode}_`) ||
+              dirName.startsWith(`${baseTaxCode}-`) ||
+              dirName === rawTaxCode ||
+              dirName === safeTaxCode;
+
+            if (isMatchingTaxDir) {
+              const manifestPath = path.join(fullDirPath, '.tax_manifest.json');
+              if (fs.existsSync(manifestPath)) {
+                try {
+                  const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+                  for (const [filingId, entry] of Object.entries<any>(raw || {})) {
+                    if (entry?.xmlPath && fs.existsSync(entry.xmlPath)) {
+                      map.set(filingId, entry.xmlPath);
+                    }
+                  }
+                } catch {}
               }
             }
-          } catch {}
+          } else if (stat.isFile() && dirName.toLowerCase().endsWith('.xml')) {
+            // Hỗ trợ quét trực tiếp các file XML lưu ở thư mục gốc baseDir
+            const cleanName = dirName.slice(0, -4);
+            const parts = cleanName.split('_');
+            const lastPart = parts[parts.length - 1];
+            if (lastPart && !map.has(lastPart)) {
+              map.set(lastPart, fullDirPath);
+            }
+          }
         }
       }
     } catch {}
@@ -72,10 +104,8 @@ export class VatAnalyticsEngine {
   }
 
   private taxpayerPrefix(): string {
-    // taxpayerId có thể là MST hoặc MST-tenDV; thư mục lưu trữ đặt theo MST_NĂM
     return this.taxpayerId.split('-')[0] || this.taxpayerId;
   }
-
   /**
    * Phân tích toàn diện danh sách hồ sơ GTGT với bộ tăng tốc Local-First & Snapshot Cache
    */
@@ -166,16 +196,23 @@ export class VatAnalyticsEngine {
             const res = await this.downloadHoSoWithRetry(filing);
 
             if (res.content) {
-              const zip = new AdmZip(Buffer.from(res.content, 'base64'));
-              // Cap giải nén: chặn zip-bomb (entry khai báo/giải nén > 50MB bỏ qua)
-              const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
-              for (const entry of zip.getEntries()) {
-                if (!entry.entryName.toLowerCase().endsWith('.xml')) continue;
-                if (entry.header.size > MAX_ENTRY_BYTES) continue;
-                const xml = entry.getData().toString('utf-8');
-                if (Buffer.byteLength(xml) > MAX_ENTRY_BYTES) continue;
+              const buffer = Buffer.from(res.content, 'base64');
+              const head = buffer.subarray(0, 4096).toString('utf-8').trim();
+              if (head.startsWith('<?xml') || (head.startsWith('<') && !head.toLowerCase().startsWith('<!doctype html') && !head.toLowerCase().startsWith('<html'))) {
+                const xml = buffer.toString('utf-8');
                 snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
-                break;
+              } else {
+                const zip = new AdmZip(buffer);
+                // Cap giải nén: chặn zip-bomb (entry khai báo/giải nén > 50MB bỏ qua)
+                const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
+                for (const entry of zip.getEntries()) {
+                  if (!entry.entryName.toLowerCase().endsWith('.xml')) continue;
+                  if (entry.header.size > MAX_ENTRY_BYTES) continue;
+                  const xml = entry.getData().toString('utf-8');
+                  if (Buffer.byteLength(xml) > MAX_ENTRY_BYTES) continue;
+                  snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
+                  break;
+                }
               }
             }
           } catch (dlErr: any) {
@@ -273,6 +310,7 @@ export class VatAnalyticsEngine {
         return await this.client.downloadHoSo(filing.id, undefined, {
           isThueDienTu: filing.isThueDienTu,
           loaiTraCuu: filing.loaiTraCuu,
+          maTkhai: filing.maTkhai,
           altIds: filing.altIds
         });
       } catch (err: any) {

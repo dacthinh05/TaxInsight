@@ -39,7 +39,9 @@ import { TaxObligationSummary } from '../shared/obligationTypes';
 import { TaxObligationTable } from './components/TaxObligationTable';
 import { LicenseModal } from './components/LicenseModal';
 import { UpdateNotificationModal } from './components/UpdateNotificationModal';
-import { UpdateInfo } from '../shared/types';
+import { AdminPinModal } from './components/AdminPinModal';
+import { ApiInspectorDrawer } from './components/ApiInspectorDrawer';
+import { AdminAuthStatus, ApiInspectorEntry, UpdateInfo } from '../shared/types';
 
 type PaymentQueryStatus = 'CONNECTED_WITH_DATA' | 'CONNECTED_NO_DATA' | 'QUERY_FAILED' | 'NOT_QUERIED';
 
@@ -67,6 +69,20 @@ export const App: React.FC = () => {
   // Auto-Updater State
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+
+  // API Inspector (Admin / Developer Diagnostics)
+  const [isApiInspectorOpen, setIsApiInspectorOpen] = useState(false);
+  const [isAdminPinModalOpen, setIsAdminPinModalOpen] = useState(false);
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
+  const [inspectorErrorCount, setInspectorErrorCount] = useState(0);
+
+  const handleOpenInspector = () => {
+    if (isAdminUnlocked) {
+      setIsApiInspectorOpen(true);
+    } else {
+      setIsAdminPinModalOpen(true);
+    }
+  };
 
   // Filings & Selection
   const [filings, setFilings] = useState<TaxFiling[]>([]);
@@ -244,9 +260,35 @@ export const App: React.FC = () => {
         if (info.state === 'AVAILABLE' || info.state === 'DOWNLOADING' || info.state === 'DOWNLOADED') {
           setIsUpdateModalOpen(true);
         }
+      }),
+
+      window.taxPortalAPI.onInspectorNewEntry && window.taxPortalAPI.onInspectorNewEntry(entry => {
+        if (entry.isError || (typeof entry.status === 'number' && entry.status >= 400) || entry.status === 'FAILED') {
+          setInspectorErrorCount(prev => prev + 1);
+        }
+      }),
+
+      window.taxPortalAPI.onInspectorCleared && window.taxPortalAPI.onInspectorCleared(() => {
+        setInspectorErrorCount(0);
       })
 
-    ];
+    ].filter(Boolean) as (() => void)[];
+
+    // Khởi tạo trạng thái Admin & Đếm lỗi Inspector ban đầu
+    if (window.taxPortalAPI?.inspectorGetAdminStatus) {
+      window.taxPortalAPI.inspectorGetAdminStatus().then(status => {
+        if (status?.isAdmin) setIsAdminUnlocked(true);
+      });
+    }
+
+    if (window.taxPortalAPI?.inspectorGetEntries) {
+      window.taxPortalAPI.inspectorGetEntries().then(entries => {
+        const errs = (entries || []).filter(
+          e => e.isError || (typeof e.status === 'number' && e.status >= 400) || e.status === 'FAILED'
+        ).length;
+        setInspectorErrorCount(errs);
+      });
+    }
 
     // Chủ động kiểm tra bản cập nhật NGAY khi mở ứng dụng (trước cả khi đăng nhập).
     // Trước đây chỉ dựa vào timer phía main (check sau 4s) — khi đó renderer chưa
@@ -265,6 +307,22 @@ export const App: React.FC = () => {
       unsubs.forEach(unsub => unsub && unsub());
     };
   }, []);
+
+  // Lắng nghe phím tắt mở nhanh API Inspector: Ctrl + Shift + A hoặc Ctrl + Alt + I
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isShortcut =
+        (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) ||
+        (e.ctrlKey && e.altKey && (e.key === 'I' || e.key === 'i'));
+
+      if (isShortcut) {
+        e.preventDefault();
+        handleOpenInspector();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAdminUnlocked]);
 
   const checkExistingCheckpoint = async (taxCode: string, year: number) => {
     if (!window.taxPortalAPI || !taxCode) return;
@@ -720,13 +778,35 @@ export const App: React.FC = () => {
 
   // ─── PHÂN TÍCH CHUYÊN SÂU TNCN (PIT ANALYTICS) ─────────────────────
   const handleAnalyzePit = async () => {
-    if (filings.length === 0) return;
+    // 1. Gom toàn bộ hồ sơ đã quét trong phiên để bắt trọn Quyết toán năm (thường nộp vào T03 năm sau)
+    const filingMap = new Map<string, TaxFiling>();
+    for (const yearFilings of Object.values(filingsByYear)) {
+      for (const filing of yearFilings) filingMap.set(filing.id, filing);
+    }
+    for (const filing of filings) filingMap.set(filing.id, filing);
+    const combined = [...filingMap.values()];
+
+    const pitFilings = combined.filter(
+      f =>
+        f.taxType === 'PIT' ||
+        (f.declarationCode || '').includes('TNCN') ||
+        (f.declarationCode || '').includes('05/KK') ||
+        (f.declarationCode || '').includes('05/QTT') ||
+        f.title.toLowerCase().includes('thu nhập cá nhân') ||
+        f.title.toLowerCase().includes('tncn')
+    );
+
+    if (pitFilings.length === 0) {
+      alert('Không tìm thấy tờ khai thuế TNCN trong danh sách hồ sơ đã quét.');
+      return;
+    }
+
     setIsPitAnalyzing(true);
     setPitProgressMessage('Đang chuẩn bị phân tích dữ liệu tờ khai TNCN…');
     setIsPitDrawerOpen(true);
 
     if (window.taxPortalAPI) {
-      const res = await window.taxPortalAPI.analyzePit({ filings });
+      const res = await window.taxPortalAPI.analyzePit({ filings: combined });
       if (res.success && res.summary) {
         setPitSummary(res.summary);
       } else {
@@ -987,7 +1067,7 @@ export const App: React.FC = () => {
         if (res.state === 'AVAILABLE') {
           setIsUpdateModalOpen(true);
         } else if (res.state === 'NOT_AVAILABLE' || res.state === 'IDLE') {
-      alert(`Phần mềm đang ở phiên bản mới nhất (v${res.currentVersion || '2.5.5'}).`);
+          alert(`Phần mềm đang ở phiên bản mới nhất (v${res.currentVersion || '2.7.0'}).`);
         } else if (res.state === 'ERROR') {
           alert('Không thể kết nối máy chủ cập nhật: ' + (res.error || 'Lỗi mạng'));
         }
@@ -1081,6 +1161,9 @@ export const App: React.FC = () => {
         onSwitchAccount={handleSwitchAccount}
         onOpenLicense={() => setIsLicenseModalOpen(true)}
         onCheckUpdate={handleCheckUpdate}
+        onOpenInspector={handleOpenInspector}
+        isAdminUnlocked={isAdminUnlocked}
+        inspectorErrorCount={inspectorErrorCount}
         hasNewUpdate={updateInfo?.state === 'AVAILABLE' || updateInfo?.state === 'DOWNLOADED'}
         isLicenseActivated={isLicenseActivated}
         isTrial={isTrial}
@@ -1345,6 +1428,20 @@ export const App: React.FC = () => {
         onClose={() => setIsUpdateModalOpen(false)}
         onDownload={handleDownloadUpdate}
         onInstall={handleInstallUpdate}
+      />
+
+      <AdminPinModal
+        isOpen={isAdminPinModalOpen}
+        onClose={() => setIsAdminPinModalOpen(false)}
+        onSuccess={() => {
+          setIsAdminUnlocked(true);
+          setIsApiInspectorOpen(true);
+        }}
+      />
+
+      <ApiInspectorDrawer
+        isOpen={isApiInspectorOpen}
+        onClose={() => setIsApiInspectorOpen(false)}
       />
     </div>
   );

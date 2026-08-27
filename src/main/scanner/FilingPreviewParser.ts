@@ -22,24 +22,41 @@ export class FilingPreviewParser {
     if (zipBase64) {
       try {
         const zipBuffer = Buffer.from(zipBase64, 'base64');
-        const zip = new AdmZip(zipBuffer);
-        const entries = zip.getEntries();
+        const head = zipBuffer.subarray(0, 4096).toString('utf-8').trim();
 
-        for (const entry of entries) {
-          const name = entry.entryName.toLowerCase();
-          if (name.endsWith('.xml')) {
-            xmlFound = true;
-            const xmlContent = entry.getData().toString('utf-8');
-            xmlSnippet = xmlContent.slice(0, 1500);
+        if (head.startsWith('<?xml') || (head.startsWith('<') && !head.toLowerCase().startsWith('<!doctype html') && !head.toLowerCase().startsWith('<html'))) {
+          xmlFound = true;
+          const xmlContent = zipBuffer.toString('utf-8');
+          xmlSnippet = xmlContent.slice(0, 1500);
+          this.extractXmlMetrics(filing, xmlContent, metrics);
+        } else {
+          const zip = new AdmZip(zipBuffer);
+          const entries = zip.getEntries();
 
-            // Trích xuất chỉ tiêu tài chính từ XML
-            this.extractXmlMetrics(filing, xmlContent, metrics);
-          } else if (name.endsWith('.pdf')) {
-            pdfFound = true;
+          for (const entry of entries) {
+            const name = entry.entryName.toLowerCase();
+            if (name.endsWith('.xml')) {
+              xmlFound = true;
+              const xmlContent = entry.getData().toString('utf-8');
+              xmlSnippet = xmlContent.slice(0, 1500);
+
+              // Trích xuất chỉ tiêu tài chính từ XML
+              this.extractXmlMetrics(filing, xmlContent, metrics);
+            } else if (name.endsWith('.pdf')) {
+              pdfFound = true;
+            }
           }
         }
       } catch {
-        // Bỏ qua lỗi zip corrupt trong bộ nhớ
+        // Fallback: nếu AdmZip thất bại nhưng buffer là XML
+        try {
+          const raw = Buffer.from(zipBase64, 'base64').toString('utf-8');
+          if (raw.trim().startsWith('<')) {
+            xmlFound = true;
+            xmlSnippet = raw.slice(0, 1500);
+            this.extractXmlMetrics(filing, raw, metrics);
+          }
+        } catch {}
       }
     }
 
@@ -113,25 +130,28 @@ export class FilingPreviewParser {
       if (ct43 && Number(ct43) > 0) metrics.push({ code: '[43]', label: 'Thuế GTGT còn được khấu trừ chuyển kỳ sau', value: ct43, type: 'money', unit: '₫', group: 'NGHĨA VỤ THUẾ TRONG KỲ', isHighlight: true });
     }
 
-    // ─── TỜ KHAI TNCN (05/KK-TNCN hoặc 02/KK-TNCN) ───────────────────
+    // ─── TỜ KHAI TNCN (05/KK-TNCN, 02/KK-TNCN, 05/QTT-TNCN) ─────────
     else if (filing.taxType === 'PIT' || xml.includes('TNCN') || xml.includes('ToKhaiTNCN')) {
       const ct21 = this.extractTagValue(xml, ['ct21', 'tongSoNguoiLaoDong', 'ct_21', 'tongLaoDong']);
       const ct22 = this.extractTagValue(xml, ['ct22', 'caNhanCuTru', 'ct_22']);
       const ct23 = this.extractTagValue(xml, ['ct23', 'caNhanKhongCuTru', 'ct_23']);
-      const ct27 = this.extractTagValue(xml, ['ct27', 'tongThuNhapChiuThue', 'ct_27', 'tongTNCT']);
-      const ct28 = this.extractTagValue(xml, ['ct28', 'tnctTraChoCaNhanCuTru', 'ct_28']);
-      const ct31 = this.extractTagValue(xml, ['ct31', 'tongThueDaKhauTru', 'ct_31', 'tongThueTNCN']);
-      const ct32 = this.extractTagValue(xml, ['ct32', 'thueKhauTruCaNhanCuTru', 'ct_32']);
+      const ct24 = this.extractTagValue(xml, ['ct24', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24']);
+      const ct27 = this.extractTagValue(xml, ['ct27', 'tnctKhauTru', 'ct_27', 'tongTNCTKhauTru']);
+      const ct30 = this.extractTagValue(xml, ['ct30', 'tongThueKhauTru', 'ct_30', 'ct34', 'tongThueDaKhauTru', 'ct36', 'ct_36']);
+      const ct31 = this.extractTagValue(xml, ['ct31', 'thueCuTru', 'khauTruCuTru', 'ct_31', 'ct32']);
+      const ct32 = this.extractTagValue(xml, ['ct32', 'thueKhongCuTru', 'khauTruKhongCuTru', 'ct_32', 'ct33']);
+      const ct35 = this.extractTagValue(xml, ['ct35', 'thuePhaiNop', 'tongThuePhaiNop', 'ct_35', 'ct41']);
 
       if (ct21) metrics.push({ code: '[21]', label: 'Tổng số người lao động', value: ct21, type: 'quantity', unit: 'người', group: 'NHÂN SỰ' });
       if (ct22) metrics.push({ code: '[22]', label: 'Cá nhân cư trú có HĐ lao động', value: ct22, type: 'quantity', unit: 'người', group: 'NHÂN SỰ' });
       if (ct23) metrics.push({ code: '[23]', label: 'Cá nhân không cư trú có HĐ lao động', value: ct23, type: 'quantity', unit: 'người', group: 'NHÂN SỰ' });
-      if (ct27) metrics.push({ code: '[27]', label: 'Tổng thu nhập chịu thuế trả cho cá nhân', value: ct27, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ', isHighlight: true });
-      if (ct28) metrics.push({ code: '[28]', label: 'Trong đó: Trả cho cá nhân cư trú', value: ct28, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ' });
-      if (ct31) metrics.push({ code: '[31]', label: 'Tổng số thuế TNCN đã khấu trừ', value: ct31, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ', isHighlight: true });
-      if (ct32) metrics.push({ code: '[32]', label: 'Trong đó: Khấu trừ của cá nhân cư trú', value: ct32, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ' });
+      if (ct24) metrics.push({ code: '[24]', label: 'Tổng thu nhập chịu thuế trả cho cá nhân', value: ct24, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ', isHighlight: true });
+      if (ct27) metrics.push({ code: '[27]', label: 'Tổng TNCT thuộc diện khấu trừ thuế', value: ct27, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ' });
+      if (ct30) metrics.push({ code: '[30/34/36]', label: 'Tổng số thuế TNCN đã khấu trừ', value: ct30, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ', isHighlight: true });
+      if (ct31 && ct31 !== ct30) metrics.push({ code: '[31/32]', label: 'Trong đó: Khấu trừ cá nhân cư trú', value: ct31, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ' });
+      if (ct32 && ct32 !== ct30 && ct32 !== ct31) metrics.push({ code: '[32/33]', label: 'Trong đó: Khấu trừ cá nhân không cư trú', value: ct32, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ' });
+      if (ct35) metrics.push({ code: '[35/41]', label: 'Tổng thuế TNCN phải nộp', value: ct35, type: 'money', unit: '₫', group: 'THU NHẬP & NGHĨA VỤ THUẾ', isHighlight: true });
     }
-
     // ─── TỜ KHAI QUYẾT TOÁN TNDN (03/TNDN) ───────────────────────────
     else if (filing.taxType === 'CIT' || xml.includes('03/TNDN') || xml.includes('ToKhaiTNDN')) {
       const ctA1 = this.extractTagValue(xml, ['ctA1', 'tongDoanhThu', 'ct_A1', 'doanhThu']);
@@ -177,8 +197,9 @@ export class FilingPreviewParser {
   }
 
   private static extractTagValue(xml: string, tags: string[]): string | undefined {
+    if (!xml) return undefined;
     for (const tag of tags) {
-      const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
+      const regex = new RegExp(`<(?:[a-zA-Z0-9_]+:)?${tag}(?:\\s+[^>]*)?>([\\s\\S]*?)<\\/(?:[a-zA-Z0-9_]+:)?${tag}\\s*>`, 'i');
       const match = xml.match(regex);
       if (match && match[1] && match[1].trim()) {
         return match[1].trim();

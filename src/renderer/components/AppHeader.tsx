@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowUpCircle, Clock, CreditCard, FileText, FolderOpen, History, KeyRound, LogOut, RotateCcw, Scale, ShieldCheck } from 'lucide-react';
+import { Activity, ArrowUpCircle, Clock, CreditCard, FileText, FolderOpen, History, KeyRound, LogOut, RotateCcw, Scale, ShieldCheck } from 'lucide-react';
 import { AppViewMode, SavedAccountInfo, UserSessionInfo } from '../../shared/types';
 
 interface AppHeaderProps {
@@ -15,6 +15,9 @@ interface AppHeaderProps {
   onSwitchAccount?: (taxCode: string) => void;
   onOpenLicense?: () => void;
   onCheckUpdate?: () => void;
+  onOpenInspector?: () => void;
+  isAdminUnlocked?: boolean;
+  inspectorErrorCount?: number;
   hasNewUpdate?: boolean;
   isLicenseActivated?: boolean;
   isTrial?: boolean;
@@ -35,6 +38,9 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onSwitchAccount,
   onOpenLicense,
   onCheckUpdate,
+  onOpenInspector,
+  isAdminUnlocked = false,
+  inspectorErrorCount = 0,
   hasNewUpdate = false,
   isLicenseActivated = false,
   isTrial = false,
@@ -44,7 +50,19 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   const [savedAccounts, setSavedAccounts] = React.useState<SavedAccountInfo[]>([]);
   const [isSwitchMenuOpen, setIsSwitchMenuOpen] = React.useState(false);
   const [isFolderMenuOpen, setIsFolderMenuOpen] = React.useState(false);
-  const [appVersion, setAppVersion] = React.useState('2.5.5');
+  const [appVersion, setAppVersion] = React.useState('2.7.0');
+  const [versionClicks, setVersionClicks] = React.useState(0);
+
+  const handleVersionClick = () => {
+    const next = versionClicks + 1;
+    if (next >= 5) {
+      setVersionClicks(0);
+      if (onOpenInspector) onOpenInspector();
+    } else {
+      setVersionClicks(next);
+      setTimeout(() => setVersionClicks(0), 2500);
+    }
+  };
 
   React.useEffect(() => {
     if (window.taxPortalAPI?.getAppVersion) {
@@ -79,7 +97,13 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
         <div className="flex items-center space-x-2 whitespace-nowrap">
           <div className="flex items-center space-x-1.5">
             <h1 className="text-sm font-bold text-white tracking-tight">TaxInsight</h1>
-            <span className="text-xs text-slate-400 font-normal">v{appVersion}</span>
+            <span
+              onClick={handleVersionClick}
+              className="text-xs text-slate-400 font-normal hover:text-teal-300 transition-colors cursor-pointer select-none"
+              title="Nhấp 5 lần để mở API Inspector (Admin / Dev)"
+            >
+              v{appVersion}
+            </span>
           </div>
 
           {/* Interactive MST Dropdown (Đổi nhanh MST) */}
@@ -331,6 +355,27 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           >
             <ArrowUpCircle className="w-3.5 h-3.5 text-emerald-400" />
             <span className="inline">Có bản mới</span>
+          </button>
+        )}
+
+        {isAdminUnlocked && onOpenInspector && (
+          <button
+            type="button"
+            onClick={onOpenInspector}
+            className={`h-8 px-2.5 rounded-md text-xs font-medium border flex items-center space-x-1.5 transition-colors relative cursor-pointer ${
+              inspectorErrorCount > 0
+                ? 'bg-red-950/80 border-red-800 text-red-300 hover:bg-red-900'
+                : 'bg-purple-950/70 border-purple-800/80 text-purple-300 hover:bg-purple-900'
+            }`}
+            title="Mở công cụ giám sát & chẩn đoán API Inspector (Admin / Dev)"
+          >
+            <Activity className={`w-3.5 h-3.5 ${inspectorErrorCount > 0 ? 'text-red-400' : 'text-purple-400'}`} />
+            <span className="hidden md:inline">API Inspector</span>
+            {inspectorErrorCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-red-600 text-white animate-pulse">
+                {inspectorErrorCount}
+              </span>
+            )}
           </button>
         )}
 

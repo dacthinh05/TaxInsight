@@ -74,6 +74,22 @@ export class TaxPortalClient {
   }
 
   /**
+   * Trích xuất CSRF/XSRF Token từ mọi định dạng HTML của Cổng Thuế
+   */
+  public extractCsrfFromHtml(html: string): string | null {
+    if (!html || typeof html !== 'string') return null;
+    const match =
+      html.match(/name=["'](?:_csrf|csrf-token|csrf_token)["']\s+(?:value|content)=["']([^"']+)["']/i)?.[1] ||
+      html.match(/(?:value|content)=["']([^"']+)["']\s+name=["'](?:_csrf|csrf-token|csrf_token)["']/i)?.[1] ||
+      html.match(/meta\s+name=["'](?:_csrf|csrf-token|csrf_token)["']\s+content=["']([^"']+)["']/i)?.[1] ||
+      html.match(/meta\s+content=["']([^"']+)["']\s+name=["'](?:_csrf|csrf-token|csrf_token)["']/i)?.[1] ||
+      html.match(/id=["']csrfToken["']\s+value=["']([^"']+)["']/i)?.[1] ||
+      html.match(/name=["']_csrf["']\s+value=["']([^"']+)["']/i)?.[1] ||
+      html.match(/var\s+(?:token|_csrf)\s*=\s*["']([^"']+)["']/i)?.[1];
+    return match ? match.trim() : null;
+  }
+
+  /**
    * Khởi tạo phiên làm việc và trích xuất CSRF Token từ Cổng Thuế
    */
   public async ensureSessionInitialized(forceRefresh = false): Promise<void> {
@@ -87,13 +103,9 @@ export class TaxPortalClient {
         });
 
         const html = typeof response.data === 'string' ? response.data : '';
-        const csrfMatch =
-          html.match(/name=["']_csrf["']\s+value=["']([^"']+)["']/i) ||
-          html.match(/value=["']([^"']+)["']\s+name=["']_csrf["']/i) ||
-          html.match(/content=["']([^"']+)["']\s+name=["']_csrf["']/i);
-
-        if (csrfMatch) {
-          this.csrfToken = csrfMatch[1];
+        const token = this.extractCsrfFromHtml(html);
+        if (token) {
+          this.csrfToken = token;
         }
 
         this.isSessionInitialized = true;
@@ -125,13 +137,9 @@ export class TaxPortalClient {
       const resData = response.data;
       if (typeof resData === 'string') {
         // Trích xuất CSRF Token mới nhất trên trang tchs nếu có
-        const csrfMatch =
-          resData.match(/name=["']_csrf["']\s+value=["']([^"']+)["']/i) ||
-          resData.match(/value=["']([^"']+)["']\s+name=["']_csrf["']/i) ||
-          resData.match(/content=["']([^"']+)["']\s+name=["']_csrf["']/i) ||
-          resData.match(/meta\s+name=["']_csrf["']\s+content=["']([^"']+)["']/i);
-        if (csrfMatch) {
-          this.csrfToken = csrfMatch[1];
+        const token = this.extractCsrfFromHtml(resData);
+        if (token) {
+          this.csrfToken = token;
         }
 
         // Kiểm tra dấu hiệu của trang Login (unauthenticated)
@@ -558,12 +566,13 @@ export class TaxPortalClient {
    */
   public async validateIdTkhai(idTKhai: string): Promise<boolean> {
     try {
+      const cleanId = idTKhai.trim();
       const activeToken = await this.resolveXsrfToken();
 
       const headers: Record<string, string> = {
         'Accept': '*/*',
         'X-Requested-With': 'XMLHttpRequest',
-        'Referer': PORTAL_CONFIG.TCHS_URL,
+        'Referer': `${PORTAL_CONFIG.DETAIL_FILE_URL}/${cleanId}?loai=`,
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
       };
       if (activeToken) {
@@ -571,7 +580,7 @@ export class TaxPortalClient {
       }
 
       const response = await this.session.client.get(PORTAL_CONFIG.VALIDATE_TKHAI_API, {
-        params: { idTKhai: idTKhai.trim() },
+        params: { idTKhai: cleanId },
         headers,
         timeout: 8000
       });
@@ -992,18 +1001,23 @@ export class TaxPortalClient {
         for (const variantId of idVariants) {
           if (abortSignal?.aborted) break;
 
+          const detailReferer = `${PORTAL_CONFIG.DETAIL_FILE_URL}/${variantId}?loai=`;
+          const reqHeaders = {
+            ...baseHeaders,
+            'Referer': detailReferer,
+            'Content-Type': 'application/json;charset=UTF-8'
+          };
+
+          // 1. Gửi payload { maHoSo: variantId } chuẩn theo Cổng Dịch vụ công
           try {
             const res1 = await this.diagRequest('STD-maHoSo', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
               PORTAL_CONFIG.DOWNLOAD_API,
-              { maHoSo: variantId, ...(maTkhai ? { maTkhai } : {}) },
+              { maHoSo: variantId },
               {
                 signal: abortSignal,
                 timeout: 8000,
                 responseType: 'arraybuffer',
-                headers: {
-                  ...baseHeaders,
-                  'Content-Type': 'application/json;charset=UTF-8'
-                }
+                headers: reqHeaders
               }
             ));
             const payload1 = this.extractPayloadContent(res1?.data, variantId);
@@ -1016,18 +1030,16 @@ export class TaxPortalClient {
 
           if (abortSignal?.aborted) break;
 
+          // 2. Gửi payload { idTKhai: variantId } nếu backend dùng binding idTKhai
           try {
             const res2 = await this.diagRequest('STD-idTKhai', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
               PORTAL_CONFIG.DOWNLOAD_API,
-              { idTKhai: variantId, ...(maTkhai ? { maTkhai } : {}) },
+              { idTKhai: variantId },
               {
                 signal: abortSignal,
                 timeout: 7000,
                 responseType: 'arraybuffer',
-                headers: {
-                  ...baseHeaders,
-                  'Content-Type': 'application/json;charset=UTF-8'
-                }
+                headers: reqHeaders
               }
             ));
             const payload2 = this.extractPayloadContent(res2?.data, variantId);
@@ -1036,6 +1048,29 @@ export class TaxPortalClient {
             lastError = err2;
             if (err2.response?.status === 429) throw err2;
             if (err2.code === 'SESSION_EXPIRED' || err2.code === 'CANCELLED') throw err2;
+          }
+
+          // 2b. Thử gửi kèm maTkhai nếu có (để tương thích với một số tờ khai đặc biệt)
+          if (maTkhai && maTkhai !== variantId) {
+            if (abortSignal?.aborted) break;
+            try {
+              const res2b = await this.diagRequest('STD-maHoSo-maTkhai', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
+                PORTAL_CONFIG.DOWNLOAD_API,
+                { maHoSo: variantId, maTkhai },
+                {
+                  signal: abortSignal,
+                  timeout: 7000,
+                  responseType: 'arraybuffer',
+                  headers: reqHeaders
+                }
+              ));
+              const payload2b = this.extractPayloadContent(res2b?.data, variantId);
+              if (payload2b) return payload2b;
+            } catch (err2b: any) {
+              lastError = err2b;
+              if (err2b.response?.status === 429) throw err2b;
+              if (err2b.code === 'SESSION_EXPIRED' || err2b.code === 'CANCELLED') throw err2b;
+            }
           }
         }
 
@@ -1055,6 +1090,7 @@ export class TaxPortalClient {
                 signal: abortSignal,
                 headers: {
                   ...baseHeaders,
+                  'Referer': `${PORTAL_CONFIG.DETAIL_FILE_URL}/${primaryId}?loai=`,
                   'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
                 },
                 timeout: 8000,
@@ -1070,11 +1106,12 @@ export class TaxPortalClient {
           }
         }
 
-        // CHIẾN LƯỢC 4: GET chi tiết hồ sơ trực tiếp từ Cổng Thuế
+        // CHIẾN LƯỢC 4: GET chi tiết hồ sơ trực tiếp từ Cổng Thuế & bóc tách
         if (!abortSignal?.aborted) {
           try {
-            const detailRes = await this.diagRequest('STD-detail', `${PORTAL_CONFIG.DETAIL_FILE_URL}/${primaryId}?loai=`, () => this.session.client.get(
-              `${PORTAL_CONFIG.DETAIL_FILE_URL}/${primaryId}?loai=`,
+            const detailUrl = `${PORTAL_CONFIG.DETAIL_FILE_URL}/${primaryId}?loai=`;
+            const detailRes = await this.diagRequest('STD-detail', detailUrl, () => this.session.client.get(
+              detailUrl,
               {
                 signal: abortSignal,
                 headers: {
@@ -1089,14 +1126,12 @@ export class TaxPortalClient {
 
             if (detailRes.data && typeof detailRes.data === 'string') {
               const html = detailRes.data;
-              // Dump trang chi tiết lần cuối — chẩn đoán cấu trúc nút tải thật
-              try {
-                const dumpPath = path.join(app.getPath('userData'), 'debug_last_detail.html');
-                fs.promises.writeFile(dumpPath, html).catch(() => {});
-              } catch {}
+              const freshCsrf = this.extractCsrfFromHtml(html);
+              if (freshCsrf) {
+                this.csrfToken = freshCsrf;
+              }
 
-              // Cổng Thuế đặt link tải trong trang chi tiết (danh sách "Hồ sơ đính
-              // kèm") với nhiều dạng tên hàm/URL — quét rộng rồi đi từng link
+              // Quét các link tải trong trang chi tiết
               const linkMatches = html.match(/(?:href|onclick)\s*=\s*["']([^"']*(?:download|taifile|tai\-file|dinhkem|attach|files\/)[^"']*)["']/gi) || [];
               const seen = new Set<string>();
               for (const raw of linkMatches) {
@@ -1108,7 +1143,11 @@ export class TaxPortalClient {
                 const fullDlUrl = dlUrl.startsWith('http') ? dlUrl : `${PORTAL_CONFIG.BASE_URL}${dlUrl.startsWith('/') ? '' : '/'}${dlUrl}`;
                 try {
                   const directFileRes = await this.diagRequest('STD-detail-file', fullDlUrl, () => this.session.client.get(fullDlUrl, {
-                    headers: baseHeaders,
+                    headers: {
+                      ...baseHeaders,
+                      'Referer': detailUrl,
+                      ...(this.csrfToken ? { 'X-XSRF-TOKEN': this.csrfToken, 'X-CSRF-TOKEN': this.csrfToken } : {})
+                    },
                     timeout: 10000,
                     responseType: 'arraybuffer'
                   }));

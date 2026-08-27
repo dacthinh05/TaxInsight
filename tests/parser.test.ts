@@ -157,8 +157,7 @@ describe('TaxFilingParser & DOM Integrity', () => {
     const [filing] = TaxFilingParser.parseHtmlSearchResults(html);
     expect(filing.id).toBe('G12.18-260720-00118136');
     expect(filing.maTkhai).toBe('864');
-    expect(filing.altIds).toEqual(['864']);
-    expect(filing.altIds).not.toContain('3701415632');
+    expect(filing.altIds).toBeUndefined();
     expect(filing.isThueDienTu).toBe(false);
   });
 });

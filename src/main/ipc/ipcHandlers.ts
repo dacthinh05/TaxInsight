@@ -20,6 +20,7 @@ import { VatAnalyticsEngine } from '../scanner/VatAnalyticsEngine';
 import { PitAnalyticsEngine } from '../scanner/PitAnalyticsEngine';
 import { ExcelVatReferenceExporter } from '../exporter/ExcelVatReferenceExporter';
 import { ExcelPitReferenceExporter } from '../exporter/ExcelPitReferenceExporter';
+import { buildC102Html } from '../exporter/C102PdfTemplate';
 import { GntStatisticsEngine, GNT_BUCKET_LABELS, GntStatBucket } from '../engine/GntStatisticsEngine';
 import { AuditLogger } from '../persistence/AuditLogger';
 import { CheckpointStore } from '../persistence/CheckpointStore';
@@ -29,6 +30,7 @@ import { AccountStore } from '../persistence/AccountStore';
 import { LicenseManager } from '../licensing/LicenseManager';
 import { MachineIdProvider } from '../licensing/MachineIdProvider';
 import { AppUpdater } from '../updater/AppUpdater';
+import { ApiInspectorManager } from '../inspector/ApiInspectorManager';
 
 export function setupIpcHandlers(
   session: PortalSession,
@@ -43,6 +45,9 @@ export function setupIpcHandlers(
   auditLogger: AuditLogger,
   sendToRenderer: (channel: string, data: any) => void
 ) {
+  // Kết nối sender cho ApiInspector
+  ApiInspectorManager.getInstance().setRendererSender(sendToRenderer);
+
   // ─── VALIDATOR INPUT TỪ RENDERER (chống path traversal qua taxCode/year) ──
   const normalizeYear = (v: unknown): number => {
     const n = typeof v === 'number' ? v : parseInt(String(v), 10);
@@ -868,12 +873,13 @@ export function setupIpcHandlers(
         // Tổng tiền cho tên file: tổng chi tiết nếu hợp lệ, không thì tự cộng
         // các dòng, cuối cùng mới là '0' (tổng rỗng = bảng chi tiết parse hỏng)
         const parseVnd = (s?: string) => {
-          const n = Number((s || '').replace(/[,.]/g, ''));
-          return Number.isFinite(n) ? n : 0;
+          const parsed = GntMoneyParser.parse(s);
+          return parsed.status === 'VALID' ? parsed.value : 0n;
         };
         const totalFromDetail = parseVnd(detail.tongTienVND);
-        const totalFromItems = detail.items.reduce((acc, it) => acc + parseVnd(it.soTienVND), 0);
-        const tienStr = String(totalFromDetail > 0 ? totalFromDetail : (totalFromItems > 0 ? totalFromItems : 0));
+        const totalFromItems = detail.items.reduce((acc, it) => acc + parseVnd(it.soTienVND), 0n);
+        const totalAmount = totalFromDetail > 0n ? totalFromDetail : (totalFromItems > 0n ? totalFromItems : 0n);
+        const tienStr = String(totalAmount);
         const dateRaw = detail.signatures[0]?.signedAt?.split(' ')[0] || '';
         const dateStr = dateRaw ? dateRaw.split('/').reverse().join('') : '';
         // Gắn ctuId vào tên file: 2 GNT khác nhau trùng loại thuế/kỳ/số tiền/ngày
@@ -897,36 +903,21 @@ export function setupIpcHandlers(
       });
 
       try {
-        // Bọc HTML với CSS print-friendly và font tiếng Việt sắc nét.
-        // CSP chặn script trong rawHtml do server trả về (rawHtml được nạp vào
-        // window ẩn — không cho phép nó chạy JS hay gọi mạng khi render PDF).
-        const styledHtml = `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="utf-8" />
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:" />
-            <style>
-              @page { size: A4 portrait; margin: 10mm; }
-              body { font-family: Arial, sans-serif; font-size: 11pt; color: #000; background: #fff; margin: 0; padding: 0; }
-              table { width: 100%; border-collapse: collapse; }
-              .button_area, .form_panel_table, #openPopupHSM, input[type="button"], button, script { display: none !important; }
-            </style>
-          </head>
-          <body>
-            ${detail.rawHtml || ''}
-          </body>
-          </html>
-        `;
+        const styledHtml = buildC102Html(detail);
+        const base64Html = Buffer.from(styledHtml, 'utf-8').toString('base64');
+        await win.loadURL(`data:text/html;charset=utf-8;base64,${base64Html}`);
 
-        await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(styledHtml)}`);
-
-        // Chờ hoàn tất load DOM & layout
+        // Chờ hoàn tất load DOM, web fonts & layout
         await win.webContents.executeJavaScript(`
-          new Promise(resolve => {
-            if (document.readyState === 'complete') setTimeout(resolve, 300);
-            else window.addEventListener('load', () => setTimeout(resolve, 300));
-          })
+          (async () => {
+            try {
+              if (document.fonts) await document.fonts.ready;
+            } catch(e) {}
+            return new Promise(resolve => {
+              if (document.readyState === 'complete') setTimeout(resolve, 150);
+              else window.addEventListener('load', () => setTimeout(resolve, 150));
+            });
+          })()
         `);
 
         const pdfBuffer = await win.webContents.printToPDF({
@@ -936,7 +927,7 @@ export function setupIpcHandlers(
         });
 
         await fs.promises.writeFile(targetPath, pdfBuffer);
-        auditLogger.log('SUCCESS', `Luu file PDF Gi?y N?p Ti?n th?nh c?ng: ${fileName}`, targetPath);
+        auditLogger.log('SUCCESS', `Lưu file PDF Giấy Nộp Tiền thành công: ${fileName}`, targetPath);
         return { success: true, filePath: targetPath, fileName, folderPath: gntDir };
       } finally {
         if (!win.isDestroyed()) win.destroy();
@@ -1183,5 +1174,27 @@ export function setupIpcHandlers(
   ipcMain.handle('updater:install', async () => {
     AppUpdater.getInstance().quitAndInstall();
     return { success: true };
+  });
+
+  // ─── API INSPECTOR (ADMIN / DEV DIAGNOSTICS) ─────────────────────────
+  ipcMain.handle('inspector:getEntries', async () => {
+    return ApiInspectorManager.getInstance().getEntries();
+  });
+
+  ipcMain.handle('inspector:clear', async () => {
+    ApiInspectorManager.getInstance().clearEntries();
+    return { success: true };
+  });
+
+  ipcMain.handle('inspector:export', async () => {
+    return ApiInspectorManager.getInstance().exportEntriesJson();
+  });
+
+  ipcMain.handle('inspector:verifyAdminPin', async (_event, { pin }: { pin: string }) => {
+    return ApiInspectorManager.getInstance().verifyAdminPin(pin);
+  });
+
+  ipcMain.handle('inspector:getAdminStatus', async () => {
+    return ApiInspectorManager.getInstance().getAdminStatus();
   });
 }
