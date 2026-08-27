@@ -1138,38 +1138,37 @@ export const App: React.FC = () => {
     await window.taxPortalAPI.exportPaymentSlipsExcel({ paymentSlips: slips, year: selectedYear });
   };
 
-  // Nếu chưa đăng nhập, hiển thị trang Login
-  if (!session.isLoggedIn) {
-    return <LoginPage onLoginSuccess={handleLoginSuccess} initialTaxCode={targetLoginTaxCode} />;
-  }
-
   const isDownloadingActive = downloadSummary?.isRunning || (downloadSummary?.remaining || 0) > 0;
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-100 font-sans antialiased text-slate-800 overflow-hidden select-none">
-      {/* 1. Header ứng dụng */}
-      <AppHeader
-        session={session}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-        onOpenFolder={handleOpenFolder}
-        onSelectDirectory={handleSelectDirectory}
-        onResetDirectory={handleResetDirectory}
-        baseDir={baseDir}
-        onOpenLogs={() => setIsAuditDrawerOpen(true)}
-        onLogout={handleLogout}
-        onSwitchAccount={handleSwitchAccount}
-        onOpenLicense={() => setIsLicenseModalOpen(true)}
-        onCheckUpdate={handleCheckUpdate}
-        onOpenInspector={handleOpenInspector}
-        isAdminUnlocked={isAdminUnlocked}
-        inspectorErrorCount={inspectorErrorCount}
-        hasNewUpdate={updateInfo?.state === 'AVAILABLE' || updateInfo?.state === 'DOWNLOADED'}
-        isLicenseActivated={isLicenseActivated}
-        isTrial={isTrial}
-        licenseTierLabel={licenseTierLabel}
-        logsCount={auditLogs.length}
-      />
+      {!session.isLoggedIn ? (
+        <LoginPage onLoginSuccess={handleLoginSuccess} initialTaxCode={targetLoginTaxCode} />
+      ) : (
+        <>
+          {/* 1. Header ứng dụng */}
+          <AppHeader
+            session={session}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            onOpenFolder={handleOpenFolder}
+            onSelectDirectory={handleSelectDirectory}
+            onResetDirectory={handleResetDirectory}
+            baseDir={baseDir}
+            onOpenLogs={() => setIsAuditDrawerOpen(true)}
+            onLogout={handleLogout}
+            onSwitchAccount={handleSwitchAccount}
+            onOpenLicense={() => setIsLicenseModalOpen(true)}
+            onCheckUpdate={handleCheckUpdate}
+            onOpenInspector={handleOpenInspector}
+            isAdminUnlocked={isAdminUnlocked}
+            inspectorErrorCount={inspectorErrorCount}
+            hasNewUpdate={updateInfo?.state === 'AVAILABLE' || updateInfo?.state === 'DOWNLOADED'}
+            isLicenseActivated={isLicenseActivated}
+            isTrial={isTrial}
+            licenseTierLabel={licenseTierLabel}
+            logsCount={auditLogs.length}
+          />
 
       {/* 2. Workspace Viewports */}
       <main className="flex-1 flex flex-col min-h-0 overflow-hidden px-4 pt-3 pb-2 space-y-3">
@@ -1305,6 +1304,8 @@ export const App: React.FC = () => {
           </div>
         )}
       </main>
+      </>
+      )}
 
       {/* 4. Modals & Drawers */}
       {/* Thống kê GNT theo tháng × loại thuế */}

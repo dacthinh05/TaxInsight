@@ -161,7 +161,7 @@ function createWindow() {
   const updater = AppUpdater.getInstance();
   updater.setMainWindow(mainWindow);
   if (!updaterStarted) {
-    updater.startAutoCheckTimer(4000);
+    updater.startAutoCheckTimer(1000);
     updaterStarted = true;
   }
 
