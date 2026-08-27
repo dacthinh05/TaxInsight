@@ -389,6 +389,7 @@ export class DownloadManager extends EventEmitter {
           {
             isThueDienTu: item.filing.isThueDienTu,
             loaiTraCuu: item.filing.loaiTraCuu,
+            maTkhai: item.filing.maTkhai,
             altIds: item.filing.altIds
           }
         );

@@ -137,7 +137,11 @@ export const PaymentSlipPreviewDrawer: React.FC<PaymentSlipPreviewDrawerProps> =
     setIsExportingPdf(true);
     setExportSuccessMsg(null);
     try {
-      const res = await window.taxPortalAPI.exportPaymentSlipPdf({ ctuId: slip.id });
+      const res = await window.taxPortalAPI.exportPaymentSlipPdf({
+        ctuId: slip.id,
+        soGnt: slip.soGnt,
+        maGiaoDich: slip.maGiaoDich
+      });
       if (res.success) {
         setExportSuccessMsg(`Đã lưu file PDF: ${res.fileName}`);
         if (res.folderPath) setExportedFolder(res.folderPath);

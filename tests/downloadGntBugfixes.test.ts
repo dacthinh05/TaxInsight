@@ -122,6 +122,38 @@ describe('BUGFIX #2 — DownloadManager start lại sau cancel phải hoàn thà
     expect(summary.completed + summary.existing).toBe(2);
     expect(summary.remaining).toBe(0);
   });
+  it('passes maTkhai and alternate IDs required by the real GDT filing row', async () => {
+    const xmlPayload = Buffer.from('<?xml version="1.0"?><HSoThue><TKhai/></HSoThue>', 'utf-8').toString('base64');
+    let receivedMeta: unknown;
+    const fakeClient = {
+      checkSession: async () => true,
+      downloadHoSo: async (_id: string, _signal: AbortSignal | undefined, meta: unknown) => {
+        receivedMeta = meta;
+        return { fileName: 'f.zip', fileType: 'application/zip', content: xmlPayload };
+      }
+    } as unknown as TaxPortalClient;
+
+    const filing = {
+      ...makeFiling('G12.18-260720-00118136'),
+      taxType: 'PIT' as const,
+      declarationCode: '05/KK-TNCN',
+      maTkhai: '864',
+      altIds: ['864']
+    };
+    const dm = new DownloadManager(fakeClient, new FileOrganizer(tempDir));
+    dm.enqueueFilings([filing], '3702735709', 2026);
+    await dm.start();
+    await vi.waitFor(() => {
+      if (dm.getState() !== 'COMPLETED') throw new Error(`state=${dm.getState()}`);
+    }, { timeout: 4000, interval: 50 });
+
+    expect(receivedMeta).toEqual({
+      isThueDienTu: undefined,
+      loaiTraCuu: undefined,
+      maTkhai: '864',
+      altIds: ['864']
+    });
+  });
 });
 
 describe('BUGFIX #5 — Điều khiển tải trong lúc pre-flight đang chờ', () => {

@@ -677,24 +677,39 @@ export class TaxPortalClient {
         } catch {}
       }
 
-      const base64Match = str.match(/data:[^;]+;base64,([A-Za-z0-9+/=\s]{20,})/) ||
-        str.match(/base64,([A-Za-z0-9+/=\s]{20,})/);
+      // Một số response trả Base64 dưới dạng JSON string đã được quote hoặc
+      // URL-encode dấu '+'/'/'. Chuẩn hóa trước khi kiểm tra để TNCN không rơi
+      // xuống nhánh "không có nội dung".
+      const payloadText = str
+        .replace(/^(['"])([\s\S]*)\1$/, '$2')
+        .replace(/%2B/gi, '+')
+        .replace(/%2F/gi, '/')
+        .replace(/%3D/gi, '=')
+        .trim();
+
+      const base64Match = payloadText.match(/data:[^;]+;base64,([A-Za-z0-9+/_=-\s]{20,})/) ||
+        payloadText.match(/base64,([A-Za-z0-9+/_=-\s]{20,})/);
       if (base64Match) {
         return {
           fileName: `files_${defaultId}.zip`,
           fileType: 'application/zip',
-          content: base64Match[1].replace(/\s+/g, '')
+          content: base64Match[1].replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/')
         };
       }
 
       // Chuỗi Base64 thuần
-      const cleanStr = str.replace(/\s+/g, '');
-      if (cleanStr.length >= 20 && /^[A-Za-z0-9+/=]+$/.test(cleanStr)) {
-        return {
-          fileName: `files_${defaultId}.zip`,
-          fileType: 'application/zip',
-          content: cleanStr
-        };
+      const cleanStr = payloadText.replace(/\s+/g, '');
+      if (cleanStr.length >= 20 && /^[A-Za-z0-9+/_=-]+$/.test(cleanStr)) {
+        const normalized = cleanStr.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+        const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+        const canonical = Buffer.from(padded, 'base64').toString('base64').replace(/=+$/, '');
+        if (canonical === normalized) {
+          return {
+            fileName: `files_${defaultId}.zip`,
+            fileType: 'application/zip',
+            content: padded
+          };
+        }
       }
     }
 
@@ -762,7 +777,7 @@ export class TaxPortalClient {
   public async downloadHoSo(
     maHoSo: string,
     abortSignal?: AbortSignal,
-    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; altIds?: string[] }
+    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[] }
   ): Promise<DownloadResponsePayload> {
     const cleanId = maHoSo.trim();
     const isTdtPreferred = filingMeta?.isThueDienTu === true;
@@ -783,9 +798,9 @@ export class TaxPortalClient {
       for (let attempt = 1; attempt <= maxRateRetries; attempt++) {
         try {
           if (isTdtPreferred) {
-            return await this.downloadHoSoTdt(idVariants, filingMeta?.loaiTraCuu, abortSignal);
+            return await this.downloadHoSoTdt(idVariants, filingMeta?.loaiTraCuu, filingMeta?.maTkhai, abortSignal);
           }
-          return await this.downloadHoSoStandard(idVariants, abortSignal);
+          return await this.downloadHoSoStandard(idVariants, filingMeta?.maTkhai, abortSignal);
         } catch (primaryErr: any) {
           if (abortSignal?.aborted || primaryErr.code === 'CANCELLED' || primaryErr.code === 'SESSION_EXPIRED') {
             throw primaryErr;
@@ -810,10 +825,10 @@ export class TaxPortalClient {
           try {
             if (isTdtPreferred) {
               console.warn(`[TaxPortalClient] Nhánh TDT thất bại cho ID ${cleanId}, tự động fallback sang nhánh Standard: ${primaryErr.message}`);
-              return await this.downloadHoSoStandard(idVariants, abortSignal);
+              return await this.downloadHoSoStandard(idVariants, filingMeta?.maTkhai, abortSignal);
             }
             console.warn(`[TaxPortalClient] Nhánh Standard thất bại cho ID ${cleanId}, tự động fallback sang nhánh TDT: ${primaryErr.message}`);
-            return await this.downloadHoSoTdt(idVariants, filingMeta?.loaiTraCuu, abortSignal);
+            return await this.downloadHoSoTdt(idVariants, filingMeta?.loaiTraCuu, filingMeta?.maTkhai, abortSignal);
           } catch (fallbackErr: any) {
             if (abortSignal?.aborted || fallbackErr.code === 'CANCELLED' || fallbackErr.code === 'SESSION_EXPIRED') {
               throw fallbackErr;
@@ -845,6 +860,7 @@ export class TaxPortalClient {
   public async downloadHoSoTdt(
     idVariants: string[],
     loaiTraCuu?: string,
+    maTkhai?: string,
     abortSignal?: AbortSignal
   ): Promise<DownloadResponsePayload> {
     const primaryId = idVariants[0] || '';
@@ -894,7 +910,7 @@ export class TaxPortalClient {
             try {
               const response = await this.diagRequest('TDT-maHoSo', tldUrl, () => this.session.client.post(
                 tldUrl,
-                { maHoSo: variantId },
+                { maHoSo: variantId, ...(maTkhai ? { maTkhai } : {}) },
                 { signal: abortSignal, headers: baseHeaders, timeout: 7000, responseType: 'arraybuffer' }
               ));
               const payload = this.extractPayloadContent(response?.data, variantId);
@@ -912,7 +928,7 @@ export class TaxPortalClient {
             try {
               const response2 = await this.diagRequest('TDT-idTKhai', tldUrl, () => this.session.client.post(
                 tldUrl,
-                { idTKhai: variantId },
+                { idTKhai: variantId, ...(maTkhai ? { maTkhai } : {}) },
                 { signal: abortSignal, headers: baseHeaders, timeout: 5000, responseType: 'arraybuffer' }
               ));
               const payload2 = this.extractPayloadContent(response2?.data, variantId);
@@ -950,7 +966,7 @@ export class TaxPortalClient {
    * Nhánh Hồ Sơ Thường: POST /tthc/tchs/downloadhoso { maHoSo }
    * Tự động fallback qua các chiến lược payload khác nhau nếu cần.
    */
-  private async downloadHoSoStandard(idVariants: string[], abortSignal?: AbortSignal): Promise<DownloadResponsePayload> {
+  private async downloadHoSoStandard(idVariants: string[], maTkhai?: string, abortSignal?: AbortSignal): Promise<DownloadResponsePayload> {
     const maxAttempts = 2;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -979,7 +995,7 @@ export class TaxPortalClient {
           try {
             const res1 = await this.diagRequest('STD-maHoSo', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
               PORTAL_CONFIG.DOWNLOAD_API,
-              { maHoSo: variantId },
+              { maHoSo: variantId, ...(maTkhai ? { maTkhai } : {}) },
               {
                 signal: abortSignal,
                 timeout: 8000,
@@ -1003,7 +1019,7 @@ export class TaxPortalClient {
           try {
             const res2 = await this.diagRequest('STD-idTKhai', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
               PORTAL_CONFIG.DOWNLOAD_API,
-              { idTKhai: variantId },
+              { idTKhai: variantId, ...(maTkhai ? { maTkhai } : {}) },
               {
                 signal: abortSignal,
                 timeout: 7000,
@@ -1030,7 +1046,7 @@ export class TaxPortalClient {
           try {
             const formParams = new URLSearchParams();
             formParams.append('maHoSo', primaryId);
-            if (activeToken) formParams.append('_csrf', activeToken);
+            if (maTkhai) formParams.append('maTkhai', maTkhai);
 
             const res3 = await this.diagRequest('STD-form', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
               PORTAL_CONFIG.DOWNLOAD_API,
@@ -1148,7 +1164,9 @@ export class TaxPortalClient {
     const [zipResult, htmlResult] = await Promise.allSettled([
       this.downloadHoSo(cleanId, undefined, {
         isThueDienTu: filing.isThueDienTu,
-        loaiTraCuu: filing.loaiTraCuu
+        loaiTraCuu: filing.loaiTraCuu,
+        maTkhai: filing.maTkhai,
+        altIds: filing.altIds
       }),
       this.session.client.get(
         `${PORTAL_CONFIG.DETAIL_FILE_URL}/${cleanId}?loai=`,

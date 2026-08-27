@@ -63,8 +63,8 @@ const api = {
     ipcRenderer.invoke('paymentSlips:getDetail', params),
   exportPaymentSlipsExcel: (params: { paymentSlips: any[]; year: number }) =>
     ipcRenderer.invoke('paymentSlips:exportExcel', params),
-    exportPaymentSlipPdf: (params: { ctuId: string; customFilename?: string }) =>
-      ipcRenderer.invoke('paymentSlips:exportPdf', params),
+  exportPaymentSlipPdf: (params: { ctuId: string; soGnt?: string; maGiaoDich?: string; customFilename?: string }) =>
+    ipcRenderer.invoke('paymentSlips:exportPdf', params),
     getPaymentSlipsStatistics: (params: { paymentSlips: any[] }) =>
       ipcRenderer.invoke('paymentSlips:statistics', params),
   exportPaymentSlipsStatsExcel: (params: { stats: any; year: number }) =>

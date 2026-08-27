@@ -240,7 +240,9 @@ export class TaxFilingParser {
         status: item.trangThai || item.tenTrangThai || "\u0110\u00e3 ti\u1ebfp nh\u1eadn",
         downloadAvailable: true,
         isThueDienTu: item.isThueDienTu != null ? Boolean(item.isThueDienTu) : undefined,
-        loaiTraCuu: item.loaiTraCuu || undefined
+        loaiTraCuu: item.loaiTraCuu || undefined,
+        maTkhai: item.maTkhai || item.maTKhai || undefined,
+        altIds: Array.isArray(item.altIds) ? item.altIds.map((v: unknown) => String(v).trim()).filter(Boolean) : undefined
       });
     }
     return resolvePeriodSupplementalSequences(filings);
@@ -289,15 +291,19 @@ export class TaxFilingParser {
       const mTdt = rowHtml.match(/\b(G\d{2}\.\d{2}-\d{6}-\d{6,12})\b/);
       if (mTdt) idCandidates.push(mTdt[1]);
 
-      // Mã tờ khai (data-ma-tkhai trên nút thao tác, vd "842") — khóa phụ cho luồng tải
+      // Mã tờ khai (data-ma-tkhai trên nút thao tác, vd "842") là khóa phụ
+      // của luồng tải, không được trộn với mã số thuế vào danh sách ID.
       const $maTkhai = $tr.find("[data-ma-tkhai]").first();
-      if ($maTkhai.length) {
-        const maTkhai = ($maTkhai.attr("data-ma-tkhai") || "").trim();
-        if (maTkhai && /^\d+$/.test(maTkhai)) idCandidates.push(maTkhai);
-      }
+      const maTkhai = ($maTkhai.attr("data-ma-tkhai") || "").trim();
+      if (maTkhai && /^\d+$/.test(maTkhai)) idCandidates.push(maTkhai);
 
-      const m3 = rowHtml.match(/\b(\d{8,18})\b/);
-      if (m3) idCandidates.push(m3[1]);
+      // Chỉ dùng chuỗi số tổng quát khi dòng không có bất kỳ ID có cấu trúc
+      // nào. Bản HTML thật có cả MST và maTkhai; đưa MST vào altIds tạo thêm
+      // request sai và thường làm TNCN hết deadline trước khi tới khóa đúng.
+      if (idCandidates.length === 0) {
+        const m3 = rowHtml.match(/\b(\d{8,18})\b/);
+        if (m3) idCandidates.push(m3[1]);
+      }
 
       const uniqueIds = idCandidates.map(v => String(v).trim()).filter(Boolean)
         .filter((v, i, arr) => arr.indexOf(v) === i);
@@ -446,6 +452,7 @@ export class TaxFilingParser {
         downloadAvailable: true,
         isThueDienTu,
         loaiTraCuu,
+        maTkhai: maTkhai || undefined,
         altIds: altIds.length > 0 ? altIds : undefined
       });
     });

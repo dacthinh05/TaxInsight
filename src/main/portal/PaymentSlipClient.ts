@@ -813,8 +813,15 @@ export class PaymentSlipClient {
       });
 
       const html = String(res.data || '');
+      const responseKind = GdtResponseClassifier.classify(html);
+      if (responseKind === 'LOGIN_PAGE') {
+        const err = new Error('Phiên eTax đã hết hạn khi lấy chi tiết Giấy Nộp Tiền.');
+        Object.assign(err, { code: 'SESSION_EXPIRED' });
+      }
+      if (responseKind !== 'GNT_DETAIL') {
+        throw new Error(`eTax không trả về chứng từ GNT (response=${responseKind})`);
+      }
       const parsed = GntParser.parseDetail(html, ctuId);
-
       return {
         id: parsed.id,
         soGnt: parsed.gntNo,
@@ -897,11 +904,10 @@ export class PaymentSlipClient {
           this.detailCacheVerified.set(ctuId, match === true);
         }
         return detail;
-      } catch (err: any) {
-        const status = err.response?.status;
-        const body = String(err.response?.data || '').replace(/\s+/g, ' ').slice(0, 150);
-        console.warn(`[PaymentSlipClient] Lỗi khi lấy chi tiết GNT ${ctuId}: ${err.message}${status ? ` (HTTP ${status})` : ''}${body ? ` body="${body}"` : ''}`);
-        return null;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[PaymentSlipClient] Lỗi khi lấy chi tiết GNT ${ctuId}: ${message}`);
+        throw err;
       } finally {
         this.inFlightDetailRequests.delete(ctuId);
       }
@@ -970,9 +976,10 @@ export class PaymentSlipClient {
       try {
         console.log(`[PaymentSlipClient] Tự động tải tiếp trang ${page} danh sách Giấy Nộp Tiền...`);
         nextPageRes = await this.queryPaymentSlips({ range, page });
-      } catch (err: any) {
-        console.warn(`[PaymentSlipClient] Dừng phân trang tại trang ${page}: ${err.message}`);
-        break;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[PaymentSlipClient] Lỗi phân trang tại trang ${page}: ${message}`);
+        throw err;
       }
 
       if (!nextPageRes.success) {

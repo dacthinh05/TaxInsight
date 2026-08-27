@@ -695,21 +695,27 @@ export function setupIpcHandlers(
                 };
               })()
             `);
-
-            // Đảm bảo lấy JSESSIONID nếu có trong cookie
             const etaxCookies = await authWin.webContents.session.cookies.get({ domain: 'thuedientu.gdt.gov.vn' });
-            const jsession = etaxCookies.find(c => c.name.toLowerCase().includes('jsession'))?.value;
-            const finalSessionId = res?.sessionId || jsession || '';
 
-            if (finalSessionId) {
+            // JSESSIONID chỉ là cookie phiên HTTP, không phải dse_sessionId.
+            // Dùng nó làm DSE state khiến request query/detail gửi sai session,
+            // đặc biệt với GNT/TNCN sau khi cửa sổ eTax vừa mở.
+            const dseSessionId = res?.sessionId || '';
+            const etaxJsession = etaxCookies.find(c => c.name.toLowerCase().includes('jsession'))?.value;
+
+            if (dseSessionId) {
               // KHÔNG fallback processorId bằng 'corpQueryTaxProc' — đó là operationName,
               // không phải processorId. Truyền sai khiến mọi query GNT sau đó gửi
               // dse_processorId không hợp lệ và server trả trang lỗi.
               // Bỏ trống để PaymentSlipClient tự dùng hằng processorId mặc định của eTax.
-              paymentSlipClient.setManualSessionState(finalSessionId, res?.pageId || 12, res?.processorId || undefined);
+              paymentSlipClient.setManualSessionState(dseSessionId, res?.pageId || 12, res?.processorId || undefined);
+            } else if (etaxJsession) {
+              // Giữ cửa sổ mở để chờ form eTax render hidden dse_sessionId.
+              // Không được đóng thành công chỉ vì cookie JSESSIONID đã xuất hiện.
+              console.log('[paymentSlips:openAuthWindow] Đã vào eTax nhưng chưa có dse_sessionId; tiếp tục chờ trang truy vấn.');
             }
 
-            if (res && res.tableHtml && (res.tableHtml.includes('Giao dịch') || res.tableHtml.includes('chiTietCT') || res.tableHtml.includes('VND'))) {
+            if (dseSessionId && res && res.tableHtml && (res.tableHtml.includes('Giao dịch') || res.tableHtml.includes('chiTietCT') || res.tableHtml.includes('VND'))) {
               const gntRecords = GntParser.parseList(res.tableHtml);
               if (gntRecords.length > 0) {
                 hasClosed = true;
@@ -735,16 +741,16 @@ export function setupIpcHandlers(
                 }));
                 auditLogger.log('SUCCESS', `Trích xuất ${records.length} GNT và đồng bộ phiên eTax thành công`);
                 authWin.close();
-                resolve({ success: true, paymentSlips: records, sessionId: finalSessionId || 'SESSION_SYNCED' });
+                resolve({ success: true, paymentSlips: records, sessionId: dseSessionId });
                 return;
               }
             }
 
-            if (finalSessionId) {
+            if (dseSessionId) {
               hasClosed = true;
-              auditLogger.log('SUCCESS', 'Xác thực phiên eTax thành công qua cửa sổ trình duyệt', `Session: ${finalSessionId.slice(0, 6)}***`);
+              auditLogger.log('SUCCESS', 'Xác thực phiên eTax thành công qua cửa sổ trình duyệt', `Session: ${dseSessionId.slice(0, 6)}***`);
               authWin.close();
-              resolve({ success: true, sessionId: finalSessionId });
+              resolve({ success: true, sessionId: dseSessionId });
             }
           } catch {}
         };
@@ -812,9 +818,11 @@ export function setupIpcHandlers(
   ipcMain.handle('paymentSlips:getDetail', async (_event, { ctuId, soGnt, maGiaoDich }) => {
     try {
       const detail = await paymentSlipClient.getPaymentSlipDetail(ctuId, { soGnt, maGiaoDich });
-      return { success: true, detail };
-    } catch (err: any) {
-      return { success: false, error: err.message };
+      return detail
+        ? { success: true, detail }
+        : { success: false, error: `Không tìm thấy chi tiết Giấy Nộp Tiền ID ${ctuId}` };
+    } catch (err: unknown) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
@@ -835,9 +843,9 @@ export function setupIpcHandlers(
     }
   });
 
-  ipcMain.handle('paymentSlips:exportPdf', async (_event, { ctuId, customFilename }) => {
+  ipcMain.handle('paymentSlips:exportPdf', async (_event, { ctuId, soGnt, maGiaoDich, customFilename }) => {
     try {
-      const detail = await paymentSlipClient.getPaymentSlipDetail(ctuId);
+      const detail = await paymentSlipClient.getPaymentSlipDetail(ctuId, { soGnt, maGiaoDich });
       if (!detail) {
         throw new Error(`Không tìm thấy chi tiết Giấy Nộp Tiền ID ${ctuId}`);
       }

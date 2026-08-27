@@ -35,4 +35,10 @@ describe('Tax filing download payload decoding', () => {
     expect(result?.fileType).toBe('application/pdf');
     expect(result?.content).toBe(binary.toString('base64'));
   });
+  it('decodes quoted URL-safe Base64 returned by the portal', () => {
+    const base64 = 'UEsDBBQAAAAIAAAABAAAAA=';
+    const result = extract(JSON.stringify(base64.replace(/\+/g, '-').replace(/\//g, '_')));
+
+    expect(Buffer.from(result?.content || '', 'base64')).toEqual(Buffer.from(base64, 'base64'));
+  });
 });

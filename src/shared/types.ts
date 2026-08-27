@@ -40,8 +40,9 @@ export interface TaxFiling {
   rawDetailUrl?: string;
   downloadAvailable: boolean;
   // ─── GDT Download Branch Fields (từ trace thực tế) ───────────────────────
-  isThueDienTu?: boolean;   // data-is-thue-dien-tu: true → /downloadhoso-tdt, false → /downloadhoso
+  isThueDienTu?: boolean;   // data-is-tdt: Y → /downloadhoso-tdt, N → /downloadhoso
   loaiTraCuu?: string;      // Tham số loaiTraCuu khi isThueDienTu=true
+  maTkhai?: string;         // data-ma-tkhai trên nút thao tác của Cổng Thuế
   // Các dạng ID KHÁC xuất hiện trên cùng dòng hồ sơ (vd maHoSo ngắn "G12.18-..."
   // và mã tham chiếu dài "000.701.18.G12-..."). Luồng tải sẽ thử lần lượt từng
   // biến thể với cả 2 khóa maHoSo/idTKhai — trước đây chỉ giữ 1 ID nên nửa số

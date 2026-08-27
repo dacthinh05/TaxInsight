@@ -137,5 +137,28 @@ describe('TaxFilingParser & DOM Integrity', () => {
     expect(filings[0].taxType).toBe('PIT');
     expect(filings[0].declarationCode).toBe('05/KK-TNCN');
     expect(filings[0].isThueDienTu).toBe(true);
+    expect(filings[0].maTkhai).toBeUndefined();
+    expect(filings[0].altIds).toBeUndefined();
+  });
+  it('should keep the portal tax-form key without adding the taxpayer ID as a download variant', () => {
+    const html = `
+      <table><tbody><tr>
+        <td>1</td>
+        <td>
+          <i data-ma-tkhai="864" data-ma-ho-so="G12.18-260720-00118136" data-is-tdt="N"></i>
+        </td>
+        <td>G12.18-260720-00118136</td>
+        <td>2.002235 - Khai thuế thu nhập cá nhân</td>
+        <td>05/KK-TNCN - Tờ khai thuế thu nhập cá nhân</td>
+        <td>Q2/2026</td><td>Chính thức</td><td>0</td><td>1</td>
+        <td>Cơ quan thuế</td><td>20/07/2026</td><td>Đã chấp nhận</td>
+      </tr></tbody></table>
+    `;
+    const [filing] = TaxFilingParser.parseHtmlSearchResults(html);
+    expect(filing.id).toBe('G12.18-260720-00118136');
+    expect(filing.maTkhai).toBe('864');
+    expect(filing.altIds).toEqual(['864']);
+    expect(filing.altIds).not.toContain('3701415632');
+    expect(filing.isThueDienTu).toBe(false);
   });
 });
