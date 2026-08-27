@@ -87,7 +87,7 @@ async function main() {
                 if (r && r.draft) {
                   const updateData = JSON.stringify({
                     tag_name: 'v' + pkg.version,
-                    target_commitish: 'main',
+                    target_commitish: 'master',
                     draft: false,
                     name: 'TaxInsight v' + pkg.version,
                     body: 'Bản phát hành cập nhật tự động TaxInsight v' + pkg.version
