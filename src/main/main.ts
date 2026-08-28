@@ -66,7 +66,7 @@ function getOrCreateServices(initialDownloadDir: string): AppServices {
       captchaManager,
       fileOrganizer,
       scanEngine: new TaxScanEngine(client, captchaManager),
-      downloadManager: new DownloadManager(client, fileOrganizer),
+      downloadManager: new DownloadManager(client, fileOrganizer, legacyFilingClient),
       legacyFilingDownloader: new LegacyFilingDownloader(legacyFilingClient, fileOrganizer),
       legacyFilingWorkflow: new LegacyFilingLookupWorkflow(
         legacyFilingClient,

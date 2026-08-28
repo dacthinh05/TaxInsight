@@ -687,7 +687,28 @@ export class LegacyFilingClient {
 
           // Khớp kỳ tính thuế
           let periodMatches = false;
-          if (fPeriod && cleanPeriod && (fPeriod === cleanPeriod || fPeriod.includes(cleanPeriod) || cleanPeriod.includes(fPeriod))) {
+          const keyA = (() => {
+            const t = (f.period || f.periodNormalized?.raw || '').toLowerCase().replace(/[\s\-_/]/g, ' ');
+            const mm = t.match(/(?:thang|tháng|t|m)?\s*0?(\d{1,2})\s*(?:nam|năm)?\s*(20\d{2})/i);
+            if (mm && parseInt(mm[1], 10) >= 1 && parseInt(mm[1], 10) <= 12) return `M_${parseInt(mm[1], 10)}_${mm[2]}`;
+            const qm = t.match(/(?:quy|quý|q)\s*0?([1-4])\s*(?:nam|năm)?\s*(20\d{2})/i);
+            if (qm) return `Q_${qm[1]}_${qm[2]}`;
+            const ym = t.match(/(20\d{2})/);
+            return ym ? `Y_${ym[1]}` : t;
+          })();
+          const keyB = (() => {
+            const t = periodText.toLowerCase().replace(/[\s\-_/]/g, ' ');
+            const mm = t.match(/(?:thang|tháng|t|m)?\s*0?(\d{1,2})\s*(?:nam|năm)?\s*(20\d{2})/i);
+            if (mm && parseInt(mm[1], 10) >= 1 && parseInt(mm[1], 10) <= 12) return `M_${parseInt(mm[1], 10)}_${mm[2]}`;
+            const qm = t.match(/(?:quy|quý|q)\s*0?([1-4])\s*(?:nam|năm)?\s*(20\d{2})/i);
+            if (qm) return `Q_${qm[1]}_${qm[2]}`;
+            const ym = t.match(/(20\d{2})/);
+            return ym ? `Y_${ym[1]}` : t;
+          })();
+
+          if (keyA && keyB && keyA === keyB) {
+            periodMatches = true;
+          } else if (fPeriod && cleanPeriod && (fPeriod === cleanPeriod || fPeriod.includes(cleanPeriod) || cleanPeriod.includes(fPeriod))) {
             periodMatches = true;
           } else if (cleanPeriodDigits && fPeriodDigits && cleanPeriodDigits === fPeriodDigits) {
             // Cùng năm quyết toán (ví dụ 'Năm 2025' vs '2025' vs '00/2025')

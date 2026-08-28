@@ -114,10 +114,19 @@ export class VatAnalyticsEngine {
           } else if (stat.isFile() && dirName.toLowerCase().endsWith('.xml')) {
             // Hỗ trợ quét trực tiếp các file XML lưu ở thư mục gốc baseDir
             const cleanName = dirName.slice(0, -4);
+            map.set(cleanName, fullDirPath);
             const parts = cleanName.split('_');
-            const lastPart = parts[parts.length - 1];
-            if (lastPart && !map.has(lastPart)) {
-              map.set(lastPart, fullDirPath);
+            for (const part of parts) {
+              if (part && part.length >= 4 && !map.has(part)) {
+                map.set(part, fullDirPath);
+              }
+            }
+            const m = cleanName.match(/(?:Thang|tháng|Quy|quý|Nam|năm)[\s\-_]*0?(\d{1,2})[\s\-_]*(20\d{2})/i);
+            const isBS = cleanName.toLowerCase().includes('bosung') || cleanName.toLowerCase().includes('bs');
+            const bsNum = cleanName.match(/(?:bosung|bs)[\-_]?l?(\d+)/i)?.[1] || (isBS ? '1' : '0');
+            if (m) {
+              map.set(`M_${parseInt(m[1], 10)}_${m[2]}_${bsNum}`, fullDirPath);
+              if (bsNum === '0') map.set(`M_${parseInt(m[1], 10)}_${m[2]}`, fullDirPath);
             }
           }
         }
@@ -200,9 +209,21 @@ export class VatAnalyticsEngine {
         }
 
         // 3b. XML đã tải về máy qua đợt tải hàng loạt (kể cả phiên TRƯỚC) —
-        // tra cứu manifest .tax_manifest.json trên đĩa theo filingId
+        // tra cứu manifest .tax_manifest.json trên đĩa theo filingId / altIds / kỳ kê khai
         if (!snapshot) {
-          const manifestXml = this.loadManifestXmlPaths().get(filing.id);
+          const map = this.loadManifestXmlPaths();
+          let manifestXml = map.get(filing.id);
+          if (!manifestXml && filing.altIds) {
+            for (const alt of filing.altIds) {
+              if (map.has(alt)) { manifestXml = map.get(alt); break; }
+            }
+          }
+          if (!manifestXml) {
+            const rawPeriod = filing.period || filing.periodNormalized?.raw || '';
+            const norm = normalizeVatPeriod(rawPeriod, filing.submittedAt);
+            const bsNum = filing.filingType === 'SUPPLEMENTAL' ? String(filing.supplementalNo || 1) : '0';
+            manifestXml = map.get(`${norm.key}_${bsNum}`) || map.get(norm.key);
+          }
           if (
             manifestXml &&
             (!this.baseDir || isPathInsideBaseDir(this.baseDir, manifestXml)) &&
@@ -343,7 +364,7 @@ export class VatAnalyticsEngine {
         throw cancelErr;
       }
       try {
-        if (this.legacyClient && (filing.source === 'dvc-etax-html' || filing.messageId)) {
+        if (this.legacyClient && filing.source === 'dvc-etax-html') {
           if (filing.messageId) {
             const legacyFile = await this.legacyClient.downloadFiling(filing.messageId);
             return {
@@ -361,18 +382,8 @@ export class VatAnalyticsEngine {
             altIds: filing.altIds
           });
         } catch (dvcErr: any) {
-          if (dvcErr?.code === 'CANCELLED' || dvcErr?.code === 'SESSION_EXPIRED' || dvcErr?.code === 'RATE_LIMIT') {
-            throw dvcErr;
-          }
-          if (this.legacyClient && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
-            console.warn(`[VatAnalyticsEngine] DVC tải lỗi (${dvcErr?.message}), tự động fallback sang tra cứu eTax cho ID ${filing.id}`);
-            const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
-            return {
-              fileName: legacyFile.fileName,
-              fileType: legacyFile.contentType,
-              content: legacyFile.dataBuffer.toString('base64')
-            };
-          }
+          // Hồ sơ hiện hành phải giữ nguyên nguồn DVC; eTax chỉ dành cho
+          // các filing legacy đã được đánh dấu source=dvc-etax-html.
           throw dvcErr;
         }
       } catch (err: any) {

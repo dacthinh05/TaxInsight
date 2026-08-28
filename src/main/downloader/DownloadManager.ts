@@ -380,16 +380,11 @@ export class DownloadManager extends EventEmitter {
 
       let payload: any = null;
       try {
-        const isPitFiling =
-          item.filing.taxType === 'PIT' ||
-          (item.filing.declarationCode || '').includes('05/KK') ||
-          (item.filing.declarationCode || '').includes('05/QTT') ||
-          (item.filing.declarationCode || '').includes('TNCN') ||
-          (item.filing.title || '').toLowerCase().includes('thu nhập cá nhân') ||
-          (item.filing.title || '').toLowerCase().includes('tncn') ||
-          item.filing.source === 'dvc-etax-html';
+        // Chỉ hồ sơ được phát hiện từ luồng legacy mới dùng eTax cũ.
+        // Hồ sơ hiện hành (kể cả TNCN) phải tải chính trên DVC.
+        const isLegacyFiling = item.filing.source === 'dvc-etax-html';
 
-        if (isPitFiling && this.legacyClient) {
+        if (isLegacyFiling && this.legacyClient) {
           try {
             const legacyFile = item.filing.messageId
               ? await this.legacyClient.downloadFiling(item.filing.messageId, itemController.signal)
@@ -422,25 +417,9 @@ export class DownloadManager extends EventEmitter {
               }
             );
           } catch (dvcErr: any) {
-            if (this.legacyClient) {
-              try {
-                const legacyFile = await this.legacyClient.resolveAndDownloadFiling(
-                  this.taxCode,
-                  item.filing,
-                  itemController.signal
-                );
-                payload = {
-                  fileName: legacyFile.fileName,
-                  fileType: legacyFile.contentType,
-                  content: legacyFile.dataBuffer.toString('base64'),
-                  fileCount: 1
-                };
-              } catch {
-                throw dvcErr;
-              }
-            } else {
-              throw dvcErr;
-            }
+            // Hồ sơ hiện hành không được rơi sang eTax cũ: tránh tạo lỗi giả,
+            // request dư thừa và làm chậm toàn bộ batch.
+            throw dvcErr;
           }
         }
       } finally {

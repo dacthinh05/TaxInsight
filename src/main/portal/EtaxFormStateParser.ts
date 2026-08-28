@@ -262,13 +262,10 @@ export class EtaxFormStateParser {
       throw this.formChanged(`Sai operation màn hình tra cứu: ${state.dseOperationName}`);
     }
 
-    const periodType = searchParams.kieuKy || state.formValues.kieuKy;
-    if (!periodType) {
-      throw this.formChanged('Form eTax không cung cấp giá trị kieuKy hợp lệ');
-    }
+    const periodType = searchParams.kieuKy || state.formValues?.kieuKy || 'Q';
 
     const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(state.hiddenFields)) {
+    for (const [key, value] of Object.entries(state.hiddenFields || {})) {
       params.set(key, value);
     }
 
@@ -277,7 +274,7 @@ export class EtaxFormStateParser {
     params.set('dse_pageId', state.dsePageId);
     params.set('dse_operationName', state.dseOperationName);
     params.set('dse_processorState', state.dseProcessorState);
-    params.set('dse_processorId', state.dseProcessorId!);
+    if (state.dseProcessorId) params.set('dse_processorId', state.dseProcessorId);
     if (state.dseErrorPage) params.set('dse_errorPage', state.dseErrorPage);
     params.set('dse_nextEventName', searchParams.nextEventName || 'query');
 

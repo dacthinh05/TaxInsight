@@ -309,6 +309,43 @@ describe('Request avalanche and missing-XML regressions', () => {
     expect(getMock.mock.calls[1][1]).not.toHaveProperty('params');
   });
 
+  it('tries alternate DVC IDs when the primary search ID has no downloadable detail action', async () => {
+    const session = new PortalSession();
+    const postMock = vi.fn().mockResolvedValueOnce({
+      status: 200,
+      data: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x01, 0x02]),
+      headers: { 'content-type': 'application/zip' }
+    });
+    session.client.post = postMock;
+    session.client.get = vi.fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        data: '<html><head><meta name="_csrf" content="token"/></head><body>Không tìm thấy hồ sơ</body></html>',
+        headers: { 'content-type': 'text/html' }
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: detailHtml('G12.18-260720-00263029', false),
+        headers: { 'content-type': 'text/html' }
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: '200',
+        headers: { 'content-type': 'text/plain' }
+      });
+
+    const client = new TaxPortalClient(session);
+    const result = await client.downloadHoSo(
+      '000.701.18.G12-260720-27110000999999',
+      undefined,
+      { altIds: ['G12.18-260720-00263029'] }
+    );
+
+    expect(result.fileType).toBe('application/zip');
+    expect(postMock).toHaveBeenCalledTimes(1);
+    expect(postMock.mock.calls[0][1]).toEqual({ maHoSo: 'G12.18-260720-00263029' });
+  });
+
   it('does not confuse attachment metadata with the main filing download contract', async () => {
     const session = new PortalSession();
     const xml = '<?xml version="1.0"?><HSoThueDTu><maTKhai>864</maTKhai></HSoThueDTu>';

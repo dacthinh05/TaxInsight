@@ -12,6 +12,7 @@ import {
 import { PitXmlParser } from './PitXmlParser';
 import {
   normalizeVatPeriod,
+  parseFilingPeriod,
   parseSubmissionTimestamp,
   resolvePeriodSupplementalSequences
 } from '../../shared/dateUtils';
@@ -105,10 +106,19 @@ export class PitAnalyticsEngine {
           } else if (stat.isFile() && dirName.toLowerCase().endsWith('.xml')) {
             // Hỗ trợ quét trực tiếp các file XML lưu ở thư mục gốc baseDir
             const cleanName = dirName.slice(0, -4);
+            map.set(cleanName, fullDirPath);
             const parts = cleanName.split('_');
-            const lastPart = parts[parts.length - 1];
-            if (lastPart && !map.has(lastPart)) {
-              map.set(lastPart, fullDirPath);
+            for (const part of parts) {
+              if (part && part.length >= 4 && !map.has(part)) {
+                map.set(part, fullDirPath);
+              }
+            }
+            const m = cleanName.match(/(?:Thang|tháng|Quy|quý|Nam|năm)[\s\-_]*0?(\d{1,2})[\s\-_]*(20\d{2})/i);
+            const isBS = cleanName.toLowerCase().includes('bosung') || cleanName.toLowerCase().includes('bs');
+            const bsNum = cleanName.match(/(?:bosung|bs)[\-_]?l?(\d+)/i)?.[1] || (isBS ? '1' : '0');
+            if (m) {
+              map.set(`M_${parseInt(m[1], 10)}_${m[2]}_${bsNum}`, fullDirPath);
+              if (bsNum === '0') map.set(`M_${parseInt(m[1], 10)}_${m[2]}`, fullDirPath);
             }
           }
         }
@@ -193,9 +203,21 @@ export class PitAnalyticsEngine {
           } catch {}
         }
 
-        // 3b. Tra cứu manifest .tax_manifest.json trên đĩa theo filingId
+        // 3b. Tra cứu manifest .tax_manifest.json trên đĩa theo filingId / altIds / period
         if (!snapshot) {
-          const manifestXml = this.loadManifestXmlPaths().get(filing.id);
+          const map = this.loadManifestXmlPaths();
+          let manifestXml = map.get(filing.id);
+          if (!manifestXml && filing.altIds) {
+            for (const alt of filing.altIds) {
+              if (map.has(alt)) { manifestXml = map.get(alt); break; }
+            }
+          }
+          if (!manifestXml) {
+            const rawPeriod = filing.period || filing.periodNormalized?.raw || '';
+            const norm = normalizeVatPeriod(rawPeriod, filing.submittedAt);
+            const bsNum = filing.filingType === 'SUPPLEMENTAL' ? String(filing.supplementalNo || 1) : '0';
+            manifestXml = map.get(`${norm.key}_${bsNum}`) || map.get(norm.key);
+          }
           if (
             manifestXml &&
             (!this.baseDir || isPathInsideBaseDir(this.baseDir, manifestXml)) &&
@@ -402,7 +424,7 @@ export class PitAnalyticsEngine {
         throw cancelErr;
       }
       try {
-        if (this.legacyClient) {
+        if (this.legacyClient && filing.source === 'dvc-etax-html') {
           if (filing.messageId) {
             const legacyFile = await this.legacyClient.downloadFiling(filing.messageId);
             return {

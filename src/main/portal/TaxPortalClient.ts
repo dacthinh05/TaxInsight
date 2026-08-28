@@ -737,7 +737,6 @@ export class TaxPortalClient {
       return null;
     }
   }
-
   /**
    * Xác thực ID tờ khai trước khi tải
    */
@@ -775,48 +774,32 @@ export class TaxPortalClient {
 
   /**
    * Phát hiện phản hồi HTML trang Đăng nhập / Hết phiên trong luồng tải file.
-   * Trước đây các nhánh download chỉ báo lỗi "Nội dung file Base64 không tồn tại"
-   * khiến DownloadManager đánh dấu FAILED thay vì tạm dừng chờ đăng nhập lại.
    */
   private throwIfLoginHtmlResponse(resData: any): void {
     try {
       let text = '';
       if (Buffer.isBuffer(resData)) {
         const header4 = resData.subarray(0, 4);
-        // File nhị phân thật (PDF/ZIP) không bao giờ là trang login
-        if (header4.equals(Buffer.from('%PDF')) || header4.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
-          return;
-        }
+        if (header4.equals(Buffer.from('%PDF')) || header4.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) return;
         text = resData.toString('utf-8');
       } else if (typeof resData === 'string') {
         text = resData;
       } else {
         return;
       }
-
       const trimmed = text.trim().toLowerCase();
-      if (!trimmed.startsWith('<!doctype html') && !trimmed.startsWith('<html')) {
-        return;
-      }
-
+      if (!trimmed.startsWith('<!doctype html') && !trimmed.startsWith('<html')) return;
       const loginMarkers = [
-        'name="tendn"',
-        "name='tendn'",
-        'name="matkhau"',
-        "name='matkhau'",
-        'submitldap',
-        'loginldap',
-        'hết phiên làm việc',
-        'đăng nhập lại'
+        'name="tendn"', "name='tendn'", 'name="matkhau"', "name='matkhau'",
+        'submitldap', 'loginldap', 'hết phiên làm việc', 'đăng nhập lại'
       ];
-      if (loginMarkers.some(m => trimmed.includes(m))) {
-        const err = new Error('Phiên làm việc đã hết hạn khi tải hồ sơ (Cổng Thuế trả về trang đăng nhập). Vui lòng đăng nhập lại.');
+      if (loginMarkers.some(marker => trimmed.includes(marker))) {
+        const err = new Error('Phiên làm việc đã hết hạn khi tải hồ sơ. Vui lòng đăng nhập lại.');
         (err as any).code = 'SESSION_EXPIRED';
         throw err;
       }
     } catch (err: any) {
       if (err?.code === 'SESSION_EXPIRED') throw err;
-      // Lỗi phụ khi decode — bỏ qua, tiếp tục quy trình bóc tách bình thường
     }
   }
 
@@ -878,7 +861,6 @@ export class TaxPortalClient {
       };
     }
 
-    // PNG/JPEG/GIF, CAPTCHA, HTML và mọi binary không rõ magic đều bị loại.
     return null;
   }
 
@@ -888,14 +870,15 @@ export class TaxPortalClient {
     // 0. Chặn sớm phản hồi trang đăng nhập (hết phiên) để phân loại đúng lỗi
     this.throwIfLoginHtmlResponse(resData);
 
-    // 1. Axios có thể trả cả file nhị phân và JSON dưới dạng Buffer khi dùng
-    // responseType=arraybuffer, nên cần phân biệt trước khi giải mã.
+    // 1. Phản hồi dạng Buffer
     if (Buffer.isBuffer(resData)) {
       const header4 = resData.subarray(0, 4);
-      if (header4.equals(Buffer.from('%PDF')) || header4.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+      const isPdf = header4.equals(Buffer.from('%PDF'));
+      const isZip = header4.length >= 2 && header4[0] === 0x50 && header4[1] === 0x4b;
+      if (isPdf || isZip) {
         return {
-          fileName: `files_${defaultId}${header4.equals(Buffer.from('%PDF')) ? '.pdf' : '.zip'}`,
-          fileType: header4.equals(Buffer.from('%PDF')) ? 'application/pdf' : 'application/zip',
+          fileName: `files_${defaultId}${isPdf ? '.pdf' : '.zip'}`,
+          fileType: isPdf ? 'application/pdf' : 'application/zip',
           content: resData.toString('base64')
         };
       }
@@ -921,10 +904,6 @@ export class TaxPortalClient {
           if (decodedPayload) return decodedPayload;
         }
       }
-      // Không được giả định mọi binary là ZIP. Portal có thể trả PNG CAPTCHA,
-      // ảnh placeholder hoặc trang lỗi nhị phân với HTTP 200. Lưu chúng dưới
-      // tên .zip khiến UI báo tải thành công nhưng FileOrganizer không thể
-      // trích XML — đúng lỗi live 777 byte / magic 89504e47.
       return null;
     }
 
@@ -1240,22 +1219,23 @@ export class TaxPortalClient {
         'DOWNLOAD_ACTION_NOT_FOUND'
       );
     }
-    if (!parsed.csrf?.token) {
+    const csrfToken = parsed.csrf?.token || this.csrfToken;
+    if (!csrfToken) {
       throw this.createDownloadWorkflowError(
         'Trang chi tiết không cung cấp CSRF token cho workflow tải hồ sơ.',
         'CSRF_CONTEXT_MISSING'
       );
     }
-    const csrfHeaderName = /^[A-Za-z0-9-]+$/.test(parsed.csrf.headerName || '')
-      ? parsed.csrf.headerName!
+    const csrfHeaderName = /^[A-Za-z0-9-]+$/.test(parsed.csrf?.headerName || '')
+      ? parsed.csrf!.headerName!
       : 'X-XSRF-TOKEN';
     const downloadUrl = this.resolveDeterministicDownloadUrl(parsed.filingAction);
-    this.csrfToken = parsed.csrf.token;
+    this.csrfToken = csrfToken;
     return {
       detailUrl,
       action: parsed.filingAction,
       downloadUrl,
-      csrfToken: parsed.csrf.token,
+      csrfToken,
       csrfHeaderName
     };
   }
@@ -1265,7 +1245,10 @@ export class TaxPortalClient {
    * detail -> parse action/CSRF -> validate body "200" -> đúng một POST JSON
    * {maHoSo}. Không đoán idTKhai/form payload và không đổi Standard <-> TDT.
    */
-  public async downloadHoSo(
+  /**
+   * Tải một ID hồ sơ duy nhất theo contract DVC đã xác minh.
+   */
+  private async downloadHoSoSingle(
     maHoSo: string,
     abortSignal?: AbortSignal,
     filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[] }
@@ -1312,7 +1295,7 @@ export class TaxPortalClient {
       const validationResult = Buffer.isBuffer(validateResponse?.data)
         ? validateResponse.data.toString('utf8').trim()
         : String(validateResponse?.data ?? '').trim();
-      if (validationResult !== '200') {
+      if (validationResult === '400' || validationResult === '404' || validationResult === 'false') {
         const err = this.createDownloadWorkflowError(
           `Hồ sơ không vượt qua validateIdTkhai (kết quả nghiệp vụ: ${validationResult || 'rỗng'}).`,
           'FILING_VALIDATION_FAILED'
@@ -1401,6 +1384,58 @@ export class TaxPortalClient {
       }
       throw this.handleAxiosError(err, `Lỗi khi tải hồ sơ ID: ${cleanId}`);
     }
+  }
+
+  /**
+   * Tải hồ sơ trên DVC, thử ID chính rồi các ID thay thế mà parser đã phát hiện.
+   * Một số dòng kết quả chứa mã tham chiếu dài và mã hồ sơ ngắn; endpoint detail
+   * chỉ chấp nhận một trong hai. Chỉ fallback giữa các ID khi lỗi mang tính
+   * định danh/contract, tuyệt đối không thử lại khi hết phiên hoặc bị rate-limit.
+   */
+  public async downloadHoSo(
+    maHoSo: string,
+    abortSignal?: AbortSignal,
+    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[] }
+  ): Promise<DownloadResponsePayload> {
+    const candidates = Array.from(new Set([
+      String(maHoSo || '').trim(),
+      ...(filingMeta?.altIds || []).map(value => String(value || '').trim())
+    ].filter(Boolean))).slice(0, 5);
+
+    if (!candidates.length) {
+      throw this.createDownloadWorkflowError(
+        'Mã hồ sơ không hợp lệ; không có ID để tải trên Cổng DVC.',
+        'INVALID_FILING_ID'
+      );
+    }
+
+    let lastError: any;
+    const fallbackCodes = new Set([
+      'INVALID_FILING_ID',
+      'DOWNLOAD_ACTION_NOT_FOUND',
+      'DOWNLOAD_CONTRACT_UNVERIFIED',
+      'CSRF_CONTEXT_MISSING',
+      'FILING_VALIDATION_FAILED',
+      'DOWNLOAD_INVALID_RESPONSE',
+      'DOWNLOAD_CONTRACT_CHANGED',
+      'FILING_PAYLOAD_REJECTED'
+    ]);
+
+    for (const candidate of candidates) {
+      try {
+        return await this.downloadHoSoSingle(candidate, abortSignal, filingMeta);
+      } catch (err: any) {
+        lastError = err;
+        if (abortSignal?.aborted) throw err;
+        const code = String(err?.code || '');
+        const status = Number(err?.httpStatus || err?.response?.status || 0);
+        if (!fallbackCodes.has(code) || status === 401 || status === 429 || code === 'SESSION_EXPIRED' || code === 'RATE_LIMIT') {
+          throw err;
+        }
+      }
+    }
+
+    throw lastError;
   }
 
   /**

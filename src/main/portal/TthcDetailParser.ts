@@ -77,11 +77,27 @@ export class TthcDetailParser {
     const attachments: Array<Extract<DownloadAction, { kind: 'attachment' }>> = [];
     let filingAction: Extract<DownloadAction, { kind: 'filing' }> | undefined;
 
-    $('[onclick]').each((_, element) => {
+    $('[onclick], [data-mahoso], [data-ma-hoso], [data-ma-hs], [data-id]').each((_, element) => {
       const $element = $(element);
       const onclick = ($element.attr('onclick') || '').replace(/\s+/g, ' ').trim();
-      const isFiling = /^downloadHoSo\s*\(\s*this\s*\)\s*;?\s*(?:return\s+false\s*;?)?$/i.test(onclick);
-      const isNotice = /^downloadThongBao\s*\(\s*this\s*\)\s*;?\s*(?:return\s+false\s*;?)?$/i.test(onclick);
+      const href = ($element.attr('href') || '').replace(/\s+/g, ' ').trim();
+      const idAttr = ($element.attr('id') || '').toLowerCase();
+      const classAttr = ($element.attr('class') || '').toLowerCase();
+
+      const isFiling =
+        /^(?:downloadHoSo|downloadhoso|taiHoSo|taiToKhai|downTkhai|downTKhai)\b/i.test(onclick) ||
+        /^(?:javascript:)?(?:downloadHoSo|downloadhoso|taiHoSo|taiToKhai)\b/i.test(href) ||
+        idAttr.includes('downloadhoso') ||
+        idAttr.includes('btndownload') ||
+        classAttr.includes('btn-download-hoso') ||
+        Boolean($element.attr('data-mahoso') || $element.attr('data-ma-hoso'));
+
+      const isNotice =
+        /^(?:downloadThongBao|downloadthongbao|taiThongBao)\b/i.test(onclick) ||
+        /^(?:javascript:)?(?:downloadThongBao|downloadthongbao)\b/i.test(href) ||
+        idAttr.includes('downloadthongbao') ||
+        classAttr.includes('btn-download-tbao');
+
       if (!isFiling && !isNotice) return;
 
       const isThueDienTu = this.parseBooleanAttribute(
@@ -97,11 +113,20 @@ export class TthcDetailParser {
       ]);
 
       if (isFiling) {
-        const maHoSo = this.firstAttribute($element, [
+        let maHoSo = this.firstAttribute($element, [
           'data-mahoso',
           'data-ma-hoso',
-          'data-ma-hs'
+          'data-ma-hs',
+          'data-id',
+          'data-hoso',
+          'data-ma'
         ]);
+        if (!maHoSo && onclick) {
+          const argMatch = onclick.match(/(?:downloadHoSo|downloadhoso|taiHoSo|downTkhai)\s*\(\s*(?:this\s*,\s*)?['"]?([A-Za-z0-9._-]+)['"]?/i);
+          if (argMatch && argMatch[1] !== 'this') {
+            maHoSo = argMatch[1];
+          }
+        }
         if (!filingAction && maHoSo && this.isSafeIdentifier(maHoSo)) {
           filingAction = {
             kind: 'filing',
