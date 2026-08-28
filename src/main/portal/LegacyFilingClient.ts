@@ -702,10 +702,18 @@ export class LegacyFilingClient {
             codeMatches = true;
           } else if (fCode && cleanCode && (
             fCode === cleanCode ||
+            fCode.includes(cleanCode) ||
+            cleanCode.includes(fCode) ||
             (fCode.includes('05') && cleanCode.includes('05')) ||
             (fCode.includes('tncn') && cleanCode.includes('tncn')) ||
             (fCode.includes('gtgt') && cleanCode.includes('gtgt')) ||
-            (fCode.includes('01') && cleanCode.includes('01'))
+            (fCode.includes('01') && cleanCode.includes('01')) ||
+            (fCode.includes('02') && cleanCode.includes('02')) ||
+            (fCode.includes('03') && cleanCode.includes('03')) ||
+            (fCode.includes('04') && cleanCode.includes('04')) ||
+            (fCode.includes('tndn') && cleanCode.includes('tndn')) ||
+            (fCode.includes('bc26') && cleanCode.includes('bc26')) ||
+            (fCode.includes('hoa don') && cleanCode.includes('hoa don'))
           )) {
             codeMatches = true;
           } else if (f.taxType && filing.taxType && f.taxType === filing.taxType) {

@@ -422,7 +422,7 @@ export class DownloadManager extends EventEmitter {
               }
             );
           } catch (dvcErr: any) {
-            if (this.legacyClient && !isPitFiling) {
+            if (this.legacyClient) {
               try {
                 const legacyFile = await this.legacyClient.resolveAndDownloadFiling(
                   this.taxCode,
@@ -656,7 +656,15 @@ export class DownloadManager extends EventEmitter {
       'id tkhai khong hop le',
       'invalid filing',
       'invalid dossier',
-      'download failed'
+      'download failed',
+      'download_action_not_found',
+      'filing_validation_failed',
+      'download_invalid_response',
+      'khong vuot qua validateidtkhai',
+      'khong nhan duoc noi dung',
+      'khong tim thay file',
+      'khong tim thay action',
+      'khong tim thay to khai'
     ].some(marker => diagnosticText.includes(marker));
   }
 
