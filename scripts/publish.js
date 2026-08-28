@@ -85,24 +85,46 @@ async function main() {
                 const releases = JSON.parse(data);
                 const r = releases.find(rel => rel.tag_name === 'v' + pkg.version);
                 if (r && r.draft) {
-                  const updateData = JSON.stringify({
-                    draft: false,
-                    name: 'TaxInsight v' + pkg.version,
-                    body: 'Bản phát hành cập nhật tự động TaxInsight v' + pkg.version
-                  });
-                  const patchReq = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/releases/${r.id}`, {
-                    method: 'PATCH',
-                    headers: {
-                      'User-Agent': 'NodeJS-Publisher',
-                      'Authorization': `token ${token}`,
-                      'Content-Type': 'application/json'
-                    }
-                  }, (patchRes) => {
-                    console.log('    -> Trang thai Public Release:', patchRes.statusCode === 200 ? 'THANH CONG (200 OK)' : patchRes.statusCode);
-                    patchResolve();
-                  });
-                  patchReq.write(updateData);
-                  patchReq.end();
+                  const doPatch = (onDone) => {
+                    const updateData = JSON.stringify({
+                      draft: false,
+                      name: 'TaxInsight v' + pkg.version,
+                      body: 'Bản phát hành cập nhật tự động TaxInsight v' + pkg.version
+                    });
+                    const patchReq = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/releases/${r.id}`, {
+                      method: 'PATCH',
+                      headers: {
+                        'User-Agent': 'NodeJS-Publisher',
+                        'Authorization': `token ${token}`,
+                        'Content-Type': 'application/json'
+                      }
+                    }, (patchRes) => {
+                      if (patchRes.statusCode === 422) {
+                        // Xóa tag xung đột trên remote rồi thử lại 1 lần
+                        const delTagReq = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/git/refs/tags/v${pkg.version}`, {
+                          method: 'DELETE',
+                          headers: { 'User-Agent': 'NodeJS-Publisher', 'Authorization': `token ${token}` }
+                        }, () => {
+                          const retryPatch = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/releases/${r.id}`, {
+                            method: 'PATCH',
+                            headers: { 'User-Agent': 'NodeJS-Publisher', 'Authorization': `token ${token}`, 'Content-Type': 'application/json' }
+                          }, (rRes) => {
+                            console.log('    -> Trang thai Public Release (sau khi clear tag):', rRes.statusCode === 200 ? 'THANH CONG (200 OK)' : rRes.statusCode);
+                            onDone();
+                          });
+                          retryPatch.write(updateData);
+                          retryPatch.end();
+                        });
+                        delTagReq.end();
+                      } else {
+                        console.log('    -> Trang thai Public Release:', patchRes.statusCode === 200 ? 'THANH CONG (200 OK)' : patchRes.statusCode);
+                        onDone();
+                      }
+                    });
+                    patchReq.write(updateData);
+                    patchReq.end();
+                  };
+                  doPatch(patchResolve);
                 } else {
                   patchResolve();
                 }
