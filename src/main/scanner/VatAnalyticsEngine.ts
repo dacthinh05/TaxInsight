@@ -2,6 +2,7 @@ import AdmZip from 'adm-zip';
 import fs from 'fs';
 import path from 'path';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
+import { LegacyFilingClient } from '../portal/LegacyFilingClient';
 import { TaxFiling } from '../../shared/types';
 import {
   normalizeVatPeriod,
@@ -21,6 +22,7 @@ import { isPathInsideBaseDir } from '../persistence/pathConfinement';
 
 export class VatAnalyticsEngine {
   private client: TaxPortalClient;
+  private legacyClient?: LegacyFilingClient;
   private memoryCache = new Map<string, VatDeclarationSnapshot>();
   private isCancelled = false;
   private baseDir = '';
@@ -28,9 +30,10 @@ export class VatAnalyticsEngine {
   // filingId -> xmlPath (gom từ TẤT CẢ manifest .tax_manifest.json của MST trên đĩa)
   private manifestXmlPaths: Map<string, string> | null = null;
 
-  constructor(client: TaxPortalClient, baseDir = '') {
+  constructor(client: TaxPortalClient, baseDir = '', legacyClient?: LegacyFilingClient) {
     this.client = client;
     this.baseDir = baseDir;
+    this.legacyClient = legacyClient;
   }
 
   public setBaseDir(baseDir: string) {
@@ -56,6 +59,27 @@ export class VatAnalyticsEngine {
         const baseTaxCode = this.taxpayerPrefix().trim();
         const safeTaxCode = rawTaxCode.replace(/[^a-zA-Z0-9_-]/g, '_');
 
+        // 1. Quét manifest ở thư mục gốc baseDir (cho cấu trúc lưu chung 1 thư mục)
+        const rootManifests = [
+          path.join(this.baseDir, `.tax_manifest_${rawTaxCode}.json`),
+          path.join(this.baseDir, `.tax_manifest_${safeTaxCode}.json`),
+          path.join(this.baseDir, `.tax_manifest_${baseTaxCode}.json`),
+          path.join(this.baseDir, '.tax_manifest.json')
+        ];
+        for (const mfPath of rootManifests) {
+          if (fs.existsSync(mfPath)) {
+            try {
+              const raw = JSON.parse(fs.readFileSync(mfPath, 'utf-8'));
+              for (const [filingId, entry] of Object.entries<any>(raw || {})) {
+                if (entry?.xmlPath && fs.existsSync(entry.xmlPath)) {
+                  map.set(filingId, entry.xmlPath);
+                }
+              }
+            } catch {}
+          }
+        }
+
+        // 2. Quét các thư mục con và file XML trong baseDir
         for (const dirName of fs.readdirSync(this.baseDir)) {
           const fullDirPath = path.join(this.baseDir, dirName);
           let stat: fs.Stats | null = null;
@@ -132,9 +156,10 @@ export class VatAnalyticsEngine {
     // các kỳ trước rơi vào fallback toàn số 0 một cách ÂM THẦM.
     const concurrency = 2;
     let completedCount = 0;
+    let stopForInfrastructure = false;
 
     for (let i = 0; i < total; i += concurrency) {
-      if (this.isCancelled) break;
+      if (this.isCancelled || stopForInfrastructure) break;
       const batch = vatFilings.slice(i, i + concurrency);
 
       const batchPromises = batch.map(async filing => {
@@ -217,6 +242,12 @@ export class VatAnalyticsEngine {
             }
           } catch (dlErr: any) {
             if (dlErr?.code === 'CANCELLED') this.isCancelled = true;
+            if (
+              ['RATE_LIMIT', 'SESSION_EXPIRED'].includes(String(dlErr?.code || '')) ||
+              Number(dlErr?.httpStatus || dlErr?.response?.status || 0) === 429
+            ) {
+              stopForInfrastructure = true;
+            }
             failedXmlDetails.push({
               submissionId: filing.id,
               periodLabel: filing.period || filing.periodNormalized?.raw || '',
@@ -289,6 +320,11 @@ export class VatAnalyticsEngine {
           `Đã phân tích nhanh ${Math.min(completedCount, total)}/${total} tờ khai GTGT…`
         );
       }
+
+      if (i + concurrency < total && !this.isCancelled) {
+        if (stopForInfrastructure) break;
+        await new Promise(r => setTimeout(r, 250));
+      }
     }
 
     return VatAnalyticsEngine.buildSummaryFromSnapshots(vatFilings, snapshots, taxpayerId, failedXmlDetails);
@@ -307,16 +343,42 @@ export class VatAnalyticsEngine {
         throw cancelErr;
       }
       try {
-        return await this.client.downloadHoSo(filing.id, undefined, {
-          isThueDienTu: filing.isThueDienTu,
-          loaiTraCuu: filing.loaiTraCuu,
-          maTkhai: filing.maTkhai,
-          altIds: filing.altIds
-        });
+        if (this.legacyClient && (filing.source === 'dvc-etax-html' || filing.messageId)) {
+          if (filing.messageId) {
+            const legacyFile = await this.legacyClient.downloadFiling(filing.messageId);
+            return {
+              fileName: legacyFile.fileName,
+              fileType: legacyFile.contentType,
+              content: legacyFile.dataBuffer.toString('base64')
+            };
+          }
+        }
+        try {
+          return await this.client.downloadHoSo(filing.id, undefined, {
+            isThueDienTu: filing.isThueDienTu,
+            loaiTraCuu: filing.loaiTraCuu,
+            maTkhai: filing.maTkhai,
+            altIds: filing.altIds
+          });
+        } catch (dvcErr: any) {
+          if (dvcErr?.code === 'CANCELLED' || dvcErr?.code === 'SESSION_EXPIRED' || dvcErr?.code === 'RATE_LIMIT') {
+            throw dvcErr;
+          }
+          if (this.legacyClient && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
+            console.warn(`[VatAnalyticsEngine] DVC tải lỗi (${dvcErr?.message}), tự động fallback sang tra cứu eTax cho ID ${filing.id}`);
+            const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
+            return {
+              fileName: legacyFile.fileName,
+              fileType: legacyFile.contentType,
+              content: legacyFile.dataBuffer.toString('base64')
+            };
+          }
+          throw dvcErr;
+        }
       } catch (err: any) {
         lastErr = err;
         if (err?.code === 'CANCELLED' || err?.code === 'SESSION_EXPIRED') throw err;
-        const isTransient = err?.code === 'RATE_LIMIT' || err?.code === 'TIMEOUT' || err?.code === 'NETWORK';
+        const isTransient = err?.code === 'TIMEOUT' || err?.code === 'NETWORK';
         if (isTransient && attempt < maxRetries) {
           await new Promise(r => setTimeout(r, 2000 * attempt + Math.random() * 500));
           continue;

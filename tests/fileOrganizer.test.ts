@@ -123,4 +123,45 @@ describe('FileOrganizer', () => {
     expect(result.pdfPath).toBeDefined();
     expect(fs.existsSync(result.pdfPath!)).toBe(true);
   });
+
+  it('keeps different filings in one folder without overwriting identical ZIP entry names', () => {
+    const makeZip = (xml: string): string => {
+      const zip = new AdmZip();
+      zip.addFile('ToKhai.xml', Buffer.from(xml, 'utf-8'));
+      return zip.toBuffer().toString('base64');
+    };
+    const common: Omit<TaxFiling, 'id'> = {
+      title: 'Tờ khai thuế TNCN',
+      taxType: 'PIT',
+      declarationCode: '05/KK-TNCN',
+      period: 'Tháng 01/2025',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+    const filingA: TaxFiling = { ...common, id: 'G12.18-260720-00000001' };
+    const filingB: TaxFiling = { ...common, id: 'G12.18-260720-00000002' };
+
+    const resultA = organizer.saveExtractedFiling(
+      makeZip('<?xml version="1.0"?><TNCN><id>A</id></TNCN>'),
+      filingA,
+      '3801157216',
+      2025
+    );
+    const resultB = organizer.saveExtractedFiling(
+      makeZip('<?xml version="1.0"?><TNCN><id>B</id></TNCN>'),
+      filingB,
+      '3801157216',
+      2025
+    );
+
+    expect(path.dirname(resultA.xmlPath!)).toBe(tempDir);
+    expect(path.dirname(resultB.xmlPath!)).toBe(tempDir);
+    expect(resultA.xmlPath).not.toBe(resultB.xmlPath);
+    expect(path.basename(resultA.xmlPath!)).toContain('G12.18-260720-00000001');
+    expect(path.basename(resultB.xmlPath!)).toContain('G12.18-260720-00000002');
+    expect(fs.readFileSync(resultA.xmlPath!, 'utf-8')).toContain('<id>A</id>');
+    expect(fs.readFileSync(resultB.xmlPath!, 'utf-8')).toContain('<id>B</id>');
+    expect(organizer.checkPreDownloadStatus('3801157216', filingA, 2025).isAlreadyDownloaded).toBe(true);
+    expect(organizer.checkPreDownloadStatus('3801157216', filingB, 2025).isAlreadyDownloaded).toBe(true);
+  });
 });

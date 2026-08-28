@@ -34,13 +34,7 @@ export const AdminPinModal: React.FC<AdminPinModalProps> = ({ isOpen, onClose, o
           setError(res?.error || 'Mã PIN quản trị không chính xác.');
         }
       } else {
-        // Fallback kiểm tra client-side
-        if (['admin', '888888', 'taxinsight@admin2026', '686868'].includes(pin.trim().toLowerCase())) {
-          onSuccess();
-          onClose();
-        } else {
-          setError('Mã PIN quản trị không chính xác.');
-        }
+        setError('Kênh xác thực quản trị không khả dụng.');
       }
     } catch (err: any) {
       setError(err?.message || 'Có lỗi khi xác thực PIN.');
@@ -91,7 +85,7 @@ export const AdminPinModal: React.FC<AdminPinModalProps> = ({ isOpen, onClose, o
                 setPin(e.target.value);
                 if (error) setError(null);
               }}
-              placeholder="Nhập mã PIN (Mặc định: admin)..."
+              placeholder="Nhập mã PIN quản trị..."
               className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-sm font-mono text-white placeholder-slate-500 focus:outline-hidden focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
             />
           </div>
@@ -102,10 +96,6 @@ export const AdminPinModal: React.FC<AdminPinModalProps> = ({ isOpen, onClose, o
               <span>{error}</span>
             </div>
           )}
-
-          <div className="p-2.5 rounded-lg bg-slate-950/50 border border-slate-800 text-[11px] text-slate-400">
-            💡 Gợi ý nhanh cho Admin/Kỹ thuật: Mã PIN mặc định là <code className="text-teal-300 font-mono font-bold">admin</code> hoặc <code className="text-teal-300 font-mono font-bold">888888</code>.
-          </div>
 
           {/* Buttons */}
           <div className="flex items-center justify-end space-x-2 pt-2">

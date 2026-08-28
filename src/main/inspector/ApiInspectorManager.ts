@@ -1,5 +1,4 @@
-import fs from 'fs';
-import path from 'path';
+import crypto from 'crypto';
 import { AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { app } from 'electron';
 import { AdminAuthStatus, ApiInspectorEntry, ApiInspectorModule } from '../../shared/types';
@@ -11,50 +10,19 @@ export class ApiInspectorManager {
   private sendToRendererCallback: ((channel: string, data: any) => void) | null = null;
   private adminUnlocked = false;
   private adminUnlockedAt?: string;
-  private adminConfigPath: string = '';
 
   private constructor() {
-    try {
-      if (app && app.getPath) {
-        this.adminConfigPath = path.join(app.getPath('userData'), 'admin_device_config.json');
-        if (fs.existsSync(this.adminConfigPath)) {
-          const config = JSON.parse(fs.readFileSync(this.adminConfigPath, 'utf-8'));
-          if (config?.isDeviceAdmin) {
-            this.adminUnlocked = true;
-            this.adminUnlockedAt = config.unlockedAt || new Date().toISOString();
-          }
-        }
-      }
-    } catch {}
-
-    // Tự động mở quyền Admin vĩnh viễn trên máy hiện tại và môi trường Development
-    if ((app && !app.isPackaged) || process.env.NODE_ENV !== 'production' || !this.adminUnlocked) {
+    // Chỉ môi trường phát triển được tự mở Inspector. Bản packaged luôn khóa
+    // lại sau mỗi lần khởi động, không tin file JSON có thể bị sửa trên đĩa.
+    if (
+      (app && !app.isPackaged) ||
+      process.env.NODE_ENV === 'development' ||
+      process.env.NODE_ENV === 'test' ||
+      Boolean(process.env.VITEST)
+    ) {
       this.adminUnlocked = true;
       this.adminUnlockedAt = new Date().toISOString();
-      this.persistAdminDevice();
     }
-  }
-
-  private persistAdminDevice(): void {
-    try {
-      if (this.adminConfigPath) {
-        const dir = path.dirname(this.adminConfigPath);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(
-          this.adminConfigPath,
-          JSON.stringify(
-            {
-              isDeviceAdmin: true,
-              unlockedAt: this.adminUnlockedAt || new Date().toISOString(),
-              machineName: process.env.COMPUTERNAME || 'ADMIN_WORKSTATION'
-            },
-            null,
-            2
-          ),
-          'utf-8'
-        );
-      }
-    } catch {}
   }
 
   public static getInstance(): ApiInspectorManager {
@@ -73,19 +41,34 @@ export class ApiInspectorManager {
    */
   public verifyAdminPin(pin: string): { success: boolean; error?: string } {
     const cleanPin = (pin || '').trim();
-    // Chấp nhận các mã PIN quản trị chuẩn và PIN khẩn cấp
-    const validPins = ['admin', '888888', 'taxinsight@admin2026', '686868', '123456'];
-    if (validPins.includes(cleanPin.toLowerCase()) || validPins.includes(cleanPin)) {
+    const isDev =
+      (app && !app.isPackaged) ||
+      process.env.NODE_ENV === 'development' ||
+      process.env.NODE_ENV === 'test' ||
+      Boolean(process.env.VITEST);
+    const configuredHash = String(process.env.TAXINSIGHT_ADMIN_PIN_SHA256 || '').trim().toLowerCase();
+    const expectedHash = configuredHash || (isDev
+      ? crypto.createHash('sha256').update('admin', 'utf8').digest('hex')
+      : '');
+    if (!expectedHash || !/^[a-f0-9]{64}$/.test(expectedHash)) {
+      return { success: false, error: 'Inspector chưa được cấu hình PIN quản trị trên bản phát hành này.' };
+    }
+    const actualHash = crypto.createHash('sha256').update(cleanPin, 'utf8').digest('hex');
+    const valid = crypto.timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'));
+    if (valid) {
       this.adminUnlocked = true;
       this.adminUnlockedAt = new Date().toISOString();
-      this.persistAdminDevice();
       return { success: true };
     }
     return { success: false, error: 'Mã PIN quản trị viên không chính xác.' };
   }
 
   public getAdminStatus(): AdminAuthStatus {
-    const isDev = (app && !app.isPackaged) || process.env.NODE_ENV !== 'production';
+    const isDev =
+      (app && !app.isPackaged) ||
+      process.env.NODE_ENV === 'development' ||
+      process.env.NODE_ENV === 'test' ||
+      Boolean(process.env.VITEST);
     return {
       isAdmin: this.adminUnlocked || Boolean(isDev),
       isDev: Boolean(isDev),
@@ -124,13 +107,36 @@ export class ApiInspectorManager {
    */
   public formatEndpoint(url: string): string {
     try {
-      if (url.startsWith('http://') || url.startsWith('https://')) {
-        const parsed = new URL(url);
+      const safeUrl = this.sanitizeUrl(url);
+      if (safeUrl.startsWith('http://') || safeUrl.startsWith('https://')) {
+        const parsed = new URL(safeUrl);
         return parsed.pathname + (parsed.search ? parsed.search : '');
       }
-      return url;
+      return safeUrl;
     } catch {
-      return url;
+      return this.sanitizeText(url);
+    }
+  }
+
+  private isSensitiveKey(key: string): boolean {
+    return /matkhau|password|pwd|secret|authkey|captcha|token|cookie|csrf|xsrf|licensekey|sessionid|dse_session|authorization|vnconnect|sso.?code|^code$/i.test(key);
+  }
+
+  private sanitizeUrl(value: string): string {
+    const raw = String(value || '');
+    try {
+      const parsed = new URL(raw, 'https://taxinsight.invalid');
+      for (const key of Array.from(parsed.searchParams.keys())) {
+        if (this.isSensitiveKey(key)) {
+          parsed.searchParams.set(key, '******');
+        }
+      }
+      const relativeInput = !/^https?:\/\//i.test(raw);
+      return relativeInput
+        ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+        : parsed.toString();
+    } catch {
+      return this.sanitizeText(raw);
     }
   }
 
@@ -144,7 +150,7 @@ export class ApiInspectorManager {
         const parsed = JSON.parse(data);
         return this.sanitizeData(parsed);
       } catch {
-        return data.replace(/(matKhau|password|pwd|secret)=([^&]+)/gi, '$1=******');
+        return this.sanitizeText(data);
       }
     }
     if (typeof data === 'object') {
@@ -153,10 +159,12 @@ export class ApiInspectorManager {
       }
       const sanitized: Record<string, any> = {};
       for (const [key, value] of Object.entries(data)) {
-        if (/matkhau|password|pwd|secret|authkey/i.test(key)) {
+        if (this.isSensitiveKey(key)) {
           sanitized[key] = '******';
         } else if (typeof value === 'object') {
           sanitized[key] = this.sanitizeData(value);
+        } else if (typeof value === 'string') {
+          sanitized[key] = this.sanitizeText(value);
         } else {
           sanitized[key] = value;
         }
@@ -166,20 +174,54 @@ export class ApiInspectorManager {
     return data;
   }
 
+  private sanitizeText(value: string): string {
+    return String(value)
+      .replace(
+        /(matKhau|password|pwd|secret|authkey|captcha|maXacNhan|token|cookie|csrf|xsrf|licenseKey|dse_sessionId|JSESSIONID|vnconnect|code)=([^&\s"']+)/gi,
+        '$1=******'
+      )
+      .replace(
+        /(name=["'](?:dse_sessionId|_csrf|csrf|xsrf|token|vnconnect|code)["'][^>]*value=["'])[^"']+(["'])/gi,
+        '$1******$2'
+      )
+      .replace(
+        /(value=["'])[^"']+(["'][^>]*name=["'](?:dse_sessionId|_csrf|csrf|xsrf|token|vnconnect|code)["'])/gi,
+        '$1******$2'
+      )
+      .replace(
+        /(["'](?:dse_sessionId|_csrf|csrf|xsrf|token|vnconnect|code)["']\s*:\s*["'])[^"']+(["'])/gi,
+        '$1******$2'
+      )
+      .replace(/((?:Bearer|Basic)\s+)[a-z0-9._~+/=-]+/gi, '$1******');
+  }
+
+  private sanitizeHeaders(headers: unknown): Record<string, string> {
+    if (!headers || typeof headers !== 'object') return {};
+    const sanitized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+      sanitized[key] = /authorization|cookie|token|csrf|xsrf|secret|api[-_]?key/i.test(key)
+        ? '******'
+        : typeof value === 'string'
+          ? this.sanitizeText(value)
+          : String(value ?? '');
+    }
+    return sanitized;
+  }
+
   /**
    * Tạo lệnh cURL chuẩn từ request config
    */
   public generateCurl(config: InternalAxiosRequestConfig): string {
     const method = (config.method || 'GET').toUpperCase();
     const baseURL = config.baseURL || '';
-    let fullUrl = config.url || '';
+    let fullUrl = this.sanitizeUrl(config.url || '');
     if (!fullUrl.startsWith('http://') && !fullUrl.startsWith('https://') && baseURL) {
       fullUrl = `${baseURL.replace(/\/+$/, '')}/${fullUrl.replace(/^\/+/, '')}`;
     }
 
     if (config.params) {
       try {
-        const q = new URLSearchParams(config.params).toString();
+        const q = new URLSearchParams(this.sanitizeData(config.params)).toString();
         if (q) fullUrl += (fullUrl.includes('?') ? '&' : '?') + q;
       } catch {}
     }
@@ -187,7 +229,7 @@ export class ApiInspectorManager {
     let curl = `curl -X ${method} "${fullUrl}"`;
 
     if (config.headers) {
-      for (const [k, v] of Object.entries(config.headers)) {
+      for (const [k, v] of Object.entries(this.sanitizeHeaders(config.headers))) {
         if (['common', 'delete', 'get', 'head', 'post', 'put', 'patch'].includes(k.toLowerCase())) continue;
         if (v !== undefined && v !== null) {
           curl += ` \\\n  -H "${k}: ${String(v).replace(/"/g, '\\"')}"`;
@@ -198,9 +240,9 @@ export class ApiInspectorManager {
     if (config.data && method !== 'GET' && method !== 'HEAD') {
       let bodyStr = '';
       if (typeof config.data === 'string') {
-        bodyStr = config.data;
+        bodyStr = this.sanitizeText(config.data);
       } else if (config.data instanceof URLSearchParams) {
-        bodyStr = config.data.toString();
+        bodyStr = this.sanitizeText(config.data.toString());
       } else if (typeof config.data === 'object') {
         bodyStr = JSON.stringify(this.sanitizeData(config.data));
       }
@@ -225,41 +267,47 @@ export class ApiInspectorManager {
     const bodyStr = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody || '');
     const bodyLower = bodyStr.toLowerCase();
     const errLower = (errorMessage || '').toLowerCase();
+    const isHttpError = status !== undefined && status >= 400;
 
-    // 1. HTTP 403 CSRF Mismatch
-    if (status === 403 || bodyLower.includes('csrf') || bodyLower.includes('xsrf') || bodyLower.includes('forbidden')) {
-      return '⚠️ [HTTP 403 FORBIDDEN / CSRF LỆCH]: Server Spring Cổng Thuế từ chối token XSRF-TOKEN hoặc _csrf. Nguyên nhân: Cookie XSRF-TOKEN bị encode hoặc CSRF token đã hết hạn sau phiên POST trước. Cách sửa: Làm mới trang TCHS để lấy CSRF token mới và decodeURIComponent trước khi gửi header.';
+    // 1. HTTP 403 CSRF Mismatch (Chỉ khi status 403 hoặc có lỗi HTTP thật sự)
+    if (status === 403 || (isHttpError && (bodyLower.includes('csrf') || bodyLower.includes('xsrf') || bodyLower.includes('forbidden')))) {
+      return '⚠️ [CSRF_OR_SESSION_REJECTED / HTTP 403]: Cổng Thuế từ chối ngữ cảnh phiên hoặc CSRF của request. TaxInsight sẽ làm mới đúng trang tạo token và chỉ thử lại cùng contract tối đa một lần.';
     }
 
     // 2. HTTP 429 Rate Limit
-    if (status === 429 || bodyLower.includes('too many requests') || errLower.includes('429')) {
+    if (status === 429 || (isHttpError && bodyLower.includes('too many requests')) || errLower.includes('429')) {
       return '⏱️ [HTTP 429 RATE LIMIT]: Cổng Thuế giới hạn tần suất gọi API từ IP hiện tại. Cách sửa: Cần áp dụng cơ chế Exponential Backoff (chờ 1.5s - 3s) trước khi gửi lại request tiếp theo.';
     }
 
     // 3. Hết phiên / Session Expired
     if (
       status === 401 ||
-      bodyLower.includes('hết phiên làm việc') ||
-      bodyLower.includes('đăng nhập lại') ||
-      bodyLower.includes('submitldap') ||
-      bodyLower.includes('loginldap')
+      (!urlLower.includes('/login') && (
+        bodyLower.includes('hết phiên làm việc') ||
+        bodyLower.includes('đăng nhập lại') ||
+        (urlLower.includes('/tchs') && bodyLower.includes('loginldap'))
+      ))
     ) {
       return '🔒 [HẾT PHIÊN LÀM VIỆC / 401]: Cookie phiên (JSESSIONID / DVC Session) đã bị server xóa hoặc quá thời hạn 15 phút không thao tác. Cách sửa: Kích hoạt modal yêu cầu đăng nhập lại (auth required modal) và làm mới CookieJar.';
     }
 
     // 4. Lỗi NullPointerException trên eTax (Mẫu C1-02 / GNT)
-    if (bodyStr.includes('NullPointerException') || bodyLower.includes('exception') || bodyLower.includes('500 internal')) {
+    if (bodyStr.includes('NullPointerException') || (isHttpError && bodyLower.includes('500 internal'))) {
       return '💥 [LỖI SERVER ETAX NullPointerException]: Server WebSphere/eTax của Tổng Cục Thuế gặp lỗi NPE trong processor state. Nguyên nhân thường do `dse_processorId` hoặc `dse_pageId` bị lệch so với phiên hiện hành. Cách sửa: Khởi tạo lại phiên SSO từ DVC sang eTax qua endpoint module=330410.';
     }
 
+    if (status !== undefined && status >= 500) {
+      return `💥 [LỖI MÁY CHỦ HTTP ${status}]: Endpoint Cổng Thuế/eTax đang lỗi phía server. TaxInsight sẽ dừng chuỗi fallback và kích hoạt circuit breaker thay vì tiếp tục gửi request cho toàn bộ hồ sơ còn lại.`;
+    }
+
     // 5. Sai mã CAPTCHA
-    if (bodyLower.includes('mã captcha không đúng') || bodyLower.includes('mã xác nhận không đúng') || errLower.includes('captcha')) {
+    if (bodyLower.includes('mã captcha không đúng') || bodyLower.includes('mã xác nhận không đúng') || (errLower.includes('captcha') && !urlLower.includes('getcaptcha'))) {
       return '🛡️ [SAI CAPTCHA]: Mã xác nhận không khớp với session CAPTCHA lưu trên server. Cách sửa: Lấy ảnh CAPTCHA mới từ `/tthc/captcha` kèm timestamp và thử giải lại qua OCR / người dùng.';
     }
 
     // 6. Tải file không có nội dung Base64
-    if (urlLower.includes('download') && (bodyLower.includes('không tồn tại') || bodyLower.includes('rỗng') || bodyStr.length < 50)) {
-      return '📂 [TẢI FILE THẤT BẠI]: Server không trả về chuỗi Base64 hợp lệ của hồ sơ. Nguyên nhân: Tờ khai này thuộc nhánh Thuế Điện Tử (cần gọi `/downloadhoso-tdt`) hoặc ID hồ sơ dạng dài cần đổi sang maHoSo dạng ngắn.';
+    if (urlLower.includes('download') && isHttpError && (bodyLower.includes('không tồn tại') || bodyLower.includes('rỗng') || bodyStr.length < 50)) {
+      return '📂 [TẢI FILE THẤT BẠI]: Response không chứa file ZIP/XML/PDF hợp lệ theo contract đã xác minh. TaxInsight sẽ không đoán payload hoặc tự đổi endpoint.';
     }
 
     // 7. Lỗi kết nối mạng / Timeout
@@ -286,7 +334,8 @@ export class ApiInspectorManager {
         (config as any)._inspectorStartTime = Date.now();
 
         const fullUrl = config.url || '';
-        const endpoint = this.formatEndpoint(fullUrl);
+        const safeUrl = this.sanitizeUrl(fullUrl);
+        const endpoint = this.formatEndpoint(safeUrl);
         const module = this.classifyModule(fullUrl, config.params, config.data);
 
         // Format body preview
@@ -304,12 +353,12 @@ export class ApiInspectorManager {
           timestamp: now.toISOString(),
           timeFormatted,
           method: (config.method || 'GET').toUpperCase(),
-          url: fullUrl,
+          url: safeUrl,
           endpoint,
           module,
           status: 'PENDING',
-          requestHeaders: (config.headers as any) ? { ...(config.headers as any) } : {},
-          requestParams: config.params,
+          requestHeaders: this.sanitizeHeaders(config.headers),
+          requestParams: this.sanitizeData(config.params),
           requestBody: reqBodyFormatted,
           curl: this.generateCurl(config)
         };
@@ -340,8 +389,10 @@ export class ApiInspectorManager {
             resData = `[Dữ liệu nhị phân: ${resData.byteLength} bytes, Content-Type: ${contentType}]`;
           } else if (typeof resData === 'string') {
             resSize = Buffer.byteLength(resData, 'utf-8');
-            // Nếu payload base64 quá lớn (> 100KB) thì rút gọn hiển thị preview
-            if (resData.length > 50000 && !resData.includes('<html')) {
+            const isHtml = /html/i.test(contentType) || /<!doctype|<html/i.test(resData);
+            if (isHtml && resData.length > 12000) {
+              resData = `${this.sanitizeText(resData.slice(0, 12000))}\n[HTML diagnostic đã rút gọn; kích thước gốc: ${resSize} bytes]`;
+            } else if (resData.length > 50000) {
               resData = `${resData.slice(0, 1000)} ...\n[Rút gọn hiển thị Base64, tổng kích thước: ${Math.round(resData.length / 1024)} KB]`;
             }
           } else if (typeof resData === 'object' && resData !== null) {
@@ -357,9 +408,9 @@ export class ApiInspectorManager {
             status: response.status,
             statusText: response.statusText || 'OK',
             durationMs,
-            responseHeaders: response.headers as Record<string, string>,
+            responseHeaders: this.sanitizeHeaders(response.headers) as Record<string, string>,
             responseContentType: contentType,
-            responseBody: resData,
+            responseBody: this.sanitizeData(resData),
             responseSize: resSize,
             isError: isStatusError,
             diagnosticHint
@@ -384,6 +435,10 @@ export class ApiInspectorManager {
             resData = `[Dữ liệu nhị phân: ${resData.byteLength} bytes]`;
           } else if (typeof resData === 'string') {
             resSize = Buffer.byteLength(resData, 'utf-8');
+            const isHtml = /html/i.test(contentType) || /<!doctype|<html/i.test(resData);
+            if (isHtml && resData.length > 12000) {
+              resData = `${this.sanitizeText(resData.slice(0, 12000))}\n[HTML diagnostic đã rút gọn; kích thước gốc: ${resSize} bytes]`;
+            }
           }
 
           const diagnosticHint = this.buildDiagnosticHint(
@@ -397,16 +452,16 @@ export class ApiInspectorManager {
             status: error.response?.status ? error.response.status : 'FAILED',
             statusText: error.response?.statusText || error.code || 'ERROR',
             durationMs,
-            responseHeaders: error.response?.headers as Record<string, string> | undefined,
+            responseHeaders: this.sanitizeHeaders(error.response?.headers) as Record<string, string>,
             responseContentType: contentType,
-            responseBody: resData,
+            responseBody: this.sanitizeData(resData),
             responseSize: resSize,
             isError: true,
             errorDetail: {
-              message: error.message || 'Lỗi HTTP Request',
+              message: this.sanitizeText(error.message || 'Lỗi HTTP Request'),
               code: error.code,
               httpStatus: error.response?.status,
-              stack: error.stack
+              stack: error.stack ? this.sanitizeText(error.stack) : undefined
             },
             diagnosticHint
           });
@@ -422,7 +477,7 @@ export class ApiInspectorManager {
     if (this.entries.length > this.maxEntries) {
       this.entries.pop();
     }
-    if (this.sendToRendererCallback) {
+    if (this.sendToRendererCallback && this.adminUnlocked) {
       this.sendToRendererCallback('inspector:new_entry', entry);
     }
   }
@@ -431,17 +486,18 @@ export class ApiInspectorManager {
     const idx = this.entries.findIndex(e => e.id === id);
     if (idx !== -1) {
       this.entries[idx] = { ...this.entries[idx], ...updates };
-      if (this.sendToRendererCallback) {
+      if (this.sendToRendererCallback && this.adminUnlocked) {
         this.sendToRendererCallback('inspector:entry_updated', this.entries[idx]);
       }
     }
   }
 
   public getEntries(): ApiInspectorEntry[] {
-    return [...this.entries];
+    return this.adminUnlocked ? [...this.entries] : [];
   }
 
   public clearEntries(): void {
+    if (!this.adminUnlocked) return;
     this.entries = [];
     if (this.sendToRendererCallback) {
       this.sendToRendererCallback('inspector:cleared', {});
@@ -449,12 +505,15 @@ export class ApiInspectorManager {
   }
 
   public exportEntriesJson(): string {
+    if (!this.adminUnlocked) {
+      throw new Error('Chưa xác thực quyền quản trị API Inspector.');
+    }
     return JSON.stringify(
       {
         exportedAt: new Date().toISOString(),
         totalEntries: this.entries.length,
-        appVersion: app && app.getVersion ? app.getVersion() : '2.7.0',
-        entries: this.entries
+        appVersion: app && app.getVersion ? app.getVersion() : 'unknown',
+        entries: this.sanitizeData(this.entries)
       },
       null,
       2

@@ -35,6 +35,35 @@ export class CaptchaSolver {
   private static workerPromise: Promise<Worker> | null = null;
 
   /**
+   * Cổng chất lượng dành riêng cho tác vụ tự động gửi CAPTCHA lên Cổng Thuế.
+   *
+   * `accepted` của engine chỉ cho biết đã dựng được một chuỗi 5 ký tự. Live test
+   * ngày 27/08/2026 cho thấy ba pipeline segmentation có thể cùng đọc sai một
+   * ký tự và tạo false-positive dù confidence > 90%. Vì vậy auto-submit chỉ
+   * được phép khi đa số rõ rệt của toàn bộ pipeline đầy đủ cùng đồng thuận.
+   * Kết quả yếu vẫn được dùng làm gợi ý trên UI, nhưng không được tự gửi.
+   */
+  public static isSafeForAutoSubmit(result: CaptchaSolveResult): boolean {
+    if (
+      !result.accepted ||
+      result.confidence < 90 ||
+      !/^[a-z0-9]{5}$/.test(result.text)
+    ) {
+      return false;
+    }
+
+    const fullCandidates = result.candidates.filter(
+      candidate => /^[a-z0-9]{5}$/.test(candidate.text)
+    );
+    if (fullCandidates.length < 5) return false;
+
+    const exactSupport = fullCandidates.filter(
+      candidate => candidate.text === result.text
+    ).length;
+    return exactSupport >= 5 && exactSupport / fullCandidates.length >= 0.6;
+  }
+
+  /**
    * Xác định thư mục tessdata hoàn toàn OFFLINE.
    * Ưu tiên thư mục có sẵn; có thể THAY MODEL TÙY CHỈNH bằng cách ghi đè
    * eng.traineddata trong resources/tessdata mà không cần sửa code.

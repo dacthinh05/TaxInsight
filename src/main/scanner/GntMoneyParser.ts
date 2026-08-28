@@ -60,4 +60,21 @@ export class GntMoneyParser {
   public static formatVND(amount: bigint | number): string {
     return formatMoneyGroups(amount);
   }
+
+  /**
+   * Chỉ chuyển sang number tại biên tương thích UI/Excel khi còn chính xác.
+   * Không âm thầm làm tròn bigint vượt Number.MAX_SAFE_INTEGER.
+   */
+  public static toSafeNumber(rawInput?: string | number | bigint | null): number {
+    const parsed = this.parse(rawInput);
+    if (parsed.status !== 'VALID') {
+      throw new Error(`Giá trị tiền không hợp lệ: ${parsed.raw || '(trống)'}`);
+    }
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    const min = BigInt(Number.MIN_SAFE_INTEGER);
+    if (parsed.value > max || parsed.value < min) {
+      throw new Error(`Giá trị tiền vượt giới hạn số nguyên an toàn: ${parsed.value}`);
+    }
+    return Number(parsed.value);
+  }
 }

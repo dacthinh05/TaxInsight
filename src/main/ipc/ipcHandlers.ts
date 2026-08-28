@@ -4,27 +4,36 @@ import path from 'path';
 import { PORTAL_CONFIG } from '../../shared/constants';
 import { sanitizeFilename } from '../../shared/sanitizer';
 import { isValidTaxCode } from '../../shared/taxCodeUtils';
-import { PaymentSlipRecord, TaxFiling, TaxType } from '../../shared/types';
+import { DateRange, PaymentSlipRecord, TaxFiling, TaxType } from '../../shared/types';
 import { DownloadManager } from '../downloader/DownloadManager';
+import { LegacyFilingDownloader } from '../downloader/LegacyFilingDownloader';
 import { ExcelExporter } from '../exporter/ExcelExporter';
 import { FileOrganizer } from '../files/FileOrganizer';
 import { GntMoneyParser } from '../scanner/GntMoneyParser';
 import { GntParser } from '../scanner/GntParser';
 import { CaptchaManager } from '../portal/CaptchaManager';
 import { PaymentSlipClient } from '../portal/PaymentSlipClient';
+import { LegacyFilingClient } from '../portal/LegacyFilingClient';
 import { PortalSession } from '../portal/PortalSession';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
 import { CaptchaSolver } from '../scanner/CaptchaSolver';
 import { TaxScanEngine } from '../scanner/TaxScanEngine';
+import { LegacyFilingLookupWorkflow } from '../scanner/LegacyFilingLookupWorkflow';
 import { VatAnalyticsEngine } from '../scanner/VatAnalyticsEngine';
 import { PitAnalyticsEngine } from '../scanner/PitAnalyticsEngine';
 import { ExcelVatReferenceExporter } from '../exporter/ExcelVatReferenceExporter';
 import { ExcelPitReferenceExporter } from '../exporter/ExcelPitReferenceExporter';
-import { buildC102Html } from '../exporter/C102PdfTemplate';
-import { GntStatisticsEngine, GNT_BUCKET_LABELS, GntStatBucket } from '../engine/GntStatisticsEngine';
+import { buildC102Html, validateC102Detail } from '../exporter/C102PdfTemplate';
+import {
+  GntStatisticsEngine,
+  GNT_BUCKET_LABELS,
+  GntStatBucket,
+  GntStatisticsResult
+} from '../engine/GntStatisticsEngine';
 import { AuditLogger } from '../persistence/AuditLogger';
 import { CheckpointStore } from '../persistence/CheckpointStore';
 import { GntCheckpointStore, GntCheckpointData } from '../persistence/GntCheckpointStore';
+import { HistoricalCheckpointStore } from '../persistence/HistoricalCheckpointStore';
 import { SettingsStore } from '../persistence/SettingsStore';
 import { AccountStore } from '../persistence/AccountStore';
 import { LicenseManager } from '../licensing/LicenseManager';
@@ -36,12 +45,16 @@ export function setupIpcHandlers(
   session: PortalSession,
   client: TaxPortalClient,
   paymentSlipClient: PaymentSlipClient,
+  legacyFilingClient: LegacyFilingClient,
   captchaManager: CaptchaManager,
   scanEngine: TaxScanEngine,
   downloadManager: DownloadManager,
+  legacyFilingDownloader: LegacyFilingDownloader,
+  legacyFilingWorkflow: LegacyFilingLookupWorkflow,
   fileOrganizer: FileOrganizer,
   checkpointStore: CheckpointStore,
   gntCheckpointStore: GntCheckpointStore,
+  historicalCheckpointStore: HistoricalCheckpointStore,
   auditLogger: AuditLogger,
   sendToRenderer: (channel: string, data: any) => void
 ) {
@@ -52,6 +65,154 @@ export function setupIpcHandlers(
   const normalizeYear = (v: unknown): number => {
     const n = typeof v === 'number' ? v : parseInt(String(v), 10);
     return Number.isFinite(n) && n >= 1900 && n <= 2200 ? n : new Date().getFullYear();
+  };
+
+  const normalizeHistoricalYear = (v: unknown): number => {
+    const n = typeof v === 'number' ? Math.trunc(v) : parseInt(String(v), 10);
+    if (!Number.isFinite(n) || n < 1900 || n > 2200) {
+      throw new Error('Năm tra cứu tờ khai cũ không hợp lệ.');
+    }
+    return n;
+  };
+
+  const normalizeTaxType = (value: unknown): TaxType => {
+    const allowed: TaxType[] = ['ALL', 'VAT', 'REFUND', 'PIT', 'CIT', 'FCT', 'HOUSE_LAND', 'REPORT', 'OTHER'];
+    return allowed.includes(value as TaxType) ? value as TaxType : 'ALL';
+  };
+
+  const parsePortalDate = (value: unknown): Date => {
+    const match = String(value || '').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!match) throw new Error('Ngày phải có định dạng dd/MM/yyyy.');
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day ||
+      year < 1900 ||
+      year > 2200
+    ) {
+      throw new Error('Khoảng ngày tra cứu không hợp lệ.');
+    }
+    return date;
+  };
+
+  const normalizeDateRange = (value: unknown): DateRange => {
+    if (!value || typeof value !== 'object') throw new Error('Thiếu khoảng ngày tra cứu.');
+    const input = value as Partial<DateRange>;
+    const from = parsePortalDate(input.fromDate);
+    const to = parsePortalDate(input.toDate);
+    if (from.getTime() > to.getTime()) throw new Error('Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.');
+
+    const maxSpanMs = 5 * 366 * 24 * 60 * 60 * 1000;
+    if (to.getTime() - from.getTime() > maxSpanMs) {
+      throw new Error('Một đợt quét chỉ được bao phủ tối đa 5 năm để tránh quá tải Cổng Thuế.');
+    }
+
+    const allowedLevels: DateRange['level'][] = ['YEAR', 'QUARTER', 'MONTH', 'MULTI_YEAR'];
+    const level = allowedLevels.includes(input.level as DateRange['level'])
+      ? input.level as DateRange['level']
+      : 'YEAR';
+    return {
+      fromDate: String(input.fromDate),
+      toDate: String(input.toDate),
+      label: String(input.label || 'Khoảng tùy chọn').slice(0, 120),
+      level
+    };
+  };
+
+  const normalizeFilingList = (value: unknown): TaxFiling[] => {
+    if (!Array.isArray(value)) throw new Error('Danh sách hồ sơ không hợp lệ.');
+    if (value.length > 5000) throw new Error('Một lô chỉ được xử lý tối đa 5.000 hồ sơ.');
+    return value.filter((filing): filing is TaxFiling =>
+      Boolean(
+        filing &&
+        typeof filing === 'object' &&
+        typeof filing.id === 'string' &&
+        filing.id.trim() &&
+        typeof filing.title === 'string'
+      )
+    );
+  };
+
+  const requireSessionTaxCode = (requested?: unknown): string => {
+    const sessionTaxCode = String(session.getSessionInfo().taxCode || '').trim();
+    if (!isValidTaxCode(sessionTaxCode)) {
+      throw new Error('Phiên đăng nhập không có mã số thuế hợp lệ.');
+    }
+    const requestedTaxCode = String(requested || '').trim();
+    if (requestedTaxCode && requestedTaxCode !== sessionTaxCode) {
+      throw new Error('Mã số thuế yêu cầu không khớp phiên đăng nhập hiện tại.');
+    }
+    return sessionTaxCode;
+  };
+
+  const normalizeCtuId = (value: unknown): string => {
+    const id = String(value || '').trim();
+    if (!id || id.length > 128 || !/^[a-zA-Z0-9_.-]+$/.test(id)) {
+      throw new Error('ID chứng từ GNT không hợp lệ.');
+    }
+    return id;
+  };
+
+  const normalizePaymentSlipList = (value: unknown): PaymentSlipRecord[] => {
+    if (!Array.isArray(value)) throw new Error('Danh sách Giấy Nộp Tiền không hợp lệ.');
+    if (value.length > 10000) throw new Error('Một lô chỉ được xử lý tối đa 10.000 Giấy Nộp Tiền.');
+    return value.filter((slip): slip is PaymentSlipRecord =>
+      Boolean(slip && typeof slip === 'object' && typeof slip.id === 'string' && slip.id.trim())
+    );
+  };
+
+  const normalizeGntStatistics = (value: unknown): GntStatisticsResult => {
+    if (!value || typeof value !== 'object') throw new Error('Dữ liệu thống kê GNT không hợp lệ.');
+    const input = value as Partial<GntStatisticsResult>;
+    if (!Array.isArray(input.cells) || input.cells.length > 10000) {
+      throw new Error('Số ô thống kê GNT vượt giới hạn cho phép.');
+    }
+    const allowedBuckets: GntStatBucket[] = ['VAT', 'PIT', 'CIT', 'FCT', 'HOUSE_LAND', 'OTHER', 'NO_DETAIL'];
+    const cells = input.cells.map(cell => {
+      const monthKey = String(cell?.monthKey || '');
+      const bucket = cell?.bucket as GntStatBucket;
+      const totalAmount = Number(cell?.totalAmount);
+      const slipCount = Number(cell?.slipCount);
+      if (
+        !/^(0[1-9]|1[0-2])\/\d{4}$/.test(monthKey) ||
+        !allowedBuckets.includes(bucket) ||
+        !Number.isSafeInteger(totalAmount) ||
+        totalAmount < 0 ||
+        !Number.isSafeInteger(slipCount) ||
+        slipCount < 0
+      ) {
+        throw new Error('Một ô thống kê GNT có dữ liệu không hợp lệ.');
+      }
+      return { monthKey, bucket, totalAmount, slipCount };
+    });
+    const monthKeys = [...new Set(cells.map(cell => cell.monthKey))].sort((a, b) => {
+      const [ma, ya] = a.split('/').map(Number);
+      const [mb, yb] = b.split('/').map(Number);
+      return ya - yb || ma - mb;
+    });
+    const activeBuckets = allowedBuckets.filter(bucket => cells.some(cell => cell.bucket === bucket));
+    const grandTotal = cells.reduce((sum, cell) => {
+      const next = sum + cell.totalAmount;
+      if (!Number.isSafeInteger(next)) throw new Error('Tổng tiền GNT vượt giới hạn số nguyên an toàn.');
+      return next;
+    }, 0);
+    const safeCount = (count: unknown) => {
+      const n = Number(count);
+      return Number.isSafeInteger(n) && n >= 0 ? n : 0;
+    };
+    return {
+      cells,
+      monthKeys,
+      activeBuckets,
+      grandTotal,
+      paidCount: safeCount(input.paidCount),
+      skippedUnpaidCount: safeCount(input.skippedUnpaidCount),
+      noDetailCount: safeCount(input.noDetailCount)
+    };
   };
 
   // ─── LẮNG NGHE SỰ KIỆN TỪ CORE ENGINE ĐỂ GỬI SANG RENDERER ───────────
@@ -113,13 +274,42 @@ export function setupIpcHandlers(
     sendToRenderer('session:expired', {});
   });
 
+  // ─── LEGACY FILING EVENT LISTENERS ──────────────────────────────────
+  legacyFilingWorkflow.on('progress', data => {
+    sendToRenderer('legacyFiling:progress', data);
+  });
+
+  legacyFilingWorkflow.on('state_change', ({ state, detail }) => {
+    auditLogger.log('INFO', `Trạng thái tra cứu năm cũ: ${state}`, detail);
+    sendToRenderer('legacyFiling:stateChange', { state, detail });
+  });
+
+  legacyFilingDownloader.on('progress', data => {
+    sendToRenderer('legacyFiling:downloadProgress', data);
+  });
+
+  legacyFilingDownloader.on('completed', summary => {
+    auditLogger.log('SUCCESS', `Hoàn thành tải tờ khai năm cũ: ${summary.completed} thành công, ${summary.existing} có sẵn, ${summary.failed} lỗi`);
+    sendToRenderer('legacyFiling:downloadCompleted', summary);
+  });
+
+  legacyFilingDownloader.on('auth_expired', data => {
+    auditLogger.log('WARNING', 'Phiên làm việc eTax hết hạn trong lúc tải hồ sơ năm cũ');
+    sendToRenderer('legacyFiling:authExpired', data);
+  });
+
   // ─── AUTH IPC HANDLERS ──────────────────────────────────────────────
   ipcMain.handle('auth:getCaptcha', async () => {
     try {
       const base64 = await client.getCaptchaImage('LOGIN');
       return { success: true, imageBase64: base64 };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      return {
+        success: false,
+        error: err.message,
+        errorCode: err?.code || 'UNKNOWN',
+        httpStatus: err?.httpStatus
+      };
     }
   });
 
@@ -131,8 +321,15 @@ export function setupIpcHandlers(
       if (typeof imageBase64 !== 'string' || imageBase64.length > MAX_CAPTCHA_BASE64) {
         return { success: false, error: 'Ảnh captcha không hợp lệ hoặc quá lớn.' };
       }
-      const text = await CaptchaSolver.solve(imageBase64);
-      return { success: true, text };
+      const result = await CaptchaSolver.solveDetailed(imageBase64);
+      return {
+        success: true,
+        // Không tự điền kết quả OCR yếu. Người dùng vẫn nhìn thấy ảnh và nhập
+        // tay, tránh gửi sai CAPTCHA nhiều lần rồi kích hoạt WAF/rate limit.
+        text: CaptchaSolver.isSafeForAutoSubmit(result) ? result.text : '',
+        confidence: result.confidence,
+        accepted: CaptchaSolver.isSafeForAutoSubmit(result)
+      };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -140,10 +337,22 @@ export function setupIpcHandlers(
 
   ipcMain.handle('auth:login', async (_event, { taxCode, password, captcha }) => {
     try {
-      auditLogger.log('INFO', 'Bắt đầu đăng nhập Cổng Thuế', `MST: ${taxCode}`);
-      const res = await client.login(taxCode, password, captcha);
+      const safeTaxCode = String(taxCode || '').trim();
+      const safePassword = String(password || '');
+      const safeCaptcha = String(captcha || '').trim();
+      if (!isValidTaxCode(safeTaxCode)) {
+        return { success: false, message: 'Mã số thuế không hợp lệ.', errorField: 'TAX_CODE' };
+      }
+      if (!safePassword || safePassword.length > 512) {
+        return { success: false, message: 'Mật khẩu không hợp lệ.', errorField: 'PASSWORD' };
+      }
+      if (!/^[a-zA-Z0-9]{3,8}$/.test(safeCaptcha)) {
+        return { success: false, message: 'Mã CAPTCHA không hợp lệ.', errorField: 'CAPTCHA' };
+      }
+      auditLogger.log('INFO', 'Bắt đầu đăng nhập Cổng Thuế', `MST: ${safeTaxCode}`);
+      const res = await client.login(safeTaxCode, safePassword, safeCaptcha);
       if (res.success) {
-        auditLogger.log('SUCCESS', 'Đăng nhập Cổng Thuế thành công', `MST: ${taxCode}`);
+        auditLogger.log('SUCCESS', 'Đăng nhập Cổng Thuế thành công', `MST: ${safeTaxCode}`);
       } else {
         auditLogger.log('WARNING', 'Đăng nhập không thành công', res.message);
       }
@@ -154,12 +363,58 @@ export function setupIpcHandlers(
     }
   });
 
+  ipcMain.handle('auth:loginSaved', async (_event, { taxCode, captcha }) => {
+    try {
+      const safeTaxCode = String(taxCode || '').trim();
+      const safeCaptcha = String(captcha || '').trim();
+      if (!isValidTaxCode(safeTaxCode)) {
+        return { success: false, message: 'Mã số thuế không hợp lệ.', errorField: 'TAX_CODE' };
+      }
+      if (!/^[a-zA-Z0-9]{3,8}$/.test(safeCaptcha)) {
+        return { success: false, message: 'Mã CAPTCHA không hợp lệ.', errorField: 'CAPTCHA' };
+      }
+      const credentials = AccountStore.getAccountCredentials(safeTaxCode);
+      if (!credentials?.password) {
+        return {
+          success: false,
+          message: 'Tài khoản này không có mật khẩu đã lưu hoặc không thể giải mã mật khẩu.',
+          errorField: 'PASSWORD'
+        };
+      }
+
+      auditLogger.log('INFO', 'Bắt đầu đăng nhập bằng thông tin đã lưu', `MST: ${safeTaxCode}`);
+      const result = await client.login(safeTaxCode, credentials.password, safeCaptcha);
+      if (result.success) {
+        // Cập nhật lastUsedAt nhưng giữ nguyên ciphertext mật khẩu.
+        AccountStore.saveAccount({
+          taxCode: safeTaxCode,
+          companyName: credentials.companyName
+        });
+        auditLogger.log('SUCCESS', 'Đăng nhập bằng thông tin đã lưu thành công', `MST: ${safeTaxCode}`);
+      } else {
+        auditLogger.log('WARNING', 'Đăng nhập bằng thông tin đã lưu không thành công', result.message);
+      }
+      return result;
+    } catch (err: any) {
+      auditLogger.log('ERROR', 'Lỗi khi đăng nhập bằng thông tin đã lưu', err?.message);
+      return { success: false, message: err?.message || 'Không thể đăng nhập bằng thông tin đã lưu.' };
+    }
+  });
+
   ipcMain.handle('auth:logout', async () => {
+    scanEngine.cancelScan();
+    downloadManager.cancel();
+    legacyFilingWorkflow.cancel();
+    legacyFilingDownloader.clearQueue();
+    vatEngine.cancel();
+    pitEngine.cancel();
+    captchaManager.cancel('Phiên đã đăng xuất');
     session.clearSession();
     // Reset toàn bộ trạng thái phiên cũ: CSRF token, DSE session, cache chi tiết
     // — nếu không, lần đăng nhập tiếp theo (khác MST) sẽ dùng token/session của tài khoản trước
     client.reset();
     paymentSlipClient.reset();
+    legacyFilingClient.reset();
     scanEngine.clearFilings();
     auditLogger.log('INFO', 'Người dùng đã đăng xuất');
     return { success: true };
@@ -170,28 +425,53 @@ export function setupIpcHandlers(
   });
 
   ipcMain.handle('auth:checkSession', async () => {
-    const isAlive = await client.checkSession();
-    return { isAlive };
+    try {
+      const isAlive = await client.checkSession();
+      return { isAlive };
+    } catch (err: any) {
+      return {
+        isAlive: false,
+        transientError: true,
+        error: err?.message || 'Không thể kiểm tra phiên Cổng Thuế'
+      };
+    }
   });
 
   // ─── SCAN IPC HANDLERS ──────────────────────────────────────────────
   ipcMain.handle('scan:start', async (_event, { year, taxType, scope, mstUyQuyen, limitToToday, customRange }) => {
     try {
-      const modeLabel = customRange ? customRange.label : limitToToday ? `đến ngày hiện tại` : `cả năm`;
-      auditLogger.log('INFO', `Bắt đầu quét hồ sơ năm ${year} (${modeLabel})`, `Loại thuế: ${taxType}`);
-      const result = await scanEngine.scanYear(year, taxType, { scope, mstUyQuyen, limitToToday, customRange });
+      const safeYear = normalizeYear(year);
+      const safeTaxType = normalizeTaxType(taxType);
+      const safeCustomRange = customRange ? normalizeDateRange(customRange) : undefined;
+      const safeAuthorizedTaxCode = mstUyQuyen ? String(mstUyQuyen).trim() : '';
+      if (safeAuthorizedTaxCode && !isValidTaxCode(safeAuthorizedTaxCode)) {
+        throw new Error('Mã số thuế ủy quyền không hợp lệ.');
+      }
+      const modeLabel = safeCustomRange ? safeCustomRange.label : limitToToday ? `đến ngày hiện tại` : `cả năm`;
+      auditLogger.log('INFO', `Bắt đầu quét hồ sơ năm ${safeYear} (${modeLabel})`, `Loại thuế: ${safeTaxType}`);
+      const result = await scanEngine.scanYear(safeYear, safeTaxType, {
+        scope,
+        mstUyQuyen: safeAuthorizedTaxCode || undefined,
+        limitToToday: Boolean(limitToToday),
+        customRange: safeCustomRange
+      });
 
-      auditLogger.log('SUCCESS', `Quét hoàn tất: Tìm thấy ${result.filings.length} hồ sơ năm ${year}`);
+      auditLogger.log('SUCCESS', `Quét hoàn tất: Tìm thấy ${result.filings.length} hồ sơ năm ${safeYear}`);
 
       const sessionInfo = session.getSessionInfo();
       if (sessionInfo.taxCode) {
-        checkpointStore.saveCheckpoint(sessionInfo.taxCode, year, result.filings);
+        checkpointStore.saveCheckpoint(sessionInfo.taxCode, safeYear, result.filings);
       }
 
       return { success: true, data: result };
     } catch (err: any) {
       auditLogger.log('ERROR', `Lỗi khi quét hồ sơ năm ${year}`, err.message);
-      return { success: false, error: err.message };
+      return {
+        success: false,
+        error: err.message,
+        errorCode: err?.code || 'UNKNOWN',
+        httpStatus: err?.httpStatus
+      };
     }
   });
 
@@ -218,19 +498,35 @@ export function setupIpcHandlers(
   // ─── DOWNLOAD IPC HANDLERS ──────────────────────────────────────────
   ipcMain.handle('download:start', async (_event, { filings, taxCode, year }) => {
     try {
-      const currentTaxCode = [taxCode, session.getSessionInfo().taxCode]
-        .map(value => typeof value === 'string' ? value.trim() : '')
-        .find(isValidTaxCode);
+      const sessionTaxCode = String(session.getSessionInfo().taxCode || '').trim();
+      const requestedTaxCode = String(taxCode || '').trim();
+      if (!isValidTaxCode(sessionTaxCode)) {
+        return { success: false, error: 'Phiên đăng nhập không có mã số thuế hợp lệ.' };
+      }
+      if (requestedTaxCode && requestedTaxCode !== sessionTaxCode) {
+        return { success: false, error: 'Mã số thuế tải xuống không khớp phiên đăng nhập hiện tại.' };
+      }
+      const currentTaxCode = sessionTaxCode;
       if (!currentTaxCode) {
         return { success: false, error: 'Không xác định được mã số thuế hợp lệ để tải hồ sơ' };
       }
       const currentYear = normalizeYear(year ?? new Date().getFullYear());
+      const safeFilings = normalizeFilingList(filings);
+      if (!safeFilings.length) {
+        return { success: false, error: 'Danh sách tải không có hồ sơ hợp lệ.' };
+      }
+      if (safeFilings.some(filing => filing.source === 'dvc-etax-html' || Boolean(filing.messageId))) {
+        return {
+          success: false,
+          error: 'Tờ khai eTax năm cũ phải được tải qua hàng đợi legacyFiling riêng.'
+        };
+      }
 
       downloadManager.setContext(currentTaxCode, currentYear);
-      downloadManager.enqueueFilings(filings, currentTaxCode, currentYear);
+      downloadManager.enqueueFilings(safeFilings, currentTaxCode, currentYear);
       await downloadManager.start();
 
-      auditLogger.log('INFO', `Bắt đầu tải hàng loạt ${filings.length} hồ sơ`);
+      auditLogger.log('INFO', `Bắt đầu tải hàng loạt ${safeFilings.length} hồ sơ`);
       return { success: true, summary: downloadManager.getSummary() };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -243,9 +539,13 @@ export function setupIpcHandlers(
   });
 
   ipcMain.handle('download:resume', async () => {
-    await downloadManager.resume();
-    auditLogger.log('INFO', 'Tiếp tục tiến trình tải hồ sơ');
-    return { success: true, summary: downloadManager.getSummary() };
+    try {
+      await downloadManager.resume();
+      auditLogger.log('INFO', 'Tiếp tục tiến trình tải hồ sơ');
+      return { success: true, summary: downloadManager.getSummary() };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Không thể tiếp tục tải hồ sơ' };
+    }
   });
 
   ipcMain.handle('download:cancel', async () => {
@@ -276,6 +576,7 @@ export function setupIpcHandlers(
       fileOrganizer.setBaseDir(selectedDir);
       checkpointStore.setBaseDir(selectedDir);
       gntCheckpointStore.setBaseDir(selectedDir);
+      historicalCheckpointStore.setBaseDir(selectedDir);
       auditLogger.setBaseDir(selectedDir);
       vatEngine.setBaseDir(selectedDir);
       pitEngine.setBaseDir(selectedDir);
@@ -290,6 +591,7 @@ export function setupIpcHandlers(
     fileOrganizer.setBaseDir(defaultDir);
     checkpointStore.setBaseDir(defaultDir);
     gntCheckpointStore.setBaseDir(defaultDir);
+    historicalCheckpointStore.setBaseDir(defaultDir);
     auditLogger.setBaseDir(defaultDir);
     vatEngine.setBaseDir(defaultDir);
     pitEngine.setBaseDir(defaultDir);
@@ -323,6 +625,7 @@ export function setupIpcHandlers(
       fileOrganizer.setBaseDir(resolved);
       checkpointStore.setBaseDir(resolved);
       gntCheckpointStore.setBaseDir(resolved);
+      historicalCheckpointStore.setBaseDir(resolved);
       auditLogger.setBaseDir(resolved);
       vatEngine.setBaseDir(resolved);
       pitEngine.setBaseDir(resolved);
@@ -367,12 +670,13 @@ export function setupIpcHandlers(
 
   ipcMain.handle('file:exportExcel', async (_event, { filings, year }) => {
     try {
-      const taxCode = session.getSessionInfo().taxCode || 'DEFAULT';
+      const taxCode = requireSessionTaxCode();
+      const safeFilings = normalizeFilingList(filings);
       const outPath = await ExcelExporter.exportFilingsToExcel(
-        filings,
+        safeFilings,
         fileOrganizer.getBaseDir(),
         taxCode,
-        year
+        normalizeYear(year)
       );
       auditLogger.log('SUCCESS', 'Xuất danh sách hồ sơ ra file Excel thành công', outPath);
       return { success: true, filePath: outPath };
@@ -383,14 +687,15 @@ export function setupIpcHandlers(
   });
 
   // ─── PHÂN HỆ PHÂN TÍCH CHUYÊN SÂU GTGT (VAT ANALYTICS) ────────────
-  const vatEngine = new VatAnalyticsEngine(client, fileOrganizer.getBaseDir());
+  const vatEngine = new VatAnalyticsEngine(client, fileOrganizer.getBaseDir(), legacyFilingClient);
 
   ipcMain.handle('vat:analyze', async (_event, { filings }) => {
     try {
-      const taxCode = session.getSessionInfo().taxCode || 'DEFAULT';
+      const taxCode = requireSessionTaxCode();
+      const safeFilings = normalizeFilingList(filings);
       vatEngine.setBaseDir(fileOrganizer.getBaseDir());
-      auditLogger.log('INFO', `Bắt đầu phân tích chuyên sâu ${filings.length} tờ khai GTGT...`);
-      const summary = await vatEngine.analyzeVatFilings(filings, taxCode, (current, total, message) => {
+      auditLogger.log('INFO', `Bắt đầu phân tích chuyên sâu ${safeFilings.length} tờ khai GTGT...`);
+      const summary = await vatEngine.analyzeVatFilings(safeFilings, taxCode, (current, total, message) => {
         sendToRenderer('vat:progress', { current, total, message });
       });
       auditLogger.log(
@@ -413,7 +718,7 @@ export function setupIpcHandlers(
 
   ipcMain.handle('vat:exportExcel', async (_event, { summary, year }) => {
     try {
-      const taxCode = session.getSessionInfo().taxCode || 'DEFAULT';
+      const taxCode = requireSessionTaxCode();
       const outPath = await ExcelVatReferenceExporter.exportVatReferenceToExcel(
         summary,
         fileOrganizer.getBaseDir(),
@@ -429,17 +734,22 @@ export function setupIpcHandlers(
   });
 
   // ─── PHÂN HỆ PHÂN TÍCH CHUYÊN SÂU TNCN (PIT ANALYTICS) ────────────
-  const pitEngine = new PitAnalyticsEngine(client, fileOrganizer.getBaseDir());
+  const pitEngine = new PitAnalyticsEngine(client, fileOrganizer.getBaseDir(), legacyFilingClient);
 
   ipcMain.handle('pit:analyze', async (_event, { filings }) => {
     try {
-      const taxCode = session.getSessionInfo().taxCode || 'DEFAULT';
+      const taxCode = requireSessionTaxCode();
+      const safeFilings = normalizeFilingList(filings);
       pitEngine.setBaseDir(fileOrganizer.getBaseDir());
-      auditLogger.log('INFO', `Bắt đầu phân tích chuyên sâu ${filings.length} tờ khai TNCN...`);
-      const summary = await pitEngine.analyzePitFilings(filings, taxCode, (current, total, message) => {
+      auditLogger.log('INFO', `Bắt đầu phân tích chuyên sâu ${safeFilings.length} tờ khai TNCN...`);
+      const summary = await pitEngine.analyzePitFilings(safeFilings, taxCode, (current, total, message) => {
         sendToRenderer('pit:progress', { current, total, message });
       });
-      auditLogger.log('SUCCESS', `Phân tích TNCN hoàn tất: ${summary.totalFilingsAnalyzed} hồ sơ (${summary.periodGroups.length} kỳ)`);
+      auditLogger.log(
+        'SUCCESS',
+        `Phân tích TNCN hoàn tất: ${summary.totalFilingsAnalyzed} hồ sơ (${summary.periodGroups.length} kỳ)` +
+        (summary.failedXmlCount ? ` - CẢNH BÁO: ${summary.failedXmlCount} hồ sơ chưa đọc được XML` : ' - Đã có XML đầy đủ')
+      );
       return { success: true, summary };
     } catch (err: any) {
       auditLogger.log('ERROR', 'Phân tích TNCN thất bại', err.message);
@@ -455,9 +765,10 @@ export function setupIpcHandlers(
 
   ipcMain.handle('pit:exportExcel', async (_event, { summary, year }) => {
     try {
+      requireSessionTaxCode();
       const res = await ExcelPitReferenceExporter.exportPitReference(
         summary,
-        year,
+        normalizeYear(year),
         fileOrganizer.getBaseDir()
       );
       if (res.success && res.filePath) {
@@ -474,11 +785,19 @@ export function setupIpcHandlers(
     try {
       if (!url || typeof url !== 'string') return { success: false, error: 'Invalid URL' };
       const parsed = new URL(url);
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      const host = parsed.hostname.toLowerCase();
+      const allowedHosts = new Set([
+        'github.com',
+        'www.github.com',
+        'img.vietqr.io',
+        'dichvucong.gdt.gov.vn',
+        'thuedientu.gdt.gov.vn'
+      ]);
+      if (parsed.protocol === 'https:' && (allowedHosts.has(host) || host.endsWith('.gdt.gov.vn'))) {
         await shell.openExternal(url);
         return { success: true };
       }
-      return { success: false, error: 'Protocol not allowed' };
+      return { success: false, error: 'External host not allowed' };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -489,8 +808,18 @@ export function setupIpcHandlers(
     return paymentSlipClient.getDiagnosticReport();
   });
 
+  let paymentAuthWindow: BrowserWindow | null = null;
+  let paymentAuthPromise: Promise<any> | null = null;
+
   ipcMain.handle('paymentSlips:openAuthWindow', async () => {
-    return new Promise(async (resolve) => {
+    if (paymentAuthPromise) {
+      if (paymentAuthWindow && !paymentAuthWindow.isDestroyed()) {
+        paymentAuthWindow.focus();
+      }
+      return paymentAuthPromise;
+    }
+
+    const authPromise = new Promise<any>(async (resolve) => {
       try {
         const authWin = new BrowserWindow({
           width: 1150,
@@ -501,33 +830,73 @@ export function setupIpcHandlers(
             contextIsolation: true
           }
         });
+        paymentAuthWindow = authWin;
 
         authWin.webContents.setWindowOpenHandler(({ url }) => {
-          // Điều hướng ngay trong cửa sổ hiện tại, không mở tab mới rời rạc
-          authWin.loadURL(url);
+          // Chỉ điều hướng nội bộ trong hệ thống GDT/eTax.
+          try {
+            const target = new URL(url);
+            if (
+              target.protocol === 'https:' &&
+              (target.hostname === 'gdt.gov.vn' || target.hostname.endsWith('.gdt.gov.vn'))
+            ) {
+              authWin.loadURL(target.toString()).catch(() => {});
+            }
+          } catch {}
           return { action: 'deny' };
         });
 
         // 1. Đồng bộ toàn bộ Cookie từ Axios Jar sang Electron Browser Session TRƯỚC KHI load URL
         const jar = session.getCookieJar();
         try {
-          const cookies = await jar.getCookies(PORTAL_CONFIG.BASE_URL);
+          // Lấy theo URL nằm dưới /tthc để bao gồm cả cookie Path=/tthc.
+          // Lấy theo origin trần từng làm mất cookie phiên khi copy sang Electron.
+          const cookies = await jar.getCookies(PORTAL_CONFIG.TCHS_URL);
           for (const c of cookies) {
-            const domain = c.domain?.startsWith('.') ? c.domain.slice(1) : c.domain || 'dichvucong.gdt.gov.vn';
-            await authWin.webContents.session.cookies.set({
-              url: PORTAL_CONFIG.BASE_URL,
+            const cookieDetails: Electron.CookiesSetDetails = {
+              url: PORTAL_CONFIG.TCHS_URL,
               name: c.key,
               value: c.value,
-              domain,
-              path: c.path || '/'
-            }).catch(() => {});
+              path: c.path || '/',
+              secure: c.secure !== false,
+              httpOnly: Boolean(c.httpOnly)
+            };
+            if (c.expires instanceof Date && Number.isFinite(c.expires.getTime())) {
+              cookieDetails.expirationDate = c.expires.getTime() / 1000;
+            }
+            // Không truyền domain thủ công: Electron sẽ tạo host-only cookie
+            // cho dichvucong.gdt.gov.vn. Domain lấy từ tough-cookie có thể là
+            // parent domain và từng khiến BrowserWindow bị trả về /homelogin.
+            await authWin.webContents.session.cookies.set(cookieDetails).catch(() => {});
           }
         } catch {}
 
         let hasClosed = false;
+        let intervalId: ReturnType<typeof setInterval> | null = null;
+        let authTimeoutId: ReturnType<typeof setTimeout> | null = null;
+        let queryActivationPromise: Promise<boolean> | null = null;
+        let isCheckingPage = false;
+
+        const settleAuthWindow = (result: any, closeWindow = true) => {
+          if (hasClosed) return;
+          hasClosed = true;
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+          if (authTimeoutId) {
+            clearTimeout(authTimeoutId);
+            authTimeoutId = null;
+          }
+          if (closeWindow && !authWin.isDestroyed()) {
+            authWin.close();
+          }
+          resolve(result);
+        };
 
         const checkPageForEtaxSession = async () => {
-          if (hasClosed || authWin.isDestroyed()) return;
+          if (hasClosed || authWin.isDestroyed() || isCheckingPage) return;
+          isCheckingPage = true;
 
           try {
             // A. Đồng bộ ngược cookie từ Browser Window vào Axios CookieJar
@@ -547,9 +916,11 @@ export function setupIpcHandlers(
                 const pageBody = document.body ? document.body.innerText : '';
                 const isDvc = currentUrl.includes('dichvucong.gdt.gov.vn');
                 const isEtax = currentUrl.includes('thuedientu.gdt.gov.vn');
+                const isDvcLoginPage = /\\/tthc\\/(?:home)?login(?:[/?#]|$)/i.test(currentUrl);
+                const isDvcSsoEndpoint = currentUrl.includes('/tthc/sso/redirect-to-service');
 
                 // ─── 1. TỰ ĐỘNG ĐIỀU HƯỚNG TRÊN CỔNG DỊCH VỤ CÔNG ─────────────
-                if (isDvc) {
+                if (isDvc && !isDvcLoginPage && !isDvcSsoEndpoint) {
                   let banner = document.getElementById('taxinsight-sync-banner');
                   if (!banner) {
                     banner = document.createElement('div');
@@ -559,39 +930,47 @@ export function setupIpcHandlers(
                   }
                   banner.innerHTML = '<span>⚡ TaxInsight: Đang chuyển tiếp sang phân hệ Tra cứu Giấy Nộp Tiền (eTax)...</span><button id="taxinsight-btn-sso" style="background:#fff;color:#0d9488;border:none;padding:6px 14px;border-radius:6px;font-weight:bold;cursor:pointer;">Chuyển ngay ↗</button>';
                   
-                  const triggerSso = () => {
-                    fetch('/tthc/sso/redirect-to-service?module=330410', {
-                      method: 'POST',
-                      headers: {
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-                      }
-                    })
-                    .then(r => r.text())
-                    .then(url => {
-                      const cleanUrl = url.trim().replace(/^["']|["']$/g, '');
-                      if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
-                        window.location.href = cleanUrl;
-                      } else {
-                        const f = document.createElement('form');
-                        f.method = 'POST';
-                        f.action = '/tthc/sso/redirect-to-service?module=330410';
-                        f.target = '_self';
-                        document.body.appendChild(f);
-                        f.submit();
-                      }
-                    })
-                    .catch(() => {
-                      const f = document.createElement('form');
-                      f.method = 'POST';
-                      f.action = '/tthc/sso/redirect-to-service?module=330410';
-                      f.target = '_self';
-                      document.body.appendChild(f);
-                      f.submit();
-                    });
+                  const triggerSso = (manual = false) => {
+                    const now = Date.now();
+                    const attemptKey = 'taxinsight_sso_attempts';
+                    const lastKey = 'taxinsight_sso_last_at';
+                    const attempts = Number(sessionStorage.getItem(attemptKey) || '0');
+                    const lastAt = Number(sessionStorage.getItem(lastKey) || '0');
+                    if (now - lastAt < 5000 || (!manual && attempts >= 2)) {
+                      banner.innerHTML = '<span>TaxInsight đã tạm dừng tự chuyển tiếp để tránh gửi lặp. Vui lòng chờ 5 giây rồi bấm Chuyển ngay.</span><button id="taxinsight-btn-sso" disabled style="background:#e2e8f0;color:#64748b;border:none;padding:6px 14px;border-radius:6px;font-weight:bold;">Đang chờ...</button>';
+                      return;
+                    }
+                    sessionStorage.setItem(lastKey, String(now));
+                    sessionStorage.setItem(attemptKey, String(attempts + 1));
+                    const button = document.getElementById('taxinsight-btn-sso');
+                    if (button) {
+                      button.setAttribute('disabled', 'true');
+                      button.textContent = 'Đang chuyển...';
+                    }
+                    // Điều hướng bằng đúng MỘT POST. Trước đây fetch trước rồi
+                    // fallback form POST khi body không phải URL/lỗi mạng, khiến
+                    // cùng một thao tác SSO có thể chạm server hai lần.
+                    const f = document.createElement('form');
+                    f.method = 'POST';
+                    f.action = '/tthc/sso/redirect-to-service?module=330410';
+                    f.target = '_self';
+                    const csrf =
+                      (document.querySelector('input[name="_csrf"]') as HTMLInputElement | null)?.value ||
+                      (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement | null)?.content ||
+                      (document.querySelector('meta[name="_csrf"]') as HTMLMetaElement | null)?.content ||
+                      '';
+                    if (csrf) {
+                      const csrfInput = document.createElement('input');
+                      csrfInput.type = 'hidden';
+                      csrfInput.name = '_csrf';
+                      csrfInput.value = csrf;
+                      f.appendChild(csrfInput);
+                    }
+                    document.body.appendChild(f);
+                    f.submit();
                   };
 
-                  document.getElementById('taxinsight-btn-sso')?.addEventListener('click', triggerSso);
+                  document.getElementById('taxinsight-btn-sso')?.addEventListener('click', () => triggerSso(true));
 
                   if (!window._taxinsight_sso_triggered) {
                     window._taxinsight_sso_triggered = true;
@@ -663,8 +1042,12 @@ export function setupIpcHandlers(
 
                 // Tìm kiếm dse_sessionId trong DOM & Iframes
                 let sessInput = document.querySelector('input[name="dse_sessionId"]');
+                let appInput = document.querySelector('input[name="dse_applicationId"]');
                 let pageInput = document.querySelector('input[name="dse_pageId"]');
+                let opInput = document.querySelector('input[name="dse_operationName"]');
+                let stateInput = document.querySelector('input[name="dse_processorState"]');
                 let procInput = document.querySelector('input[name="dse_processorId"]');
+                let errorInput = document.querySelector('input[name="dse_errorPage"]');
 
                 if (!sessInput) {
                   const iframes = document.querySelectorAll('iframe');
@@ -673,8 +1056,12 @@ export function setupIpcHandlers(
                       const idoc = iframe.contentDocument || iframe.contentWindow.document;
                       if (idoc) {
                         sessInput = sessInput || idoc.querySelector('input[name="dse_sessionId"]');
+                        appInput = appInput || idoc.querySelector('input[name="dse_applicationId"]');
                         pageInput = pageInput || idoc.querySelector('input[name="dse_pageId"]');
+                        opInput = opInput || idoc.querySelector('input[name="dse_operationName"]');
+                        stateInput = stateInput || idoc.querySelector('input[name="dse_processorState"]');
                         procInput = procInput || idoc.querySelector('input[name="dse_processorId"]');
+                        errorInput = errorInput || idoc.querySelector('input[name="dse_errorPage"]');
                         const iframeTable = idoc.querySelector('#allResultTableBody') || idoc.querySelector('table');
                         if (iframeTable && !tableHtml) tableHtml = iframeTable.outerHTML;
                       }
@@ -691,8 +1078,12 @@ export function setupIpcHandlers(
 
                 return {
                   sessionId: sessVal || '',
-                  pageId: pageInput ? parseInt((pageInput as HTMLInputElement).value, 10) : 12,
+                  applicationId: appInput ? (appInput as HTMLInputElement).value : '',
+                  pageId: pageInput ? (pageInput as HTMLInputElement).value : '',
+                  operationName: opInput ? (opInput as HTMLInputElement).value : '',
+                  processorState: stateInput ? (stateInput as HTMLInputElement).value : '',
                   processorId: procInput ? (procInput as HTMLInputElement).value : '',
+                  errorPage: errorInput ? (errorInput as HTMLInputElement).value : '',
                   currentUrl,
                   isGntFormPresent: pageBody.includes('Tra cứu giấy nộp tiền'),
                   tableHtml,
@@ -708,19 +1099,48 @@ export function setupIpcHandlers(
             const dseSessionId = res?.sessionId || '';
             const etaxJsession = etaxCookies.find(c => c.name.toLowerCase().includes('jsession'))?.value;
 
-            if (dseSessionId) {
-              // KHÔNG fallback processorId bằng 'corpQueryTaxProc' — đó là operationName,
-              // không phải processorId. Truyền sai khiến mọi query GNT sau đó gửi
-              // dse_processorId không hợp lệ và server trả trang lỗi.
-              // Bỏ trống để PaymentSlipClient tự dùng hằng processorId mặc định của eTax.
-              paymentSlipClient.setManualSessionState(dseSessionId, res?.pageId || 12, res?.processorId || undefined);
+            const isManualStateAccepted = dseSessionId
+              ? paymentSlipClient.setManualSessionState({
+                  sessionId: dseSessionId,
+                  applicationId: String(res?.applicationId || ''),
+                  pageId: String(res?.pageId || ''),
+                  operationName: String(res?.operationName || ''),
+                  processorState: String(res?.processorState || ''),
+                  processorId: String(res?.processorId || ''),
+                  errorPage: String(res?.errorPage || ''),
+                  actionUrl: res?.currentUrl
+                })
+              : false;
+            let isManualStateReady = false;
+            if (isManualStateAccepted) {
+              if (!queryActivationPromise) {
+                queryActivationPromise = paymentSlipClient.activateManualSessionForQuery();
+              }
+              try {
+                isManualStateReady = await queryActivationPromise;
+              } catch (activationError: any) {
+                console.warn(
+                  '[paymentSlips:openAuthWindow] Backend chưa mở được form GNT từ DSE state hiện tại:',
+                  activationError?.message || activationError
+                );
+              } finally {
+                queryActivationPromise = null;
+              }
+            }
+
+            if (dseSessionId && !isManualStateAccepted) {
+              // Đã có session nhưng chưa đứng ở đúng form corpQueryTaxProc.
+              // Giữ cửa sổ mở, không đóng "thành công" với page/processor giả.
+              console.log('[paymentSlips:openAuthWindow] Đã có dse_sessionId nhưng form GNT chưa đủ state; tiếp tục chờ.');
+            } else if (isManualStateAccepted && !isManualStateReady) {
+              console.log('[paymentSlips:openAuthWindow] Đã nhận DSE state; backend đang chờ form tra cứu GNT hợp lệ.');
             } else if (etaxJsession) {
               // Giữ cửa sổ mở để chờ form eTax render hidden dse_sessionId.
               // Không được đóng thành công chỉ vì cookie JSESSIONID đã xuất hiện.
               console.log('[paymentSlips:openAuthWindow] Đã vào eTax nhưng chưa có dse_sessionId; tiếp tục chờ trang truy vấn.');
             }
 
-            if (dseSessionId && res && res.tableHtml && (res.tableHtml.includes('Giao dịch') || res.tableHtml.includes('chiTietCT') || res.tableHtml.includes('VND'))) {
+            if (isManualStateReady && res && res.tableHtml && (res.tableHtml.includes('Giao dịch') || res.tableHtml.includes('chiTietCT') || res.tableHtml.includes('VND'))) {
               const gntRecords = GntParser.parseList(res.tableHtml);
               if (gntRecords.length > 0) {
                 hasClosed = true;
@@ -731,7 +1151,7 @@ export function setupIpcHandlers(
                   maGiaoDichChiTiet: item.detailTransactionRef,
                   lanNop: item.submissionNo ? String(item.submissionNo) : undefined,
                   soGnt: item.gntNo || item.ctuId,
-                  soTien: Number(item.amount.value),
+                  soTien: GntMoneyParser.toSafeNumber(item.amount.value),
                   soTienFormatted: GntMoneyParser.formatVND(item.amount.value),
                   loaiTien: item.currency || 'VND',
                   trangThai: item.statusRaw || 'Nộp thuế thành công',
@@ -745,19 +1165,19 @@ export function setupIpcHandlers(
                   downloadAvailable: item.canDownload
                 }));
                 auditLogger.log('SUCCESS', `Trích xuất ${records.length} GNT và đồng bộ phiên eTax thành công`);
-                authWin.close();
-                resolve({ success: true, paymentSlips: records, sessionId: dseSessionId });
+                settleAuthWindow({ success: true, paymentSlips: records, sessionId: dseSessionId });
                 return;
               }
             }
 
-            if (dseSessionId) {
-              hasClosed = true;
+            if (isManualStateReady) {
               auditLogger.log('SUCCESS', 'Xác thực phiên eTax thành công qua cửa sổ trình duyệt', `Session: ${dseSessionId.slice(0, 6)}***`);
-              authWin.close();
-              resolve({ success: true, sessionId: dseSessionId });
+              settleAuthWindow({ success: true, sessionId: dseSessionId });
             }
-          } catch {}
+          } catch {
+          } finally {
+            isCheckingPage = false;
+          }
         };
 
         authWin.webContents.on('did-finish-load', checkPageForEtaxSession);
@@ -766,42 +1186,63 @@ export function setupIpcHandlers(
         authWin.webContents.on('dom-ready', checkPageForEtaxSession);
 
         // Lặp kiểm tra mỗi 1500ms
-        const intervalId = setInterval(async () => {
+        intervalId = setInterval(async () => {
           if (authWin.isDestroyed() || hasClosed) {
-            clearInterval(intervalId);
+            if (intervalId) {
+              clearInterval(intervalId);
+              intervalId = null;
+            }
             return;
           }
           await checkPageForEtaxSession();
         }, 1500);
 
+        // Không để IPC treo vô hạn khi eTax chỉ cấp JSESSIONID hoặc thay đổi DOM
+        // khiến không thể lấy đủ DSE state. Người dùng có thể mở lại để thử tiếp.
+        authTimeoutId = setTimeout(() => {
+          auditLogger.log('WARNING', 'Cửa sổ xác thực eTax hết thời gian chờ', 'Không lấy được form GNT hợp lệ sau 90 giây');
+          settleAuthWindow({
+            success: false,
+            errorCode: 'AUTH_TIMEOUT',
+            error: 'Hết thời gian chờ xác thực eTax (90 giây). Vui lòng mở lại cửa sổ và thử lại.'
+          });
+        }, 90_000);
+
         authWin.on('closed', () => {
-          clearInterval(intervalId);
+          if (paymentAuthWindow === authWin) paymentAuthWindow = null;
           if (!hasClosed) {
-            resolve({ success: false, message: 'Người dùng đã đóng cửa sổ xác thực.' });
+            settleAuthWindow({ success: false, message: 'Người dùng đã đóng cửa sổ xác thực.' }, false);
           }
         });
 
-        // Tải trang Dịch Vụ Khác sau khi đã gắn đầy đủ Cookie đăng nhập.
-        // Bắt lỗi load (offline / DNS / portal 500) — nếu không Promise IPC sẽ treo vĩnh viễn.
-        authWin.loadURL('https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac').catch(err => {
-          auditLogger.log('ERROR', 'Không thể tải trang xác thực eTax', err?.message || String(err));
-          if (!authWin.isDestroyed() && !hasClosed) {
-            hasClosed = true;
-            clearInterval(intervalId);
-            authWin.close();
-            resolve({ success: false, error: `Không thể tải trang xác thực eTax: ${err?.message || err}` });
-          }
-        });
+        // Bootstrap trang home để Electron nhận/refresh đầy đủ cookie phiên DVC.
+        // Listener phía trên sẽ chờ portal rời /homelogin|/login rồi mới gửi
+        // POST SSO từ trang DVC đã xác thực.
+        authWin.loadURL('https://dichvucong.gdt.gov.vn/tthc/home?isChooseDgDinhKy=Y')
+          .catch(err => {
+            auditLogger.log('ERROR', 'Không thể tải trang xác thực eTax', err?.message || String(err));
+            if (!authWin.isDestroyed() && !hasClosed) {
+              settleAuthWindow({ success: false, error: `Không thể tải trang xác thực eTax: ${err?.message || err}` });
+            }
+          });
       } catch (err: any) {
         resolve({ success: false, error: err.message });
       }
     });
+    paymentAuthPromise = authPromise;
+    try {
+      return await authPromise;
+    } finally {
+      if (paymentAuthPromise === authPromise) paymentAuthPromise = null;
+      if (paymentAuthWindow?.isDestroyed()) paymentAuthWindow = null;
+    }
   });
 
   ipcMain.handle('paymentSlips:scan', async (_event, { range, options }) => {
     try {
-      auditLogger.log('INFO', `Bắt đầu tra cứu Giấy Nộp Tiền (${range.fromDate} → ${range.toDate})`);
-      const results = await paymentSlipClient.searchPaymentSlips(range, options || {});
+      const safeRange = normalizeDateRange(range);
+      auditLogger.log('INFO', `Bắt đầu tra cứu Giấy Nộp Tiền (${safeRange.fromDate} → ${safeRange.toDate})`);
+      const results = await paymentSlipClient.searchPaymentSlips(safeRange, options || {});
       auditLogger.log('SUCCESS', `Tìm thấy ${results.length} Giấy Nộp Tiền trên eTax`);
       return { success: true, paymentSlips: results };
     } catch (err: any) {
@@ -822,23 +1263,39 @@ export function setupIpcHandlers(
 
   ipcMain.handle('paymentSlips:getDetail', async (_event, { ctuId, soGnt, maGiaoDich }) => {
     try {
-      const detail = await paymentSlipClient.getPaymentSlipDetail(ctuId, { soGnt, maGiaoDich });
+      const safeCtuId = normalizeCtuId(ctuId);
+      const detail = await paymentSlipClient.getPaymentSlipDetail(safeCtuId, {
+        soGnt: String(soGnt || '').slice(0, 128),
+        maGiaoDich: String(maGiaoDich || '').slice(0, 128)
+      });
+      if (detail?.suspectedMismatch || detail?.detailIntegrity === 'MISMATCH') {
+        return {
+          success: false,
+          errorCode: 'GNT_DETAIL_MISMATCH',
+          error: `Chi tiết eTax không khớp hoặc không cân với chứng từ ${soGnt || safeCtuId}; dữ liệu đã bị loại khỏi đối chiếu.`
+        };
+      }
       return detail
         ? { success: true, detail }
-        : { success: false, error: `Không tìm thấy chi tiết Giấy Nộp Tiền ID ${ctuId}` };
-    } catch (err: unknown) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+        : { success: false, error: `Không tìm thấy chi tiết Giấy Nộp Tiền ID ${safeCtuId}` };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        errorCode: err?.code || err?.errorCode
+      };
     }
   });
 
   ipcMain.handle('paymentSlips:exportExcel', async (_event, { paymentSlips, year }) => {
     try {
-      const taxCode = session.getSessionInfo().taxCode || 'DEFAULT';
+      const taxCode = requireSessionTaxCode();
+      const safePaymentSlips = normalizePaymentSlipList(paymentSlips);
       const outPath = await ExcelExporter.exportPaymentSlipsToExcel(
-        paymentSlips,
+        safePaymentSlips,
         fileOrganizer.getBaseDir(),
         taxCode,
-        year
+        normalizeYear(year)
       );
       auditLogger.log('SUCCESS', 'Xuất bảng kê Giấy Nộp Tiền ra file Excel thành công', outPath);
       return { success: true, filePath: outPath };
@@ -850,14 +1307,28 @@ export function setupIpcHandlers(
 
   ipcMain.handle('paymentSlips:exportPdf', async (_event, { ctuId, soGnt, maGiaoDich, customFilename }) => {
     try {
-      const detail = await paymentSlipClient.getPaymentSlipDetail(ctuId, { soGnt, maGiaoDich });
-      if (!detail) {
-        throw new Error(`Không tìm thấy chi tiết Giấy Nộp Tiền ID ${ctuId}`);
+      const safeCtuId = normalizeCtuId(ctuId);
+      const detail = await paymentSlipClient.getPaymentSlipDetail(safeCtuId, {
+        soGnt: String(soGnt || '').slice(0, 128),
+        maGiaoDich: String(maGiaoDich || '').slice(0, 128)
+      });
+      const validation = validateC102Detail(detail);
+      if (!detail || !validation.valid) {
+        throw new Error(
+          `Không thể xuất C1-02/NS cho chứng từ ${soGnt || safeCtuId}: ${validation.errors.join(' ')}`
+        );
       }
-      const taxCode = session.getSessionInfo().taxCode || 'DEFAULT';
+      if (validation.warnings.length > 0) {
+        auditLogger.log(
+          'WARNING',
+          `Xuất C1-02/NS có cảnh báo dữ liệu: ${soGnt || safeCtuId}`,
+          validation.warnings.join(' ')
+        );
+      }
+      const taxCode = requireSessionTaxCode();
 
       const baseDir = fileOrganizer.getBaseDir();
-      const gntDir = path.join(baseDir, taxCode, 'GiayNopTien');
+      const gntDir = baseDir;
       if (!fs.existsSync(gntDir)) {
         fs.mkdirSync(gntDir, { recursive: true });
       }
@@ -884,7 +1355,7 @@ export function setupIpcHandlers(
         const dateStr = dateRaw ? dateRaw.split('/').reverse().join('') : '';
         // Gắn ctuId vào tên file: 2 GNT khác nhau trùng loại thuế/kỳ/số tiền/ngày
         // trước đây ghi đè PDF của nhau im lặng
-        fileName = sanitizeFilename(`GNT_${taxLabel}_${kyStr}_${tienStr}_${dateStr || detail.soGnt}_${ctuId}.pdf`);
+        fileName = sanitizeFilename(`GNT_${taxLabel}_${kyStr}_${tienStr}_${dateStr || detail.soGnt}_${safeCtuId}.pdf`);
       }
       if (!fileName.toLowerCase().endsWith('.pdf')) {
         fileName += '.pdf';
@@ -941,7 +1412,8 @@ export function setupIpcHandlers(
   // ─── THỐNG KÊ GNT: tổng hợp tiền ĐÃ NỘP theo Tháng × Loại thuế ───────────
   ipcMain.handle('paymentSlips:statistics', async (_event, { paymentSlips }) => {
     try {
-      const list: PaymentSlipRecord[] = Array.isArray(paymentSlips) ? paymentSlips : [];
+      requireSessionTaxCode();
+      const list = normalizePaymentSlipList(paymentSlips);
       if (list.length === 0) {
         return { success: false, error: 'Chưa có danh sách Giấy Nộp Tiền để thống kê' };
       }
@@ -951,13 +1423,44 @@ export function setupIpcHandlers(
       // Fetch song song có giới hạn (single-flight & cache vẫn hiệu lực trong client).
       const detailMap = new Map<string, Awaited<ReturnType<PaymentSlipClient['getPaymentSlipDetail']>>>();
       const paidCandidates = list.filter(s => s.ngayNopThue);
-      const GNT_DETAIL_CONCURRENCY = 4;
+      const GNT_DETAIL_CONCURRENCY = 1;
       let cursor = 0;
+      let stopDetailFetch = false;
       const workerCount = Math.min(GNT_DETAIL_CONCURRENCY, paidCandidates.length);
       await Promise.all(Array.from({ length: workerCount }, async () => {
-        while (cursor < paidCandidates.length) {
+        while (!stopDetailFetch && cursor < paidCandidates.length) {
           const slip = paidCandidates[cursor++];
-          detailMap.set(slip.id, await paymentSlipClient.getPaymentSlipDetail(slip.id));
+          try {
+            detailMap.set(
+              slip.id,
+              await paymentSlipClient.getPaymentSlipDetail(slip.id, {
+                soGnt: slip.soGnt,
+                maGiaoDich: slip.maGiaoDich
+              })
+            );
+          } catch (detailError: unknown) {
+            const err = detailError as any;
+            const message = detailError instanceof Error ? detailError.message : String(detailError);
+            auditLogger.log('WARNING', `Không đọc được chi tiết GNT ${slip.soGnt || slip.id}`, message);
+            detailMap.set(slip.id, null);
+            const status = Number(err?.response?.status || err?.httpStatus || 0);
+            const code = String(err?.code || err?.errorCode || '');
+            if (
+              status === 429 ||
+              status >= 500 ||
+              ['RATE_LIMIT', 'ETAX_SYSTEM_ERROR', 'SESSION_EXPIRED', 'AUTH_REQUIRED'].includes(code)
+            ) {
+              stopDetailFetch = true;
+              auditLogger.log(
+                'WARNING',
+                'Dừng tải chi tiết GNT còn lại để tránh Request Avalanche',
+                `${code || `HTTP ${status}`} — ${paidCandidates.length - cursor} chứng từ chưa gọi`
+              );
+            }
+          }
+          if (!stopDetailFetch && cursor < paidCandidates.length) {
+            await new Promise(resolve => setTimeout(resolve, 150));
+          }
         }
       }));
 
@@ -978,15 +1481,17 @@ export function setupIpcHandlers(
       return { success: false, error: 'Thư viện Excel chưa sẵn sàng' };
     }
     try {
-      if (!stats || !stats.cells || stats.cells.length === 0) {
+      const safeStats = normalizeGntStatistics(stats);
+      if (safeStats.cells.length === 0) {
         throw new Error('Không có dữ liệu thống kê để xuất');
       }
-      const taxCode = session.getSessionInfo().taxCode || 'DEFAULT';
+      const taxCode = requireSessionTaxCode();
+      const safeYear = normalizeYear(year);
       const baseDir = fileOrganizer.getBaseDir();
-      const gntDir = path.join(baseDir, taxCode, 'GiayNopTien');
+      const gntDir = baseDir;
       if (!fs.existsSync(gntDir)) fs.mkdirSync(gntDir, { recursive: true });
 
-      const buckets: GntStatBucket[] = stats.activeBuckets;
+      const buckets: GntStatBucket[] = safeStats.activeBuckets;
       const wb = new ExcelJS.Workbook();
       wb.creator = 'TaxInsight';
       const ws = wb.addWorksheet('Thong ke GNT');
@@ -996,7 +1501,7 @@ export function setupIpcHandlers(
       ws.getCell(1, 1).font = { bold: true, size: 13 };
 
       ws.mergeCells(2, 1, 2, 2 + buckets.length + 1);
-      ws.getCell(2, 1).value = `MST: ${taxCode}   |   Năm dữ liệu: ${year}   |   Xuất lúc: ${new Date().toLocaleString('vi-VN')}   |   Đơn vị: VND`;
+      ws.getCell(2, 1).value = `MST: ${taxCode}   |   Năm dữ liệu: ${safeYear}   |   Xuất lúc: ${new Date().toLocaleString('vi-VN')}   |   Đơn vị: VND`;
       ws.getCell(2, 1).font = { size: 10, italic: true };
 
       // Header
@@ -1009,16 +1514,16 @@ export function setupIpcHandlers(
 
       // Data rows
       let r = headerRow + 1;
-      for (const mk of stats.monthKeys) {
+      for (const mk of safeStats.monthKeys) {
         ws.getCell(r, 1).value = `Tháng ${mk}`;
         buckets.forEach((b, i) => {
-          const v = GntStatisticsEngine.amountOf(stats, mk, b);
+          const v = GntStatisticsEngine.amountOf(safeStats, mk, b);
           const cell = ws.getCell(r, 2 + i);
           cell.value = v || null;
           cell.numFmt = '#,##0';
         });
         const tot = ws.getCell(r, 2 + buckets.length);
-        tot.value = GntStatisticsEngine.rowTotal(stats, mk);
+        tot.value = GntStatisticsEngine.rowTotal(safeStats, mk);
         tot.numFmt = '#,##0';
         tot.font = { bold: true };
         r++;
@@ -1029,27 +1534,27 @@ export function setupIpcHandlers(
       ws.getCell(r, 1).font = { bold: true };
       buckets.forEach((b, i) => {
         const c = ws.getCell(r, 2 + i);
-        c.value = GntStatisticsEngine.columnTotal(stats, b);
+        c.value = GntStatisticsEngine.columnTotal(safeStats, b);
         c.numFmt = '#,##0';
         c.font = { bold: true };
       });
       const gt = ws.getCell(r, 2 + buckets.length);
-      gt.value = stats.grandTotal;
+      gt.value = safeStats.grandTotal;
       gt.numFmt = '#,##0';
       gt.font = { bold: true };
       gt.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
 
       // Notes
       r += 2;
-      ws.getCell(r, 1).value = `Ghi chú: chỉ tính GNT đã nộp thành công (${stats.paidCount} giấy); bỏ qua ${stats.skippedUnpaidCount} giấy chưa nộp/thất bại.`;
-      if (stats.noDetailCount > 0) {
-        ws.getCell(r + 1, 1).value = `${stats.noDetailCount} giấy không đọc được chi tiết C1-02/NS nên toàn bộ số tiền tạm xếp vào cột "Chưa phân loại".`;
+      ws.getCell(r, 1).value = `Ghi chú: chỉ tính GNT đã nộp thành công (${safeStats.paidCount} giấy); bỏ qua ${safeStats.skippedUnpaidCount} giấy chưa nộp/thất bại.`;
+      if (safeStats.noDetailCount > 0) {
+        ws.getCell(r + 1, 1).value = `${safeStats.noDetailCount} giấy không đọc được chi tiết C1-02/NS nên toàn bộ số tiền tạm xếp vào cột "Chưa phân loại".`;
       }
 
       ws.getColumn(1).width = 18;
       for (let i = 2; i <= 2 + buckets.length; i++) ws.getColumn(i).width = 16;
 
-      const fileName = sanitizeFilename(`ThongKe_GNT_${year}_${Date.now()}.xlsx`);
+      const fileName = sanitizeFilename(`ThongKe_GNT_${safeYear}_${Date.now()}.xlsx`);
       const targetPath = path.join(gntDir, fileName);
       await wb.xlsx.writeFile(targetPath);
       auditLogger.log('SUCCESS', 'Xuat Excel thong ke GNT thanh cong', targetPath);
@@ -1063,47 +1568,174 @@ export function setupIpcHandlers(
 
   // ─── CHECKPOINT & AUDIT IPC HANDLERS ────────────────────────────────
   ipcMain.handle('checkpoint:get', async (_event, { taxCode, year }) => {
-    if (!isValidTaxCode(taxCode)) {
-      return { success: false, data: null, error: 'Mã số thuế không hợp lệ' };
+    try {
+      const safeTaxCode = requireSessionTaxCode(taxCode);
+      const data = checkpointStore.loadCheckpoint(safeTaxCode, normalizeYear(year));
+      return { success: true, data };
+    } catch (err: any) {
+      return { success: false, data: null, error: err.message };
     }
-    const data = checkpointStore.loadCheckpoint(taxCode.trim(), normalizeYear(year));
-    return { success: true, data };
   });
 
   ipcMain.handle('checkpoint:clear', async (_event, { taxCode, year }) => {
-    if (!isValidTaxCode(taxCode)) {
-      return { success: false, error: 'Mã số thuế không hợp lệ' };
+    try {
+      checkpointStore.clearCheckpoint(requireSessionTaxCode(taxCode), normalizeYear(year));
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
-    checkpointStore.clearCheckpoint(taxCode.trim(), normalizeYear(year));
-    return { success: true };
   });
 
   // ─── GNT CHECKPOINT (PERSISTENCE GIẤY NỘP TIỀN THEO MST + NĂM) ──────
   ipcMain.handle('gntCheckpoint:get', async (_event, { taxCode, year }) => {
-    if (!isValidTaxCode(taxCode)) {
-      return { success: false, data: null as GntCheckpointData | null, error: 'Mã số thuế không hợp lệ' };
+    try {
+      const data = gntCheckpointStore.load(requireSessionTaxCode(taxCode), normalizeYear(year));
+      return { success: true, data };
+    } catch (err: any) {
+      return { success: false, data: null as GntCheckpointData | null, error: err.message };
     }
-    const data = gntCheckpointStore.load(taxCode.trim(), normalizeYear(year));
-    return { success: true, data };
   });
 
   ipcMain.handle('gntCheckpoint:save', async (_event, { taxCode, year, paymentSlips, dateRange }) => {
-    if (!isValidTaxCode(taxCode)) {
-      return { success: false, error: 'Mã số thuế không hợp lệ' };
+    try {
+      const safeTaxCode = requireSessionTaxCode(taxCode);
+      const safePaymentSlips = normalizePaymentSlipList(paymentSlips);
+      const safeDateRange = dateRange ? normalizeDateRange(dateRange) : undefined;
+      gntCheckpointStore.save(safeTaxCode, normalizeYear(year), safePaymentSlips, safeDateRange);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
-    if (!Array.isArray(paymentSlips)) {
-      return { success: false, error: 'Danh sách Giấy Nộp Tiền không hợp lệ' };
-    }
-    gntCheckpointStore.save(taxCode.trim(), normalizeYear(year), paymentSlips as PaymentSlipRecord[], dateRange);
-    return { success: true };
   });
 
   ipcMain.handle('gntCheckpoint:clear', async (_event, { taxCode, year }) => {
-    if (!isValidTaxCode(taxCode)) {
-      return { success: false, error: 'Mã số thuế không hợp lệ' };
+    try {
+      gntCheckpointStore.clear(requireSessionTaxCode(taxCode), normalizeYear(year));
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
-    gntCheckpointStore.clear(taxCode.trim(), normalizeYear(year));
+  });
+
+  // ─── LEGACY FILING IPC HANDLERS (TRA CỨU & TẢI TỜ KHAI NĂM CŨ QUA ETAX/DVC) ───
+  ipcMain.handle('legacyFiling:scan', async (_event, { yearFrom, yearTo, maTKhai, onlyMissing }) => {
+    try {
+      const safeTaxCode = requireSessionTaxCode();
+      const from = normalizeHistoricalYear(yearFrom);
+      const to = normalizeHistoricalYear(yearTo);
+      if (Math.abs(to - from) > 20) {
+        throw new Error('Mỗi đợt tra cứu năm cũ chỉ được tối đa 20 năm.');
+      }
+      const safeMaTKhai = String(maTKhai || '00').trim();
+      if (!/^[0-9A-Za-z._/-]{1,32}$/.test(safeMaTKhai)) {
+        throw new Error('Mã mẫu tờ khai không hợp lệ.');
+      }
+      auditLogger.log('INFO', `Bắt đầu tra cứu tờ khai năm cũ qua DVC/eTax (${from} - ${to})`);
+
+      const result = await legacyFilingWorkflow.executeLookup({
+        taxpayerId: safeTaxCode,
+        yearFrom: from,
+        yearTo: to,
+        maTKhai: safeMaTKhai,
+        onlyMissing: Boolean(onlyMissing)
+      });
+
+      auditLogger.log('SUCCESS', `Hoàn thành tra cứu năm cũ: tìm thấy ${result.filings.length} tờ khai`);
+      return { success: true, filings: result.filings, historicalRecords: result.historicalRecords };
+    } catch (err: any) {
+      auditLogger.log('ERROR', 'Lỗi khi tra cứu tờ khai năm cũ', err.message);
+      return { success: false, error: err.message, errorCode: err.code };
+    }
+  });
+
+  ipcMain.handle('legacyFiling:cancel', async () => {
+    legacyFilingWorkflow.cancel();
+    legacyFilingDownloader.cancel();
+    auditLogger.log('WARNING', 'Người dùng đã hủy tra cứu/tải tờ khai năm cũ');
     return { success: true };
+  });
+
+  ipcMain.handle('legacyFiling:download', async (_event, { filings, taxCode, year }) => {
+    try {
+      const safeTaxCode = requireSessionTaxCode(taxCode);
+      const safeFilings = normalizeFilingList(filings).filter(
+        filing => filing.source === 'dvc-etax-html' && Boolean(filing.messageId || filing.id)
+      );
+      if (!safeFilings.length) {
+        throw new Error('Danh sách không có tờ khai eTax năm cũ hợp lệ.');
+      }
+      const safeYear = normalizeHistoricalYear(year);
+
+      legacyFilingDownloader.setContext(safeTaxCode, safeYear);
+      legacyFilingDownloader.enqueueFilings(safeFilings, safeTaxCode, safeYear);
+      await legacyFilingDownloader.start();
+
+      auditLogger.log('INFO', `Bắt đầu tải ${safeFilings.length} tờ khai năm cũ`);
+      return { success: true, summary: legacyFilingDownloader.getSummary() };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('legacyFiling:pauseDownload', async () => {
+    legacyFilingDownloader.pause();
+    return { success: true };
+  });
+
+  ipcMain.handle('legacyFiling:resumeDownload', async () => {
+    try {
+      await legacyFilingDownloader.resume();
+      auditLogger.log('INFO', 'Tiếp tục tải tờ khai năm cũ');
+      return { success: true, summary: legacyFilingDownloader.getSummary() };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Không thể tiếp tục tải' };
+    }
+  });
+
+  ipcMain.handle('legacyFiling:cancelDownload', async () => {
+    legacyFilingDownloader.cancel();
+    auditLogger.log('WARNING', 'Đã hủy tiến trình tải tờ khai năm cũ');
+    return { success: true };
+  });
+
+  ipcMain.handle('legacyFiling:getDownloadSummary', async () => {
+    return legacyFilingDownloader.getSummary();
+  });
+
+  ipcMain.handle('legacyFiling:getFormOptions', async () => {
+    try {
+      const options = legacyFilingClient.getAvailableFormOptions();
+      return { success: true, options };
+    } catch (err: any) {
+      return { success: false, options: [], error: err.message };
+    }
+  });
+
+  ipcMain.handle('legacyFiling:getCheckpoint', async (_event, { taxCode, yearFrom, yearTo }) => {
+    try {
+      const safeTaxCode = requireSessionTaxCode(taxCode);
+      const data = historicalCheckpointStore.loadCheckpoint(
+        safeTaxCode,
+        normalizeHistoricalYear(yearFrom),
+        normalizeHistoricalYear(yearTo)
+      );
+      return { success: true, data };
+    } catch (err: any) {
+      return { success: false, data: null, error: err.message };
+    }
+  });
+
+  ipcMain.handle('legacyFiling:clearCheckpoint', async (_event, { taxCode, yearFrom, yearTo }) => {
+    try {
+      historicalCheckpointStore.clearCheckpoint(
+        requireSessionTaxCode(taxCode),
+        normalizeHistoricalYear(yearFrom),
+        normalizeHistoricalYear(yearTo)
+      );
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });
 
   // ─── APP INFO ───────────────────────────────────────────────────────
@@ -1125,6 +1757,9 @@ export function setupIpcHandlers(
   });
 
   ipcMain.handle('license:activate', async (_event, { licenseKey }: { licenseKey: string }) => {
+    if (typeof licenseKey !== 'string' || licenseKey.length > 8192) {
+      return { success: false, error: 'Khóa bản quyền không hợp lệ.' };
+    }
     const res = LicenseManager.activateLicense(licenseKey);
     if (res.success) {
       auditLogger.log('SUCCESS', 'Kích hoạt bản quyền TaxRecord thành công');
@@ -1144,18 +1779,18 @@ export function setupIpcHandlers(
   });
 
   ipcMain.handle('accounts:save', async (_event, opts) => {
-    return AccountStore.saveAccount(opts);
-  });
-
-  ipcMain.handle('accounts:getCredentials', async (_event, { taxCode }: { taxCode: string }) => {
-    // Audit khi mật khẩu được giải mã & trả về renderer (truy vết nếu có truy
-    // cập nhật thường bất thường từ renderer bị chiếm)
-    auditLogger.log('INFO', 'Trả thông tin đăng nhập đã lưu cho renderer', `MST: ${taxCode}`);
-    return AccountStore.getAccountCredentials(taxCode);
+    if (!opts || !isValidTaxCode(String(opts.taxCode || '').trim())) return false;
+    if (opts.password !== undefined && (typeof opts.password !== 'string' || opts.password.length > 512)) return false;
+    return AccountStore.saveAccount({
+      ...opts,
+      taxCode: String(opts.taxCode).trim(),
+      companyName: opts.companyName ? String(opts.companyName).slice(0, 256) : undefined
+    });
   });
 
   ipcMain.handle('accounts:remove', async (_event, { taxCode }: { taxCode: string }) => {
-    return AccountStore.removeAccount(taxCode);
+    if (!isValidTaxCode(String(taxCode || '').trim())) return false;
+    return AccountStore.removeAccount(String(taxCode).trim());
   });
 
   // ─── AUTO-UPDATER IPC HANDLERS ───────────────────────────────────────
@@ -1176,13 +1811,17 @@ export function setupIpcHandlers(
     return { success: true };
   });
 
-  // ─── API INSPECTOR (ADMIN / DEV DIAGNOSTICS) ─────────────────────────
+  // ─── API INSPECTOR (LOCAL SUPPORT DIAGNOSTICS) ───────────────────────
+  // Dữ liệu đã được sanitize ngay tại interceptor. Người dùng cần xem được
+  // request lỗi của chính ứng dụng mà không phụ thuộc một PIN build-time vốn
+  // không được cấu hình trên bản phát hành.
   ipcMain.handle('inspector:getEntries', async () => {
     return ApiInspectorManager.getInstance().getEntries();
   });
 
   ipcMain.handle('inspector:clear', async () => {
-    ApiInspectorManager.getInstance().clearEntries();
+    const inspector = ApiInspectorManager.getInstance();
+    inspector.clearEntries();
     return { success: true };
   });
 
@@ -1191,6 +1830,9 @@ export function setupIpcHandlers(
   });
 
   ipcMain.handle('inspector:verifyAdminPin', async (_event, { pin }: { pin: string }) => {
+    if (typeof pin !== 'string' || pin.length > 256) {
+      return { success: false, error: 'PIN không hợp lệ.' };
+    }
     return ApiInspectorManager.getInstance().verifyAdminPin(pin);
   });
 

@@ -149,7 +149,7 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
     expect(summary.completed).toBe(3);
     expect(summary.pending).toBe(0);
     expect(summary.failed).toBe(0);
-    expect(client.validateIdTkhai).toHaveBeenCalled();
+    expect(client.downloadHoSo).toHaveBeenCalled();
     expect(summary.state).toBe('COMPLETED');
 
     // Invariant
@@ -235,5 +235,117 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
     // Không item nào của lô cũ sống sót trong hàng đợi
     const queueIds = manager.getQueue().map(q => q.filingId);
     expect(queueIds).toEqual(['F01', 'F02', 'F03']);
+  });
+
+  it('8. HTTP 429 đầu tiên kích hoạt circuit breaker, không chạy tiếp toàn bộ queue', async () => {
+    const client = createMockClient({ isAlive: true });
+    client.downloadHoSo = vi.fn().mockRejectedValue(
+      Object.assign(new Error('HTTP 429 Too Many Requests'), {
+        code: 'RATE_LIMIT',
+        httpStatus: 429
+      })
+    );
+    const organizer = createMockOrganizer();
+    const manager = new DownloadManager(client, organizer);
+    manager.enqueueFilings(sampleFilings, '3702735709', 2026);
+
+    await manager.start();
+    await new Promise(r => setTimeout(r, 350));
+
+    expect(vi.mocked(client.downloadHoSo).mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(vi.mocked(client.downloadHoSo).mock.calls.length).toBeLessThanOrEqual(2);
+    expect(manager.getState()).toBe('PAUSED');
+    expect(manager.getSummary().pending).toBe(5);
+  });
+
+  it('9. hai HTTP 500 liên tiếp tạm dừng batch thay vì tạo lỗi cho mọi hồ sơ', async () => {
+    const client = createMockClient({ isAlive: true });
+    client.downloadHoSo = vi.fn().mockRejectedValue(
+      Object.assign(new Error('HTTP 500 Internal Server Error'), {
+        code: 'SERVER_ERROR',
+        httpStatus: 500
+      })
+    );
+    const organizer = createMockOrganizer();
+    const manager = new DownloadManager(client, organizer);
+    manager.enqueueFilings(sampleFilings, '3702735709', 2026);
+
+    await manager.start();
+    await new Promise(r => setTimeout(r, 350));
+
+    expect(client.downloadHoSo).toHaveBeenCalledTimes(2);
+    expect(manager.getState()).toBe('PAUSED');
+    expect(manager.getSummary().failed).toBe(2);
+    expect(manager.getSummary().pending).toBe(3);
+  });
+
+  it('9b. HTTP 500 mang dấu hiệu payload riêng lẻ không kích hoạt circuit breaker cấp batch', async () => {
+    const client = createMockClient({ isAlive: true });
+    client.downloadHoSo = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Máy chủ trả Download failed cho hồ sơ hiện tại'), {
+        code: 'SERVER_ERROR',
+        httpStatus: 500,
+        attempts: [{
+          label: 'STD-maHoSo',
+          status: 500,
+          ms: 20,
+          head: 'Download failed: Hồ sơ truyền lên không hợp lệ'
+        }]
+      })
+    );
+    const organizer = createMockOrganizer();
+    const manager = new DownloadManager(client, organizer);
+    manager.enqueueFilings(sampleFilings, '3702735709', 2026);
+
+    await manager.start();
+    const deadline = Date.now() + 2000;
+    while (manager.getState() === 'RUNNING' && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 25));
+    }
+
+    expect(client.downloadHoSo).toHaveBeenCalledTimes(sampleFilings.length);
+    expect(manager.getState()).toBe('COMPLETED');
+    expect(manager.getSummary().failed).toBe(sampleFilings.length);
+    expect(manager.getSummary().pending).toBe(0);
+  });
+
+  it('10. worker cũ không được ghi file sau pause/resume', async () => {
+    const client = createMockClient({ isAlive: true });
+    const releases: Array<(payload: any) => void> = [];
+    client.downloadHoSo = vi.fn().mockImplementation(
+      () => new Promise(resolve => releases.push(resolve))
+    );
+    const organizer = createMockOrganizer();
+    const manager = new DownloadManager(client, organizer);
+    manager.enqueueFilings([sampleFilings[0]], '3702735709', 2026);
+
+    await manager.start();
+    while (releases.length < 1) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+
+    manager.pause();
+    await manager.resume();
+    while (releases.length < 2) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+
+    releases[0]({
+      fileName: 'stale.zip',
+      fileType: 'application/zip',
+      content: 'UEsDBBQAAAAIAA=='
+    });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(organizer.saveExtractedFiling).not.toHaveBeenCalled();
+
+    releases[1]({
+      fileName: 'fresh.zip',
+      fileType: 'application/zip',
+      content: 'UEsDBBQAAAAIAA=='
+    });
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    expect(organizer.saveExtractedFiling).toHaveBeenCalledTimes(1);
+    expect(manager.getSummary().completed).toBe(1);
   });
 });

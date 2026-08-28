@@ -54,6 +54,10 @@ export class BusinessDayCalendar {
     '2026-09-02': 'Quốc khánh 2/9'
   };
 
+  public static hasHolidayCoverage(year: number): boolean {
+    return Object.keys(this.holidays).some(date => date.startsWith(`${year}-`));
+  }
+
   /**
    * Kiểm tra một ngày có phải ngày nghỉ (Thứ 7, Chủ Nhật, hoặc Ngày lễ) hay không
    */

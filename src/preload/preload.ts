@@ -7,6 +7,8 @@ const api = {
   solveCaptcha: (imageBase64: string) => ipcRenderer.invoke('auth:solveCaptcha', { imageBase64 }),
   login: (credentials: { taxCode: string; password: string; captcha: string }) =>
     ipcRenderer.invoke('auth:login', credentials),
+  loginSaved: (credentials: { taxCode: string; captcha: string }) =>
+    ipcRenderer.invoke('auth:loginSaved', credentials),
   logout: () => ipcRenderer.invoke('auth:logout'),
   getSession: () => ipcRenderer.invoke('auth:getSession'),
   checkSession: () => ipcRenderer.invoke('auth:checkSession'),
@@ -76,6 +78,53 @@ const api = {
   clearGntCheckpoint: (params: { taxCode: string; year: number }) =>
     ipcRenderer.invoke('gntCheckpoint:clear', params),
 
+  // Phân hệ Tra Cứu Tờ Khai Năm Cũ (Legacy Filing qua eTax/DVC)
+  scanLegacyFilings: (params: { yearFrom: number; yearTo: number; maTKhai?: string; onlyMissing?: boolean }) =>
+    ipcRenderer.invoke('legacyFiling:scan', params),
+  cancelLegacyFilingScan: () =>
+    ipcRenderer.invoke('legacyFiling:cancel'),
+  startLegacyFilingDownload: (params: { filings: TaxFiling[]; taxCode?: string; year?: number }) =>
+    ipcRenderer.invoke('legacyFiling:download', params),
+  pauseLegacyFilingDownload: () =>
+    ipcRenderer.invoke('legacyFiling:pauseDownload'),
+  resumeLegacyFilingDownload: () =>
+    ipcRenderer.invoke('legacyFiling:resumeDownload'),
+  cancelLegacyFilingDownload: () =>
+    ipcRenderer.invoke('legacyFiling:cancelDownload'),
+  getLegacyFilingDownloadSummary: () =>
+    ipcRenderer.invoke('legacyFiling:getDownloadSummary'),
+  getLegacyFilingFormOptions: () =>
+    ipcRenderer.invoke('legacyFiling:getFormOptions'),
+  getLegacyFilingCheckpoint: (params: { taxCode: string; yearFrom: number; yearTo: number }) =>
+    ipcRenderer.invoke('legacyFiling:getCheckpoint', params),
+  clearLegacyFilingCheckpoint: (params: { taxCode: string; yearFrom: number; yearTo: number }) =>
+    ipcRenderer.invoke('legacyFiling:clearCheckpoint', params),
+  onLegacyFilingProgress: (callback: (data: any) => void) => {
+    const handler = (_: any, data: any) => callback(data);
+    ipcRenderer.on('legacyFiling:progress', handler);
+    return () => ipcRenderer.removeListener('legacyFiling:progress', handler);
+  },
+  onLegacyFilingStateChange: (callback: (data: { state: string; detail?: string }) => void) => {
+    const handler = (_: any, data: any) => callback(data);
+    ipcRenderer.on('legacyFiling:stateChange', handler);
+    return () => ipcRenderer.removeListener('legacyFiling:stateChange', handler);
+  },
+  onLegacyFilingDownloadProgress: (callback: (data: any) => void) => {
+    const handler = (_: any, data: any) => callback(data);
+    ipcRenderer.on('legacyFiling:downloadProgress', handler);
+    return () => ipcRenderer.removeListener('legacyFiling:downloadProgress', handler);
+  },
+  onLegacyFilingDownloadCompleted: (callback: (summary: any) => void) => {
+    const handler = (_: any, data: any) => callback(data);
+    ipcRenderer.on('legacyFiling:downloadCompleted', handler);
+    return () => ipcRenderer.removeListener('legacyFiling:downloadCompleted', handler);
+  },
+  onLegacyFilingAuthExpired: (callback: (data: any) => void) => {
+    const handler = (_: any, data: any) => callback(data);
+    ipcRenderer.on('legacyFiling:authExpired', handler);
+    return () => ipcRenderer.removeListener('legacyFiling:authExpired', handler);
+  },
+
   // App info
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
 
@@ -95,8 +144,6 @@ const api = {
   getSavedAccounts: () => ipcRenderer.invoke('accounts:getSaved'),
   saveAccount: (params: { taxCode: string; password?: string; companyName?: string; savePassword?: boolean }) =>
     ipcRenderer.invoke('accounts:save', params),
-  getAccountCredentials: (params: { taxCode: string }) =>
-    ipcRenderer.invoke('accounts:getCredentials', params),
   removeSavedAccount: (params: { taxCode: string }) =>
     ipcRenderer.invoke('accounts:remove', params),
 

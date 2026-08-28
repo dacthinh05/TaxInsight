@@ -21,10 +21,15 @@ export class CaptchaManager extends EventEmitter {
   /**
    * Tạo một thử thách CAPTCHA:
    * 1. Thử tự động giải mã offline qua CaptchaSolver
-   * 2. Nếu giải được chuỗi 4-6 ký tự hợp lệ -> trả về ngay (Zero-friction 1-Click)
+   * 2. Chỉ tự gửi khi đa số pipeline OCR cùng đồng thuận mạnh.
    * 3. Nếu không giải được hoặc bị lỗi -> emit sự kiện cho modal người dùng nhập tay
    */
-  public async requestCaptcha(purpose: 'LOGIN' | 'SEARCH', targetRange?: DateRange, forceManual = false): Promise<string> {
+  public async requestCaptcha(
+    purpose: 'LOGIN' | 'SEARCH',
+    targetRange?: DateRange,
+    forceManual = false,
+    context: Pick<CaptchaChallenge, 'requestReason' | 'page' | 'attempt' | 'maxAttempts'> = {}
+  ): Promise<string> {
     const imageBase64 = await this.client.getCaptchaImage(purpose);
     const challengeId = `chal_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
@@ -34,9 +39,9 @@ export class CaptchaManager extends EventEmitter {
     if (this.autoSolveEnabled && !forceManual && imageBase64) {
       try {
         const result = await CaptchaSolver.solveDetailed(imageBase64);
-        if (result.accepted && result.text.length >= 3 && result.text.length <= 6) {
+        if (CaptchaSolver.isSafeForAutoSubmit(result)) {
           console.log(
-            `[CaptchaManager] Tự giải CAPTCHA OK (${result.reason}, conf=${result.confidence}%): ${result.text}`
+            `[CaptchaManager] CAPTCHA đạt cổng tự động (${result.reason}, conf=${result.confidence}%)`
           );
           return result.text;
         }
@@ -53,7 +58,8 @@ export class CaptchaManager extends EventEmitter {
       challengeId,
       purpose,
       targetRange,
-      imageBase64
+      imageBase64,
+      ...context
     };
 
     return new Promise<string>((resolve, reject) => {

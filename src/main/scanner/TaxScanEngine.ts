@@ -113,7 +113,12 @@ export class TaxScanEngine extends EventEmitter {
           status: 'SCANNING'
         });
 
-        const captcha = await this.captchaManager.requestCaptcha('SEARCH', targetRange);
+        const captcha = await this.captchaManager.requestCaptcha(
+          'SEARCH',
+          targetRange,
+          false,
+          { requestReason: 'INITIAL_SEARCH', attempt: 1, maxAttempts: 3 }
+        );
         const pageResult = await this.client.searchFilings(targetRange, captcha, {
           ...options,
           maTTHC: options.maTTHC || undefined
@@ -166,17 +171,68 @@ export class TaxScanEngine extends EventEmitter {
         allYearsToScan.push(year);
       }
 
-      // Xây dựng danh sách tất cả các khoảng Quý/Kỳ cần quét
+      const scanOptions = {
+        ...options,
+        maTTHC: options.maTTHC || undefined
+      };
+
+      // Pagination-first ở cấp NĂM: trước đây engine luôn chia ngay thành 4 quý,
+      // khiến một lần quét năm bắt người dùng nhập ít nhất 4 CAPTCHA dù endpoint
+      // có thể phân trang đầy đủ cho cả năm. Chỉ tách quý nếu kết quả năm thực
+      // sự không thể lấy đủ.
       const allScanRanges: { range: DateRange; yearOwner: number }[] = [];
 
       for (const y of allYearsToScan) {
-        const qRanges = generateQuarterRanges(y);
-        const targetQ = (options.limitToToday && y === currentYear)
-          ? qRanges.slice(0, currentQuarter)
-          : qRanges;
+        let yearRange =
+          options.customRange?.level === 'YEAR' && allYearsToScan.length === 1
+            ? options.customRange
+            : generateYearRange(y);
+        if (options.limitToToday && y === currentYear && !options.customRange) {
+          const now = new Date();
+          yearRange = {
+            ...yearRange,
+            toDate: `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`,
+            label: `Từ đầu năm ${y} đến hiện tại`
+          };
+        }
 
-        for (const qr of targetQ) {
-          allScanRanges.push({ range: qr, yearOwner: y });
+        this.emitProgress({
+          currentRange: yearRange,
+          completedRanges: 0,
+          totalRanges: allYearsToScan.length,
+          foundFilingsCount: this.allFilings.length,
+          level: 'YEAR',
+          status: 'SCANNING'
+        });
+
+        const { captcha: yearCaptcha, firstPage: yearFirstPage } =
+          await this.searchWithRetry(yearRange, scanOptions, myToken);
+        const yearResolution = await this.paginationResolver.resolveAllPagesForRange(
+          yearRange,
+          yearCaptcha,
+          yearFirstPage.filings,
+          yearFirstPage.hasMorePages || false,
+          scanOptions,
+          (page, count) => {
+            this.emit('log', {
+              type: 'INFO',
+              action: `Đã duyệt trang ${page} của ${yearRange.label} (lấy thêm ${count} hồ sơ)`
+            });
+          }
+        );
+        this.allFilings = TaxFilingParser.deduplicateFilings(
+          this.allFilings,
+          yearResolution.filings
+        );
+
+        if (yearResolution.needSplitRange || !yearResolution.isFullyRetrieved) {
+          const qRanges = generateQuarterRanges(y);
+          const targetQ = (options.limitToToday && y === currentYear)
+            ? qRanges.slice(0, currentQuarter)
+            : qRanges;
+          for (const qr of targetQ) {
+            allScanRanges.push({ range: qr, yearOwner: y });
+          }
         }
 
         // Với năm cũ (y < currentYear), nếu không phải chế độ đa năm (vì đa năm sẽ quét năm tiếp theo ngay sau đó),
@@ -193,11 +249,6 @@ export class TaxScanEngine extends EventEmitter {
           });
         }
       }
-
-      const scanOptions = {
-        ...options,
-        maTTHC: options.maTTHC || undefined
-      };
 
       for (let i = 0; i < allScanRanges.length; i++) {
         if (!this.isActiveScan(myToken)) break;
@@ -232,11 +283,15 @@ export class TaxScanEngine extends EventEmitter {
 
           this.allFilings = TaxFilingParser.deduplicateFilings(this.allFilings, qResolution.filings);
 
-          if (qResolution.needSplitRange || qFirstPage.filings.length >= 20 || !qResolution.isFullyRetrieved) {
+          if (qResolution.needSplitRange || !qResolution.isFullyRetrieved) {
             needSplitToMonths = true;
           }
-        } catch {
-          needSplitToMonths = true;
+        } catch (qErr: any) {
+          this.emit('log', {
+            type: 'ERROR',
+            action: `Dừng quét ${qRange.label}: ${qErr.message || 'lỗi hạ tầng Cổng Thuế'}`
+          });
+          throw qErr;
         }
 
         // Nếu quý bị đầy (>= 20 bản ghi) → Tự động quét chi tiết 3 tháng của quý đó
@@ -267,15 +322,15 @@ export class TaxScanEngine extends EventEmitter {
               );
               this.allFilings = TaxFilingParser.deduplicateFilings(this.allFilings, mResolution.filings);
 
-              if (mResolution.needSplitRange || mFirstPage.filings.length >= 20) {
+              if (mResolution.needSplitRange || !mResolution.isFullyRetrieved) {
                 needSplitTo10Days = true;
               }
             } catch (mErr: any) {
-              needSplitTo10Days = true;
               this.emit('log', {
-                type: 'WARNING',
-                action: `Lỗi quét khoảng ${mRange.label}: ${mErr.message}`
+                type: 'ERROR',
+                action: `Dừng quét ${mRange.label}: ${mErr.message || 'lỗi hạ tầng Cổng Thuế'}`
               });
+              throw mErr;
             }
 
             // Nếu 1 tháng có >= 20 bản ghi → Tự động quét sâu theo 3 khoảng 10 ngày
@@ -295,11 +350,15 @@ export class TaxScanEngine extends EventEmitter {
                     scanOptions
                   );
                   this.allFilings = TaxFilingParser.deduplicateFilings(this.allFilings, subResolution.filings);
-                  if (subResolution.needSplitRange || subFirstPage.filings.length >= 20) {
+                  if (subResolution.needSplitRange || !subResolution.isFullyRetrieved) {
                     needSplitTo5Days = true;
                   }
-                } catch {
-                  needSplitTo5Days = true;
+                } catch (subErr: any) {
+                  this.emit('log', {
+                    type: 'ERROR',
+                    action: `Dừng quét ${subRange.label}: ${subErr.message || 'lỗi hạ tầng Cổng Thuế'}`
+                  });
+                  throw subErr;
                 }
 
                 // Nếu 1 khoảng 10 ngày vẫn bị tràn (>= 20 bản ghi) → Phân rã tiếp thành 5 ngày & từng ngày
@@ -319,11 +378,15 @@ export class TaxScanEngine extends EventEmitter {
                         scanOptions
                       );
                       this.allFilings = TaxFilingParser.deduplicateFilings(this.allFilings, fResolution.filings);
-                      if (fResolution.needSplitRange || fFirstPage.filings.length >= 20) {
+                      if (fResolution.needSplitRange || !fResolution.isFullyRetrieved) {
                         needDailySplit = true;
                       }
-                    } catch {
-                      needDailySplit = true;
+                    } catch (fiveDayErr: any) {
+                      this.emit('log', {
+                        type: 'ERROR',
+                        action: `Dừng quét ${fiveDayRange.label}: ${fiveDayErr.message || 'lỗi hạ tầng Cổng Thuế'}`
+                      });
+                      throw fiveDayErr;
                     }
 
                     // Nếu 5 ngày vẫn >= 20 bản ghi → Phân rã tới từng ngày đơn lẻ (Daily level)
@@ -342,7 +405,13 @@ export class TaxScanEngine extends EventEmitter {
                             scanOptions
                           );
                           this.allFilings = TaxFilingParser.deduplicateFilings(this.allFilings, dResolution.filings);
-                        } catch {}
+                        } catch (dailyErr: any) {
+                          this.emit('log', {
+                            type: 'ERROR',
+                            action: `Dừng quét ${dailyRange.label}: ${dailyErr.message || 'lỗi hạ tầng Cổng Thuế'}`
+                          });
+                          throw dailyErr;
+                        }
                       }
                     }
                   }
@@ -386,7 +455,16 @@ export class TaxScanEngine extends EventEmitter {
       const cancelled = scanToken !== undefined ? !this.isActiveScan(scanToken) : this.isCancelled;
       if (cancelled) throw new Error('Quá trình quét đã bị hủy');
       try {
-        const captcha = await this.captchaManager.requestCaptcha('SEARCH', range);
+        const captcha = await this.captchaManager.requestCaptcha(
+          'SEARCH',
+          range,
+          false,
+          {
+            requestReason: attempt > 1 ? 'RETRY_INVALID' : 'INITIAL_SEARCH',
+            attempt,
+            maxAttempts: maxRetries
+          }
+        );
         const firstPage = await this.client.searchFilings(range, captcha, scanOptions);
         return { captcha, firstPage };
       } catch (err: any) {

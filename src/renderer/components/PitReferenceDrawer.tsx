@@ -188,19 +188,19 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
                       KỲ KÊ KHAI (TNCN)
                     </th>
                     <th className="px-3 py-2 border-r border-slate-200 text-right w-[110px] font-bold">
-                      SỐ LĐ <span className="font-mono text-[10px] text-slate-400 font-normal">[21]</span>
+                      SỐ LĐ <span className="font-mono text-[10px] text-slate-400 font-normal">[16]</span>
                     </th>
                     <th className="px-3.5 py-2 border-r border-slate-200 text-right w-[180px] font-bold">
-                      TỔNG TNCT <span className="font-mono text-[10px] text-slate-400 font-normal">[24]</span>
+                      TỔNG TNCT <span className="font-mono text-[10px] text-slate-400 font-normal">[21]</span>
                     </th>
                     <th className="px-3.5 py-2 border-r border-slate-200 text-right w-[170px] font-bold">
-                      KHẤU TRỪ CƯ TRÚ <span className="font-mono text-[10px] text-slate-400 font-normal">[31]</span>
+                      KHẤU TRỪ CƯ TRÚ <span className="font-mono text-[10px] text-slate-400 font-normal">[30]</span>
                     </th>
                     <th className="px-3.5 py-2 border-r border-slate-200 text-right w-[170px] font-bold">
-                      KHẤU TRỪ K.CƯ TRÚ <span className="font-mono text-[10px] text-slate-400 font-normal">[32]</span>
+                      KHẤU TRỪ K.CƯ TRÚ <span className="font-mono text-[10px] text-slate-400 font-normal">[31]</span>
                     </th>
                     <th className="px-3.5 py-2 border-r border-slate-200 text-right w-[190px] font-bold bg-teal-50/50">
-                      TỔNG KHẤU TRỪ <span className="font-mono text-[10px] text-slate-400 font-normal">[30/34]</span>
+                      TỔNG KHẤU TRỪ <span className="font-mono text-[10px] text-slate-400 font-normal">[29]</span>
                     </th>
                     <th className="px-4 py-2 text-left min-w-[260px] font-bold">
                       HỒ SƠ HIỆU LỰC
@@ -324,8 +324,8 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
                                 onClick={() => {
                                   if (mItem.totalIncomeCt24 > 0n) {
                                     setActiveInspectorItem({
-                                      title: `Tổng thu nhập chịu thuế [24] – ${mItem.periodLabel}`,
-                                      indicatorCode: '[24]',
+                                      title: `Tổng thu nhập chịu thuế [21] – ${mItem.periodLabel}`,
+                                      indicatorCode: '[21]',
                                       amount: mItem.totalIncomeCt24,
                                       periodLabel: mItem.periodLabel,
                                       versionLabel: mItem.versionLabel,
@@ -345,8 +345,8 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
                                 onClick={() => {
                                   if (mItem.residentTaxCt32 > 0n) {
                                     setActiveInspectorItem({
-                                      title: `Khấu trừ cá nhân cư trú [31] – ${mItem.periodLabel}`,
-                                      indicatorCode: '[31]',
+                                      title: `Khấu trừ cá nhân cư trú [30] – ${mItem.periodLabel}`,
+                                      indicatorCode: '[30]',
                                       amount: mItem.residentTaxCt32,
                                       periodLabel: mItem.periodLabel,
                                       versionLabel: mItem.versionLabel,
@@ -368,8 +368,8 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
                                 onClick={() => {
                                   if (mItem.nonResidentTaxCt33 > 0n) {
                                     setActiveInspectorItem({
-                                      title: `Khấu trừ cá nhân không cư trú [32] – ${mItem.periodLabel}`,
-                                      indicatorCode: '[32]',
+                                      title: `Khấu trừ cá nhân không cư trú [31] – ${mItem.periodLabel}`,
+                                      indicatorCode: '[31]',
                                       amount: mItem.nonResidentTaxCt33,
                                       periodLabel: mItem.periodLabel,
                                       versionLabel: mItem.versionLabel,
@@ -391,8 +391,8 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
                                 onClick={() => {
                                   if (mItem.totalWithheldTaxCt34 > 0n) {
                                     setActiveInspectorItem({
-                                      title: `Tổng số thuế TNCN đã khấu trừ [30/34] – ${mItem.periodLabel}`,
-                                      indicatorCode: '[30/34]',
+                                      title: `Tổng số thuế TNCN đã khấu trừ [29] – ${mItem.periodLabel}`,
+                                      indicatorCode: '[29]',
                                       amount: mItem.totalWithheldTaxCt34,
                                       periodLabel: mItem.periodLabel,
                                       versionLabel: mItem.versionLabel,

@@ -2,6 +2,7 @@ import AdmZip from 'adm-zip';
 import fs from 'fs';
 import path from 'path';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
+import { LegacyFilingClient } from '../portal/LegacyFilingClient';
 import { TaxFiling } from '../../shared/types';
 import {
   PitAnalyticsSummary,
@@ -19,15 +20,17 @@ import { isPathInsideBaseDir } from '../persistence/pathConfinement';
 
 export class PitAnalyticsEngine {
   private client: TaxPortalClient;
+  private legacyClient?: LegacyFilingClient;
   private memoryCache = new Map<string, PitDeclarationSnapshot>();
   private isCancelled = false;
   private baseDir = '';
   private taxpayerId = '';
   private manifestXmlPaths: Map<string, string> | null = null;
 
-  constructor(client: TaxPortalClient, baseDir = '') {
+  constructor(client: TaxPortalClient, baseDir = '', legacyClient?: LegacyFilingClient) {
     this.client = client;
     this.baseDir = baseDir;
+    this.legacyClient = legacyClient;
   }
 
   public setBaseDir(baseDir: string) {
@@ -47,6 +50,27 @@ export class PitAnalyticsEngine {
         const baseTaxCode = this.taxpayerPrefix().trim();
         const safeTaxCode = rawTaxCode.replace(/[^a-zA-Z0-9_-]/g, '_');
 
+        // 1. Quét manifest ở thư mục gốc baseDir (cho cấu trúc lưu chung 1 thư mục)
+        const rootManifests = [
+          path.join(this.baseDir, `.tax_manifest_${rawTaxCode}.json`),
+          path.join(this.baseDir, `.tax_manifest_${safeTaxCode}.json`),
+          path.join(this.baseDir, `.tax_manifest_${baseTaxCode}.json`),
+          path.join(this.baseDir, '.tax_manifest.json')
+        ];
+        for (const mfPath of rootManifests) {
+          if (fs.existsSync(mfPath)) {
+            try {
+              const raw = JSON.parse(fs.readFileSync(mfPath, 'utf-8'));
+              for (const [filingId, entry] of Object.entries<any>(raw || {})) {
+                if (entry?.xmlPath && fs.existsSync(entry.xmlPath)) {
+                  map.set(filingId, entry.xmlPath);
+                }
+              }
+            } catch {}
+          }
+        }
+
+        // 2. Quét các thư mục con và file XML trong baseDir
         for (const dirName of fs.readdirSync(this.baseDir)) {
           const fullDirPath = path.join(this.baseDir, dirName);
           let stat: fs.Stats | null = null;
@@ -122,13 +146,15 @@ export class PitAnalyticsEngine {
     const pitFilings = resolvePeriodSupplementalSequences(rawPitFilings);
     const total = pitFilings.length;
     const snapshots: PitDeclarationSnapshot[] = [];
+    const failedXmlDetails: Array<{ submissionId: string; periodLabel: string; reason: string }> = [];
 
-    // Concurrency 5 luồng tải song song
-    const concurrency = 5;
+    // Concurrency thấp (2 luồng) + nghỉ giữa các batch để tránh kích hoạt HTTP 429 Rate Limit
+    const concurrency = 2;
     let completedCount = 0;
+    let stopForInfrastructure = false;
 
     for (let i = 0; i < total; i += concurrency) {
-      if (this.isCancelled) break;
+      if (this.isCancelled || stopForInfrastructure) break;
       const batch = pitFilings.slice(i, i + concurrency);
 
       const batchPromises = batch.map(async filing => {
@@ -209,6 +235,17 @@ export class PitAnalyticsEngine {
             }
           } catch (dlErr: any) {
             if (dlErr?.code === 'CANCELLED') this.isCancelled = true;
+            if (
+              ['RATE_LIMIT', 'SESSION_EXPIRED'].includes(String(dlErr?.code || '')) ||
+              Number(dlErr?.httpStatus || dlErr?.response?.status || 0) === 429
+            ) {
+              stopForInfrastructure = true;
+            }
+            failedXmlDetails.push({
+              submissionId: filing.id,
+              periodLabel: filing.period || filing.periodNormalized?.raw || '',
+              reason: dlErr?.message || 'Lỗi không xác định khi tải hồ sơ'
+            });
           }
         }
         // 5. Fallback metadata snapshot
@@ -219,6 +256,8 @@ export class PitAnalyticsEngine {
             filing.filingType === 'FINALIZATION' ||
             (filing.declarationCode || '').includes('05/QTT') ||
             filing.title.toLowerCase().includes('quyết toán');
+          const failReason = failedXmlDetails.find(f => f.submissionId === filing.id)?.reason
+            || (filing.downloadAvailable ? 'Không tải được file XML từ Cổng Thuế' : 'Hồ sơ không cho phép tải file đính kèm');
 
           snapshot = {
             submissionId: filing.id,
@@ -243,7 +282,10 @@ export class PitAnalyticsEngine {
             ct33_khauTruCaNhanKhongCuTru: 0n,
             ct34_tongThueKhauTru: 0n,
             ct35_tongThuePhaiNop: 0n,
-            isFinalization: isFinal
+            isFinalization: isFinal,
+            xmlAvailable: false,
+            parseStatus: 'FAILED',
+            errorMessage: failReason
           };
         }
 
@@ -270,6 +312,11 @@ export class PitAnalyticsEngine {
           `Đã phân tích nhanh ${Math.min(completedCount, total)}/${total} tờ khai TNCN…`
         );
       }
+
+      if (i + concurrency < total && !this.isCancelled) {
+        if (stopForInfrastructure) break;
+        await new Promise(r => setTimeout(r, 250));
+      }
     }
 
     // ─── XÂY DỰNG CHUỖI KỲ & TÍNH TOÁN ─────────────────────────────────
@@ -277,7 +324,7 @@ export class PitAnalyticsEngine {
     let finalizationSnapshot: PitDeclarationSnapshot | null = null;
 
     for (const snap of snapshots) {
-      if (snap.isFinalization) {
+      if (snap.isFinalization && snap.xmlAvailable !== false) {
         if (!finalizationSnapshot || (snap.submittedAt && finalizationSnapshot.submittedAt && snap.submittedAt > finalizationSnapshot.submittedAt)) {
           finalizationSnapshot = snap;
         }
@@ -301,15 +348,20 @@ export class PitAnalyticsEngine {
       });
 
       const supplementalSnapshots = sorted.filter(s => s.versionType === 'SUPPLEMENTAL');
-      const finalSnapshot = sorted[sorted.length - 1] || null;
+      const usableSnapshots = sorted.filter(snapshot => snapshot.xmlAvailable !== false);
+      const finalSnapshot = usableSnapshots[usableSnapshots.length - 1] || null;
 
       periodGroups.push({
         periodKey: pKey,
-        periodLabel: finalSnapshot?.periodLabel || pKey,
-        periodType: finalSnapshot?.isYear ? 'YEAR' : finalSnapshot?.isQuarter ? 'QUARTER' : 'MONTH',
-        year: finalSnapshot?.year || new Date().getFullYear(),
-        month: finalSnapshot?.month,
-        quarter: finalSnapshot?.quarter,
+        periodLabel: finalSnapshot?.periodLabel || sorted[sorted.length - 1]?.periodLabel || pKey,
+        periodType: (finalSnapshot || sorted[sorted.length - 1])?.isYear
+          ? 'YEAR'
+          : (finalSnapshot || sorted[sorted.length - 1])?.isQuarter
+            ? 'QUARTER'
+            : 'MONTH',
+        year: (finalSnapshot || sorted[sorted.length - 1])?.year || new Date().getFullYear(),
+        month: (finalSnapshot || sorted[sorted.length - 1])?.month,
+        quarter: (finalSnapshot || sorted[sorted.length - 1])?.quarter,
         snapshots: sorted,
         finalSnapshot,
         hasSupplemental: supplementalSnapshots.length > 0,
@@ -324,12 +376,21 @@ export class PitAnalyticsEngine {
       return valA - valB;
     });
 
+    const totalXmlAvailableCount = snapshots.filter(snapshot => snapshot.xmlAvailable !== false).length;
     return {
       taxpayerId,
       totalFilingsAnalyzed: snapshots.length,
       periodGroups,
       finalizationSnapshot,
-      analyzedAt: new Date().toISOString()
+      analyzedAt: new Date().toISOString(),
+      totalXmlAvailableCount,
+      failedXmlCount: snapshots.length - totalXmlAvailableCount,
+      coverageStatus: snapshots.length === totalXmlAvailableCount
+        ? 'COMPLETE'
+        : totalXmlAvailableCount > 0
+          ? 'PARTIAL'
+          : 'UNAVAILABLE',
+      failedXmlDetails
     };
   }
   private async downloadHoSoWithRetry(filing: TaxFiling, maxRetries = 3): Promise<{ fileName: string; fileType: string; content: string }> {
@@ -341,6 +402,28 @@ export class PitAnalyticsEngine {
         throw cancelErr;
       }
       try {
+        if (this.legacyClient) {
+          if (filing.messageId) {
+            const legacyFile = await this.legacyClient.downloadFiling(filing.messageId);
+            return {
+              fileName: legacyFile.fileName,
+              fileType: legacyFile.contentType,
+              content: legacyFile.dataBuffer.toString('base64')
+            };
+          }
+          if (typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
+            try {
+              const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
+              return {
+                fileName: legacyFile.fileName,
+                fileType: legacyFile.contentType,
+                content: legacyFile.dataBuffer.toString('base64')
+              };
+            } catch (legacyErr: any) {
+              console.warn(`[PitAnalyticsEngine] Tải qua eTax thất bại (${legacyErr?.message}), chuyển sang Cổng DVC`);
+            }
+          }
+        }
         return await this.client.downloadHoSo(filing.id, undefined, {
           isThueDienTu: filing.isThueDienTu,
           loaiTraCuu: filing.loaiTraCuu,
@@ -350,7 +433,7 @@ export class PitAnalyticsEngine {
       } catch (err: any) {
         lastErr = err;
         if (err?.code === 'CANCELLED' || err?.code === 'SESSION_EXPIRED') throw err;
-        const isTransient = err?.code === 'RATE_LIMIT' || err?.code === 'TIMEOUT' || err?.code === 'NETWORK';
+        const isTransient = err?.code === 'TIMEOUT' || err?.code === 'NETWORK';
         if (isTransient && attempt < maxRetries) {
           await new Promise(r => setTimeout(r, 2000 * attempt + Math.random() * 500));
           continue;

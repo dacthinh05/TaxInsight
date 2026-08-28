@@ -7,7 +7,8 @@ import { VatFlowEngine } from '../src/shared/vatFlowEngine';
 import { TaxFiling } from '../src/shared/types';
 import { PitAnalyticsSummary, PitDeclarationSnapshot } from '../src/shared/pitAnalyticsTypes';
 import { VatAnalyticsSummary, VatDeclarationSnapshot } from '../src/shared/vatAnalyticsTypes';
-import AdmZip from 'adm-zip';
+import { TaxPortalClient } from '../src/main/portal/TaxPortalClient';
+import { PortalSession } from '../src/main/portal/PortalSession';
 
 describe('VAT & PIT Audit & Download Bugfixes Regression Suite', () => {
   // ─── 1. PHẦN TẢI TỜ KHAI: GIẢI MÃ DIRECT XML BUFFER TRONG PREVIEW & PARSER ───
@@ -268,6 +269,26 @@ describe('VAT & PIT Audit & Download Bugfixes Regression Suite', () => {
       expect(yearFlow.totalEmployeeCount).toBe(62n); // max(50+12)
       expect(yearFlow.mismatchDelta).toBe(0n);
       expect(yearFlow.auditStatus).toBe('MATCHED');
+    });
+  });
+
+  // ─── 4. PHẦN BẢO VỆ TẢI HỒ SƠ: GLOBAL RATE LIMIT & ANTI-AVALANCHE ─────────
+  describe('Phần Bảo Vệ Tải Hồ Sơ: Global Rate Limit Cooloff & Exponential Backoff', () => {
+    it('TaxPortalClient.triggerGlobalRateLimit đặt thời gian cooloff và waitForGlobalRateLimit hoãn luồng gọi', async () => {
+      TaxPortalClient.triggerGlobalRateLimit(50);
+      const t0 = Date.now();
+      await TaxPortalClient.waitForGlobalRateLimit();
+      const elapsed = Date.now() - t0;
+      expect(elapsed).toBeGreaterThanOrEqual(40);
+    });
+
+    it('TaxPortalClient.waitForGlobalRateLimit phản hồi ngay khi không có rate limit', async () => {
+      // Đợi hết hạn cooloff cũ
+      await new Promise(r => setTimeout(r, 900));
+      const t0 = Date.now();
+      await TaxPortalClient.waitForGlobalRateLimit();
+      const elapsed = Date.now() - t0;
+      expect(elapsed).toBeLessThan(50);
     });
   });
 });

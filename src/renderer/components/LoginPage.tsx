@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  DownloadCloud,
   Eye,
   EyeOff,
   KeyRound,
@@ -15,14 +16,23 @@ import {
   Users
 } from 'lucide-react';
 import appIconUrl from '/icon.png?url';
-import { SavedAccountInfo } from '../../shared/types';
+import { SavedAccountInfo, UpdateInfo } from '../../shared/types';
 
 interface LoginPageProps {
   onLoginSuccess: (taxCode: string) => void;
   initialTaxCode?: string;
+  updateInfo?: UpdateInfo | null;
+  onCheckUpdate?: () => void;
+  onOpenUpdate?: () => void;
 }
 
-export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTaxCode }) => {
+export const LoginPage: React.FC<LoginPageProps> = ({
+  onLoginSuccess,
+  initialTaxCode,
+  updateInfo,
+  onCheckUpdate,
+  onOpenUpdate
+}) => {
   const [taxCode, setTaxCode] = useState(() => initialTaxCode || localStorage.getItem('saved_mst') || '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -36,8 +46,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorField, setErrorField] = useState<'CAPTCHA' | 'PASSWORD' | 'TAX_CODE' | 'SESSION' | 'GENERAL' | null>(null);
   const [savedAccounts, setSavedAccounts] = useState<SavedAccountInfo[]>([]);
+  const [useSavedPassword, setUseSavedPassword] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState('2.7.0');
+  const [appVersion, setAppVersion] = useState(__APP_VERSION__);
 
   const passwordInputRef = React.useRef<HTMLInputElement>(null);
   const captchaInputRef = React.useRef<HTMLInputElement>(null);
@@ -47,15 +58,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
   // response của request cũ phải bị bỏ qua, không đè ảnh/text của request mới
   const captchaReqRef = React.useRef(0);
 
-  // Debounce + staleness guard cho việc tự điền mật khẩu theo MST đang gõ
-  const credLookupTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
   // Tải danh sách tài khoản đã lưu
   const loadSavedAccounts = async () => {
     if (window.taxPortalAPI?.getSavedAccounts) {
       try {
         const list = await window.taxPortalAPI.getSavedAccounts();
         setSavedAccounts(list || []);
+        const selected = (list || []).find(
+          (account: SavedAccountInfo) => account.taxCode.toLowerCase() === taxCode.trim().toLowerCase()
+        );
+        setUseSavedPassword(Boolean(selected?.hasPassword));
       } catch {}
     }
   };
@@ -66,18 +78,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
       window.taxPortalAPI.getAppVersion().then(res => {
         if (res?.success && res.version) {
           setAppVersion(res.version);
-        }
-      });
-    }
-  }, []);
-
-  // Nếu có initialTaxCode hoặc taxCode mặc định, tự động load password nếu đã lưu
-  useEffect(() => {
-    if (taxCode.trim() && window.taxPortalAPI?.getAccountCredentials) {
-      window.taxPortalAPI.getAccountCredentials({ taxCode: taxCode.trim() }).then(creds => {
-        if (creds?.password) {
-          setPassword(creds.password);
-          setSavePassword(true);
         }
       });
     }
@@ -108,32 +108,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
               .catch(() => {});
           }
         } else {
-          generateMockCaptcha();
+          setCaptchaImg(null);
+          setCaptchaText('');
+          setErrorMessage(res.error || 'Không tải được CAPTCHA thật từ Cổng Thuế. Vui lòng thử lại.');
+          setErrorField('GENERAL');
         }
       } else {
-        generateMockCaptcha();
+        setCaptchaImg(null);
+        setCaptchaText('');
+        setErrorMessage('Không kết nối được tiến trình chính để tải CAPTCHA.');
+        setErrorField('GENERAL');
       }
-    } catch {
-      if (reqId === captchaReqRef.current) generateMockCaptcha();
+    } catch (err: any) {
+      if (reqId === captchaReqRef.current) {
+        setCaptchaImg(null);
+        setCaptchaText('');
+        setErrorMessage(err?.message || 'Không tải được CAPTCHA thật từ Cổng Thuế. Vui lòng thử lại.');
+        setErrorField('GENERAL');
+      }
     } finally {
       if (reqId === captchaReqRef.current) setIsLoadingCaptcha(false);
-    }
-  };
-
-  const generateMockCaptcha = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 120;
-    canvas.height = 40;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(0, 0, 120, 40);
-      ctx.font = 'bold 20px monospace';
-      ctx.fillStyle = '#0f766e';
-      ctx.fillText('i3dqr', 25, 28);
-      setCaptchaImg(canvas.toDataURL('image/png'));
-      setCaptchaText('i3dqr');
-      setIsAutoSolved(true);
     }
   };
 
@@ -148,15 +142,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
     setErrorMessage(null);
     setErrorField(null);
 
-    if (window.taxPortalAPI?.getAccountCredentials) {
-      const creds = await window.taxPortalAPI.getAccountCredentials({ taxCode: account.taxCode });
-      if (creds?.password) {
-        setPassword(creds.password);
-        setSavePassword(true);
-      } else {
-        setPassword('');
-      }
-    }
+    setPassword('');
+    setUseSavedPassword(Boolean(account.hasPassword));
+    setSavePassword(Boolean(account.hasPassword));
 
     // Tải captcha mới và tự giải
     loadCaptcha();
@@ -170,6 +158,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
       await loadSavedAccounts();
       if (taxCode.trim().toLowerCase() === accountTaxCode.toLowerCase()) {
         setPassword('');
+        setUseSavedPassword(false);
       }
     }
   };
@@ -183,10 +172,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
       taxCodeInputRef.current?.focus();
       return;
     }
-    if (!password) {
+    if (!password && !useSavedPassword) {
       setErrorMessage('Vui lòng nhập Mật khẩu đăng nhập');
       setErrorField('PASSWORD');
       passwordInputRef.current?.focus();
+      return;
+    }
+    if (!captchaImg) {
+      setErrorMessage('Chưa tải được ảnh CAPTCHA thật từ Cổng Thuế.');
+      setErrorField('GENERAL');
       return;
     }
     if (!captchaText.trim()) {
@@ -208,18 +202,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
       }
 
       if (window.taxPortalAPI) {
-        const res = await window.taxPortalAPI.login({
-          taxCode: cleanMst,
-          password,
-          captcha: captchaText.trim()
-        });
+        const res = useSavedPassword
+          ? await window.taxPortalAPI.loginSaved({
+              taxCode: cleanMst,
+              captcha: captchaText.trim()
+            })
+          : await window.taxPortalAPI.login({
+              taxCode: cleanMst,
+              password,
+              captcha: captchaText.trim()
+            });
 
         if (res.success) {
           // Lưu tài khoản & mật khẩu (nếu người dùng tùy chọn lưu)
           if (window.taxPortalAPI.saveAccount) {
             await window.taxPortalAPI.saveAccount({
               taxCode: cleanMst,
-              password,
+              password: useSavedPassword ? undefined : password,
               savePassword: Boolean(savePassword)
             });
           }
@@ -249,7 +248,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
           }
         }
       } else {
-        onLoginSuccess(cleanMst);
+        setErrorMessage('Không kết nối được tiến trình chính để xác thực đăng nhập.');
+        setErrorField('GENERAL');
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Lỗi kết nối khi đăng nhập');
@@ -281,6 +281,33 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
           <p className="text-xs text-slate-500 font-normal mt-1">
             Hệ Thống Soát Xét & Đối Chiếu Hồ Sơ Thuế Điện Tử
           </p>
+          <div className="mt-2 flex items-center justify-center">
+            {updateInfo?.state === 'AVAILABLE' || updateInfo?.state === 'DOWNLOADED' ? (
+              <button
+                type="button"
+                onClick={onOpenUpdate}
+                className="inline-flex items-center space-x-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100"
+              >
+                <DownloadCloud className="h-3.5 w-3.5" />
+                <span>Có bản mới v{updateInfo.latestVersion} — cập nhật trước khi đăng nhập</span>
+              </button>
+            ) : updateInfo?.state === 'CHECKING' ? (
+              <span className="inline-flex items-center space-x-1.5 text-[11px] font-medium text-teal-700">
+                <RefreshCw className="h-3 w-3 animate-spin" />
+                <span>Đang kiểm tra phiên bản mới…</span>
+              </span>
+            ) : updateInfo?.state === 'NOT_AVAILABLE' ? (
+              <span className="text-[11px] font-medium text-emerald-700">✓ Đang dùng phiên bản mới nhất</span>
+            ) : (
+              <button
+                type="button"
+                onClick={onCheckUpdate}
+                className="text-[11px] font-medium text-slate-500 hover:text-teal-700"
+              >
+                Kiểm tra cập nhật
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Form */}
@@ -348,24 +375,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
                 onChange={e => {
                   const newVal = e.target.value;
                   setTaxCode(newVal);
+                  setPassword('');
+                  const selected = savedAccounts.find(
+                    account => account.taxCode.toLowerCase() === newVal.trim().toLowerCase()
+                  );
+                  setUseSavedPassword(Boolean(selected?.hasPassword));
                   if (errorField === 'TAX_CODE') setErrorField(null);
-
-                  // Khi gõ MST khác, kiểm tra xem có password đã lưu không.
-                  // Debounce 250ms + chỉ áp dụng nếu MST KHÔNG ĐỔI trong lúc chờ response
-                  // (trước đây response của trạng thái gõ dở về sau đè mật khẩu sai vào ô).
-                  if (window.taxPortalAPI) {
-                    if (credLookupTimerRef.current) clearTimeout(credLookupTimerRef.current);
-                    credLookupTimerRef.current = setTimeout(() => {
-                      window.taxPortalAPI!
-                        .getAccountCredentials({ taxCode: newVal.trim() })
-                        .then(creds => {
-                          if (creds?.password && taxCode.trim() === newVal.trim()) {
-                            setPassword(creds.password);
-                          }
-                        })
-                        .catch(() => {});
-                    }, 250);
-                  }
                 }}
                 placeholder="VD: 3702735709"
                 className={`w-full pl-9 pr-8 py-2 rounded-lg text-sm font-mono text-slate-900 focus:outline-none transition-all ${
@@ -438,15 +453,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
                 value={password}
                 onChange={e => {
                   setPassword(e.target.value);
+                  setUseSavedPassword(false);
                   if (errorField === 'PASSWORD') setErrorField(null);
                 }}
-                placeholder="••••••••••••"
+                placeholder={useSavedPassword ? 'Mật khẩu đã lưu an toàn trên thiết bị' : '••••••••••••'}
                 className={`w-full pl-9 pr-10 py-2 rounded-lg text-sm text-slate-900 focus:outline-none transition-all ${
                   errorField === 'PASSWORD'
                     ? 'bg-red-50/30 border-2 border-red-500 ring-2 ring-red-200'
                     : 'bg-slate-50 border border-slate-300 focus:ring-2 focus:ring-teal-600 focus:bg-white'
                 }`}
-                required
               />
               <button
                 type="button"
@@ -464,6 +479,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
             {errorField === 'PASSWORD' && (
               <p className="text-[11px] text-red-600 font-medium mt-1">
                 ⚠️ Mật khẩu không chính xác. Hãy kiểm tra lại phím CapsLock hoặc mật khẩu đã lưu.
+              </p>
+            )}
+            {useSavedPassword && !password && errorField !== 'PASSWORD' && (
+              <p className="text-[11px] text-emerald-700 font-medium mt-1">
+                ✓ Sẽ dùng mật khẩu đã mã hóa trong main process; renderer không đọc được mật khẩu.
               </p>
             )}
           </div>
@@ -571,7 +591,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, initialTax
           {/* Nút Đăng Nhập */}
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || isLoadingCaptcha || !captchaImg}
             className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold rounded-lg text-sm shadow-xs transition-colors flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer"
           >
             {isSubmitting ? (

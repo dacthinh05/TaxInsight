@@ -13,6 +13,8 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({ challenge, onSubmit,
   const [isSolving, setIsSolving] = useState(false);
   const [isAutoFilled, setIsAutoFilled] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const isNextPage = challenge.requestReason === 'NEXT_PAGE';
+  const isRetry = challenge.requestReason === 'RETRY_INVALID';
 
   useEffect(() => {
     // Tự động giải khi modal xuất hiện (nếu có base64)
@@ -53,8 +55,20 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({ challenge, onSubmit,
               <ShieldCheck className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-bold text-slate-800 text-sm leading-tight">Xác Nhận Tra Cứu</h3>
-              <span className="text-[11px] text-slate-500">Mã bảo mật Cổng Thuế Điện Tử</span>
+              <h3 className="font-bold text-slate-800 text-sm leading-tight">
+                {isRetry
+                  ? 'CAPTCHA trước chưa được chấp nhận'
+                  : isNextPage
+                    ? `Xác nhận trang kết quả ${challenge.page || ''}`.trim()
+                    : 'Xác Nhận Tra Cứu'}
+              </h3>
+              <span className="text-[11px] text-slate-500">
+                {isNextPage
+                  ? 'Mã mới cho trang kế tiếp, không phải vòng lặp đăng nhập'
+                  : isRetry
+                    ? `Thử lại ${challenge.attempt || 2}/${challenge.maxAttempts || 3} với ảnh mới`
+                    : 'Mã bảo mật Cổng Thuế Điện Tử'}
+              </span>
             </div>
           </div>
           <button
@@ -82,6 +96,20 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({ challenge, onSubmit,
                   </span>
                 )}
               </div>
+            </div>
+          )}
+
+          {isNextPage && (
+            <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-[11.5px] leading-relaxed text-sky-900">
+              Cổng Thuế yêu cầu CAPTCHA mới khi chuyển sang trang kết quả tiếp theo.
+              Dữ liệu ở trang trước đã được giữ lại.
+            </div>
+          )}
+
+          {isRetry && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-950">
+              Mã vừa nhập không khớp hoặc đã hết hạn. Ứng dụng chỉ thử tối đa
+              {' '}{challenge.maxAttempts || 3} lần rồi dừng, không lặp vô hạn.
             </div>
           )}
 

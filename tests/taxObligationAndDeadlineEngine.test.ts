@@ -68,6 +68,18 @@ describe('Tax Obligation & Deadline Engine Comprehensive Test Suite', () => {
     expect(res.effectivePaymentDeadline).toBe('31/03/2026');
   });
 
+  it('4b. Quyết toán TNCN cá nhân trực tiếp 02/QTT-TNCN dùng hạn cuối tháng thứ 4', () => {
+    const res = TaxDeadlineEngine.resolveDeadline({
+      taxType: 'PIT',
+      declarationCode: '02/QTT-TNCN',
+      periodType: 'YEAR',
+      year: 2025,
+      isFinalization: true
+    });
+    expect(res.basePaymentDeadline).toBe('30/04/2026');
+    expect(res.ruleId).toBe('RULE_INDIVIDUAL_PIT_FINALIZATION_QLT38');
+  });
+
   it('5. Deadline rơi vào ngày nghỉ cuối tuần hoặc ngày lễ: Chuyển sang ngày làm việc tiếp theo', () => {
     // 20/09/2026 là Chủ Nhật -> chuyển sang Thứ Hai 21/09/2026
     const res = TaxDeadlineEngine.resolveDeadline({

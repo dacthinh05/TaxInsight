@@ -12,11 +12,9 @@ describe('Tax filing download payload decoding', () => {
     const base64 = 'UEsDBBQAAAAIAAAABAAAAA=';
     const result = extract(Buffer.from(JSON.stringify({ content: base64, fileName: 'ho-so.zip' })));
 
-    expect(result).toEqual({
-      content: base64,
-      fileName: 'ho-so.zip',
-      fileType: 'application/zip'
-    });
+    expect(result?.fileName).toBe('ho-so.zip');
+    expect(result?.fileType).toBe('application/zip');
+    expect(Buffer.from(result?.content || '', 'base64')).toEqual(Buffer.from(base64, 'base64'));
   });
 
   it('preserves a binary ZIP response', () => {
@@ -34,6 +32,20 @@ describe('Tax filing download payload decoding', () => {
     expect(result?.fileName).toBe('files_FILING-01.pdf');
     expect(result?.fileType).toBe('application/pdf');
     expect(result?.content).toBe(binary.toString('base64'));
+  });
+
+  it('rejects PNG/error images instead of reporting a fake ZIP success', () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+    expect(extract(png)).toBeNull();
+    expect(extract(png.toString('base64'))).toBeNull();
+    expect(extract({ content: png.toString('base64'), fileName: 'captcha.png' })).toBeNull();
+  });
+
+  it('preserves a raw XML response', () => {
+    const xml = Buffer.from('<?xml version="1.0"?><HSoThueDTu><maTKhai>864</maTKhai></HSoThueDTu>');
+    const result = extract(xml);
+    expect(result?.fileType).toBe('application/xml');
+    expect(Buffer.from(result?.content || '', 'base64').toString('utf8')).toContain('<maTKhai>864</maTKhai>');
   });
   it('decodes quoted URL-safe Base64 returned by the portal', () => {
     const base64 = 'UEsDBBQAAAAIAAAABAAAAA=';

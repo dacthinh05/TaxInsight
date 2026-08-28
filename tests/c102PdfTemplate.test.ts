@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildC102Html } from '../src/main/exporter/C102PdfTemplate';
+import { buildC102Html, validateC102Detail } from '../src/main/exporter/C102PdfTemplate';
 import { PaymentSlipDetail } from '../src/shared/types';
 
 describe('Mẫu C1-02/NS PDF Template Generator (C102PdfTemplate)', () => {
@@ -56,9 +56,11 @@ describe('Mẫu C1-02/NS PDF Template Generator (C102PdfTemplate)', () => {
 
     expect(html).toContain('<!DOCTYPE html>');
     expect(html).toContain('<html lang="vi">');
-    expect(html).toContain('Mẫu số C1-02/NS');
-    expect(html).toContain('Thông tư 84/2016/TT-BTC');
-    expect(html).toContain('Giấy nộp tiền vào Ngân sách Nhà nước');
+    expect(html).toContain('Mẫu số 02');
+    expect(html).toContain('Ký hiệu C1-02/NS');
+    expect(html).toContain('Nghị định 347/2025/NĐ-CP');
+    expect(html).not.toContain('Thông tư 84/2016/TT-BTC');
+    expect(html).toContain('Giấy nộp tiền vào ngân sách nhà nước');
     expect(html).toContain('3702735709');
     expect(html).toContain('CÔNG TY TNHH CÔNG NGHIỆP CARBOTEC (VN)');
     expect(html).toContain('1499981');
@@ -99,16 +101,17 @@ describe('Mẫu C1-02/NS PDF Template Generator (C102PdfTemplate)', () => {
     expect(html).toContain('80,000,000');
   });
 
-  it('3. Handles degenerate slip with empty items cleanly without crashing', () => {
+  it('3. Blocks degenerate slip with empty items instead of exporting a misleading form', () => {
     const emptyDetail: PaymentSlipDetail = {
       ...sampleDetail,
       items: [],
       tongTienVND: '15,000,000'
     };
 
-    const html = buildC102Html(emptyDetail);
-    expect(html).toContain('Khoản nộp thuế vào Ngân sách Nhà nước');
-    expect(html).toContain('15,000,000');
+    const validation = validateC102Detail(emptyDetail);
+    expect(validation.valid).toBe(false);
+    expect(validation.errors.some(error => error.includes('Chưa có dòng khoản nộp'))).toBe(true);
+    expect(() => buildC102Html(emptyDetail)).toThrow(/Không thể xuất C1-02\/NS/);
   });
 
   it('4. Escapes special HTML characters to prevent XSS/rendering breakage', () => {
@@ -122,5 +125,20 @@ describe('Mẫu C1-02/NS PDF Template Generator (C102PdfTemplate)', () => {
     expect(html).not.toContain('<TEST & "SPECIAL">');
     expect(html).toContain('CÔNG TY &lt;TEST &amp; &quot;SPECIAL&quot;&gt;');
     expect(html).toContain('123 Đường &quot;A&quot; &amp; &lt;B&gt;');
+  });
+
+  it('5. Blocks mismatched detail and inconsistent totals', () => {
+    const mismatchedDetail: PaymentSlipDetail = {
+      ...sampleDetail,
+      suspectedMismatch: true,
+      detailIntegrity: 'MISMATCH',
+      tongTienVND: '1,000'
+    };
+
+    const validation = validateC102Detail(mismatchedDetail);
+    expect(validation.valid).toBe(false);
+    expect(validation.errors).toContain('Chi tiết eTax không khớp chứng từ được chọn.');
+    expect(validation.errors).toContain('Dữ liệu chi tiết có trạng thái MISMATCH.');
+    expect(validation.errors.some(error => error.includes('không khớp tổng'))).toBe(true);
   });
 });

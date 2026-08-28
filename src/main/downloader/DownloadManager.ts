@@ -2,14 +2,16 @@ import { EventEmitter } from 'events';
 import { PORTAL_CONFIG } from '../../shared/constants';
 import { DownloadQueueItem, DownloadState, DownloadSummary, TaxFiling } from '../../shared/types';
 import { FileOrganizer } from '../files/FileOrganizer';
+import { LegacyFilingClient } from '../portal/LegacyFilingClient';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
 
 export class DownloadManager extends EventEmitter {
   private client: TaxPortalClient;
   private fileOrganizer: FileOrganizer;
+  public legacyClient?: LegacyFilingClient;
   private queue: DownloadQueueItem[] = [];
   private activeDownloads = 0;
-  private maxConcurrency = PORTAL_CONFIG.DOWNLOAD_CONCURRENCY; // 2
+  private maxConcurrency = PORTAL_CONFIG.DOWNLOAD_CONCURRENCY; // 1
   private abortController: AbortController | null = null;
   private isPaused = false;
   private isCancelled = false;
@@ -18,13 +20,14 @@ export class DownloadManager extends EventEmitter {
   private taxCode = '';
   private year = new Date().getFullYear();
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
-  // Invalidates workers from a queue that has been cleared before their promises settle.
+  private consecutiveInfrastructureFailures = 0;
   private queueGeneration = 0;
 
-  constructor(client: TaxPortalClient, fileOrganizer: FileOrganizer) {
+  constructor(client: TaxPortalClient, fileOrganizer: FileOrganizer, legacyClient?: LegacyFilingClient) {
     super();
     this.client = client;
     this.fileOrganizer = fileOrganizer;
+    this.legacyClient = legacyClient;
   }
 
   public setContext(taxCode: string, year: number) {
@@ -94,15 +97,10 @@ export class DownloadManager extends EventEmitter {
     this.isCancelled = false;
     this.state = 'IDLE';
     this.hasEmittedAuthExpired = false;
+    this.consecutiveInfrastructureFailures = 0;
     this.stopWatchdog();
   }
 
-  /**
-   * 🆙 WATCHDOG: tự chữa lành hàng đợi treo. Nếu state RUNNING nhưng không còn
-   * worker nào hoạt động trong khi vẫn còn item PENDING (mất thức tỉnh do race
-   * giữa pause/abort/resume) -> gọi lại processQueue. Đây là nguyên nhân UI
-   * đứng hình "Đang tải đồng thời 0 hồ sơ" vĩnh viễn.
-   */
   private startWatchdog() {
     this.stopWatchdog();
     this.watchdogTimer = setInterval(() => {
@@ -127,8 +125,11 @@ export class DownloadManager extends EventEmitter {
    * cộng dồn. Trước đây hàng đợi giữ lại item của các lô cũ (kể cả item đã
    * bị hủy, mà start() còn hồi phục về PENDING) khiến người dùng chọn 3 hồ sơ
    * nhưng modal hiện "Tổng số 10" và tải cả hồ sơ cũ không liên quan.
-   */
+  */
   public enqueueFilings(filings: TaxFiling[], taxCode?: string, year?: number) {
+    if (filings.some(filing => filing.source === 'dvc-etax-html' || Boolean(filing.messageId))) {
+      throw new Error('DownloadManager hiện tại không nhận tờ khai eTax năm cũ.');
+    }
     if (taxCode) this.taxCode = taxCode;
     if (year) this.year = year;
 
@@ -143,6 +144,7 @@ export class DownloadManager extends EventEmitter {
     this.isCancelled = false;
     this.isPaused = false;
     this.queue = [];
+    this.consecutiveInfrastructureFailures = 0;
 
     for (const filing of filings) {
       // 🎯 TẦNG 1: LOGICAL MANIFEST PRE-CHECK
@@ -159,6 +161,8 @@ export class DownloadManager extends EventEmitter {
           savedPaths: preCheck.savedPaths
         });
       } else {
+        filing.downloadStatus = 'PENDING';
+        filing.downloadError = undefined;
         this.queue.push({
           filingId: filing.id,
           filing,
@@ -185,9 +189,7 @@ export class DownloadManager extends EventEmitter {
     this.hasEmittedAuthExpired = false;
 
     // Đợt trước đã bị HỦY mà người dùng bấm tải lại: các item CANCELLED phải
-    // được hồi phục về PENDING. Nếu không, hàng đợi không còn item nào chạy được
-    // nhưng remaining > 0 → state kẹt RUNNING vĩnh viễn, không bao giờ emit
-    // 'completed' và UI treo ở màn hình tiến trình.
+    // được hồi phục về PENDING.
     const hasRunnableItem = this.queue.some(q => q.status === 'PENDING' || q.status === 'DOWNLOADING');
     if (!hasRunnableItem && this.queue.some(q => q.status === 'CANCELLED')) {
       for (const q of this.queue) {
@@ -268,6 +270,7 @@ export class DownloadManager extends EventEmitter {
 
   public pause() {
     this.stopWatchdog();
+    this.queueGeneration++;
     this.isPaused = true;
     this.state = 'PAUSED';
     if (this.abortController) {
@@ -277,6 +280,7 @@ export class DownloadManager extends EventEmitter {
     for (const item of this.queue) {
       if (item.status === 'DOWNLOADING') {
         item.status = 'PENDING';
+        item.filing.downloadStatus = 'PENDING';
       }
     }
     this.activeDownloads = 0;
@@ -286,6 +290,7 @@ export class DownloadManager extends EventEmitter {
 
   public cancel() {
     this.stopWatchdog();
+    this.queueGeneration++;
     this.isCancelled = true;
     this.isPaused = false;
     this.state = 'CANCELLED';
@@ -298,6 +303,7 @@ export class DownloadManager extends EventEmitter {
     for (const item of this.queue) {
       if (item.status === 'PENDING' || item.status === 'DOWNLOADING') {
         item.status = 'CANCELLED';
+        item.filing.downloadStatus = 'FAILED';
       }
     }
 
@@ -328,20 +334,19 @@ export class DownloadManager extends EventEmitter {
       if (summary.remaining === 0) {
         this.stopWatchdog();
         this.state = 'COMPLETED';
-        this.emit('completed', summary);
+        this.emit('completed', this.getSummary());
+        this.emitProgress();
       }
     }
   }
 
-  /**
-   * 2. XỬ LÝ WORKER TẢI VÀ SESSION EXPIRED GIỮA DOWNLOAD
-   */
   private async downloadItemWithWorker(item: DownloadQueueItem, generation: number): Promise<void> {
     if (generation !== this.queueGeneration || item.status === 'EXISTING' || this.isPaused || this.isCancelled) {
       return;
     }
 
     item.status = 'DOWNLOADING';
+    item.filing.downloadStatus = 'DOWNLOADING';
     this.emitProgress(item);
 
     // Jitter nhẹ tránh xung đột đồng thời giữa các workers
@@ -349,8 +354,10 @@ export class DownloadManager extends EventEmitter {
 
     if (generation !== this.queueGeneration || this.isPaused || this.isCancelled) {
       if (item.status === 'DOWNLOADING') item.status = 'PENDING';
+      item.filing.downloadStatus = 'PENDING';
       return;
     }
+
 
     // Cờ deadline đặt NGOÀI khối try để khối catch nhìn thấy được
     let deadlineHit = false;
@@ -371,28 +378,71 @@ export class DownloadManager extends EventEmitter {
         itemController.abort();
       }, ITEM_DEADLINE_MS);
 
-      let payload;
+      let payload: any = null;
       try {
-        // Cổng Thuế yêu cầu/đồng bộ bước xác thực ID hồ sơ trước khi trả nội
-        // dung ở endpoint downloadhoso. TNCN thường bị ảnh hưởng rõ nhất vì
-        // các ID hồ sơ cũ/ID tham chiếu của nhóm này khác nhau.
-        // validateIdTkhai() là best-effort: nếu endpoint kiểm tra lỗi tạm thời
-        // thì vẫn để downloadHoSo tự thử các chiến lược và altIds như trước.
-        if (typeof (this.client as any).validateIdTkhai === 'function') {
-          await (this.client as any).validateIdTkhai(item.filingId);
+        const isPitFiling =
+          item.filing.taxType === 'PIT' ||
+          (item.filing.declarationCode || '').includes('05/KK') ||
+          (item.filing.declarationCode || '').includes('05/QTT') ||
+          (item.filing.declarationCode || '').includes('TNCN') ||
+          (item.filing.title || '').toLowerCase().includes('thu nhập cá nhân') ||
+          (item.filing.title || '').toLowerCase().includes('tncn') ||
+          item.filing.source === 'dvc-etax-html';
+
+        if (isPitFiling && this.legacyClient) {
+          try {
+            const legacyFile = item.filing.messageId
+              ? await this.legacyClient.downloadFiling(item.filing.messageId, itemController.signal)
+              : await this.legacyClient.resolveAndDownloadFiling(
+                  this.taxCode,
+                  item.filing,
+                  itemController.signal
+                );
+            payload = {
+              fileName: legacyFile.fileName,
+              fileType: legacyFile.contentType,
+              content: legacyFile.dataBuffer.toString('base64'),
+              fileCount: 1
+            };
+          } catch (etaxErr: any) {
+            console.warn(`[DownloadManager] Không tải được qua eTax (${etaxErr?.message}), chuyển sang Cổng DVC`);
+          }
         }
 
-        // 2. Tải Base64 ZIP — tự động route sang /downloadhoso-tdt nếu isThueDienTu=true
-        payload = await this.client.downloadHoSo(
-          item.filingId,
-          itemController.signal,
-          {
-            isThueDienTu: item.filing.isThueDienTu,
-            loaiTraCuu: item.filing.loaiTraCuu,
-            maTkhai: item.filing.maTkhai,
-            altIds: item.filing.altIds
+        if (!payload) {
+          try {
+            payload = await this.client.downloadHoSo(
+              item.filingId,
+              itemController.signal,
+              {
+                isThueDienTu: item.filing.isThueDienTu,
+                loaiTraCuu: item.filing.loaiTraCuu,
+                maTkhai: item.filing.maTkhai,
+                altIds: item.filing.altIds
+              }
+            );
+          } catch (dvcErr: any) {
+            if (this.legacyClient && !isPitFiling) {
+              try {
+                const legacyFile = await this.legacyClient.resolveAndDownloadFiling(
+                  this.taxCode,
+                  item.filing,
+                  itemController.signal
+                );
+                payload = {
+                  fileName: legacyFile.fileName,
+                  fileType: legacyFile.contentType,
+                  content: legacyFile.dataBuffer.toString('base64'),
+                  fileCount: 1
+                };
+              } catch {
+                throw dvcErr;
+              }
+            } else {
+              throw dvcErr;
+            }
           }
-        );
+        }
       } finally {
         clearTimeout(deadline);
         if (this.abortController) {
@@ -402,6 +452,7 @@ export class DownloadManager extends EventEmitter {
 
       // clearQueue() may have replaced the queue while the request was in flight.
       if (generation !== this.queueGeneration) return;
+      this.consecutiveInfrastructureFailures = 0;
 
       // 3. Tầng 2: Giải nén an toàn & kiểm tra integrity SHA-256
       const saveResult = this.fileOrganizer.saveExtractedFiling(
@@ -440,6 +491,7 @@ export class DownloadManager extends EventEmitter {
         if (item.status === 'DOWNLOADING') {
           item.status = 'PENDING';
           item.progressPercent = 0;
+          item.filing.downloadStatus = 'PENDING';
         }
         this.emitProgress(item);
         return;
@@ -450,7 +502,12 @@ export class DownloadManager extends EventEmitter {
         // Trả item hiện tại về PENDING để retry sau khi đăng nhập lại
         item.status = 'PENDING';
         item.progressPercent = 0;
+        item.filing.downloadStatus = 'PENDING';
 
+        // Vô hiệu hóa toàn bộ worker của generation cũ trước khi abort. Nếu
+        // response cũ về muộn sau khi đăng nhập lại, nó không được phép lưu
+        // file hoặc ghi đè trạng thái batch mới.
+        this.queueGeneration++;
         // Dừng toàn bộ workers khác
         if (this.abortController) {
           this.abortController.abort();
@@ -460,6 +517,7 @@ export class DownloadManager extends EventEmitter {
         for (const q of this.queue) {
           if (q.status === 'DOWNLOADING') {
             q.status = 'PENDING';
+            q.filing.downloadStatus = 'PENDING';
           }
         }
 
@@ -478,6 +536,54 @@ export class DownloadManager extends EventEmitter {
         return;
       }
 
+      // Circuit breaker cấp batch:
+      // - 429 đầu tiên: dừng ngay toàn bộ queue, không để mỗi item tự thử lại.
+      // - Hai lỗi server 5xx liên tiếp: coi endpoint đang lỗi hệ thống và dừng
+      //   phần còn lại thay vì tạo hàng chục response 500 như bản cũ.
+      const isRateLimited = err.code === 'RATE_LIMIT' || err.httpStatus === 429;
+      const isRejectedPayload = err.code === 'FILING_PAYLOAD_REJECTED';
+      const isRecordSpecificFailure = this.isRecordSpecificDownloadFailure(err);
+      const isServerFailure = !isRejectedPayload && !isRecordSpecificFailure && (
+        err.code === 'SERVER_ERROR' || Number(err.httpStatus) >= 500
+      );
+      if (isRateLimited || isServerFailure) {
+        this.consecutiveInfrastructureFailures = isRateLimited
+          ? this.consecutiveInfrastructureFailures
+          : this.consecutiveInfrastructureFailures + 1;
+        const mustPauseBatch = isRateLimited || this.consecutiveInfrastructureFailures >= 2;
+
+        if (mustPauseBatch) {
+          this.queueGeneration++;
+          item.status = isRateLimited ? 'PENDING' : 'FAILED';
+          item.filing.downloadStatus = isRateLimited ? 'PENDING' : 'FAILED';
+          item.progressPercent = 0;
+          item.error = this.formatDownloadError(err);
+          if (!isRateLimited) {
+            item.filing.downloadStatus = 'FAILED';
+            item.filing.downloadError = item.error;
+            this.emit('item_failed', { item, error: item.error });
+          }
+
+          if (this.abortController) this.abortController.abort();
+          for (const queued of this.queue) {
+            if (queued !== item && queued.status === 'DOWNLOADING') {
+              queued.status = 'PENDING';
+              queued.progressPercent = 0;
+              queued.filing.downloadStatus = 'PENDING';
+            }
+          }
+          this.isPaused = true;
+          this.state = 'PAUSED';
+          this.activeDownloads = 0;
+          this.stopWatchdog();
+          this.emit('paused', this.getSummary());
+          this.emitProgress(item);
+          return;
+        }
+      } else {
+        this.consecutiveInfrastructureFailures = 0;
+      }
+
       // Xử lý retry đối với lỗi mạng / timeout thông thường
       if (deadlineHit && !(this.isCancelled || this.isPaused)) {
         // Vượt deadline của chính hồ sơ này (không phải do user dừng) → FAILED
@@ -487,12 +593,16 @@ export class DownloadManager extends EventEmitter {
         item.filing.downloadStatus = 'FAILED';
         item.filing.downloadError = item.error;
         this.emit('item_failed', { item, error: item.error });
-      } else if (item.retries < PORTAL_CONFIG.MAX_RETRIES && (err.code === 'NETWORK' || err.code === 'TIMEOUT' || err.code === 'RATE_LIMIT')) {
+      } else if (
+        item.retries < PORTAL_CONFIG.MAX_RETRIES &&
+        (err.code === 'NETWORK' || err.code === 'TIMEOUT')
+      ) {
         item.retries++;
         const backoffMs = PORTAL_CONFIG.RETRY_BASE_DELAY_MS * Math.pow(2, item.retries);
         await new Promise(r => setTimeout(r, backoffMs));
         if (this.state === 'RUNNING' && !this.isPaused) {
           item.status = 'PENDING';
+          item.filing.downloadStatus = 'PENDING';
         }
       } else {
         item.status = 'FAILED';
@@ -519,6 +629,35 @@ export class DownloadManager extends EventEmitter {
       `${a.label}=${a.status || 'khong-PT'}/${a.ms}ms${a.head ? `«${String(a.head).slice(0, 70)}»` : ''}`
     );
     return `${base} || Thu: ${parts.join(' ;; ')}`;
+  }
+
+  /**
+   * Một số endpoint trả HTTP 500 cho ID/payload riêng lẻ dù hạ tầng vẫn sống.
+   * Các lỗi này phải làm FAILED đúng hồ sơ hiện tại, không được cộng vào circuit
+   * breaker cấp batch.
+   */
+  private isRecordSpecificDownloadFailure(err: any): boolean {
+    const attempts = Array.isArray(err?.attempts) ? err.attempts : [];
+    const diagnosticText = [
+      err?.message,
+      ...attempts.map((attempt: any) => attempt?.head)
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd');
+
+    return [
+      'ho so truyen len khong hop le',
+      'ma ho so khong hop le',
+      'id to khai khong hop le',
+      'id tkhai khong hop le',
+      'invalid filing',
+      'invalid dossier',
+      'download failed'
+    ].some(marker => diagnosticText.includes(marker));
   }
 
   private emitProgress(item?: DownloadQueueItem) {

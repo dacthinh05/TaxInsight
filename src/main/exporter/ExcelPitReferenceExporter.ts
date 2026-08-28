@@ -47,11 +47,11 @@ export class ExcelPitReferenceExporter {
       // Table Header (Row 4)
       const headers = [
         'KỲ KÊ KHAI',
-        'SỐ LAO ĐỘNG [21]',
-        'TỔNG TNCT [24]',
-        'KHẤU TRỪ CƯ TRÚ [31]',
-        'KHẤU TRỪ K.CƯ TRÚ [32]',
-        'TỔNG KHẤU TRỪ [30/34]',
+        'SỐ LAO ĐỘNG [16]',
+        'TỔNG TNCT [21]',
+        'KHẤU TRỪ CƯ TRÚ [30]',
+        'KHẤU TRỪ K.CƯ TRÚ [31]',
+        'TỔNG KHẤU TRỪ [29]',
         'HỒ SƠ HIỆU LỰC',
         'GHI CHÚ KỲ'
       ];
@@ -174,7 +174,7 @@ export class ExcelPitReferenceExporter {
           Number(yearFlow.finalizationSnapshot.ct33_khauTruCaNhanKhongCuTru),
           Number(yearFlow.finalizationWithheldTax36 || 0n),
           `Bản ${yearFlow.finalizationSnapshot.versionType === 'SUPPLEMENTAL' ? `BS lần ${yearFlow.finalizationSnapshot.supplementalNo}` : 'Chính thức'}`,
-          'Chỉ tiêu [31/36] trên 05/QTT'
+          'Chỉ tiêu [31] trên 05/QTT'
         ];
         qttRow.font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'FF065F46' } };
         qttRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } };

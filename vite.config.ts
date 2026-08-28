@@ -1,10 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import packageJson from './package.json';
 
 export default defineConfig({
   plugins: [react()],
   base: './',
+  define: {
+    // Renderer biết phiên bản ngay từ bundle đầu tiên, trước khi IPC/main
+    // process phản hồi. Tránh nháy một version hard-code cũ trên màn đăng nhập.
+    __APP_VERSION__: JSON.stringify(packageJson.version)
+  },
   resolve: {
     alias: {
       '@shared': path.resolve(__dirname, 'src/shared'),

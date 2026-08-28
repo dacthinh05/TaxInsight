@@ -120,4 +120,16 @@ describe('GntStatisticsEngine', () => {
     expect(r.activeBuckets).toContain('HOUSE_LAND');
     expect(r.grandTotal).toBe(5_500_000);
   });
+
+  it('chi tiết mismatch không được phân loại; toàn bộ tiền vào NO_DETAIL', () => {
+    const slips = [mkSlip('mismatch', 1_000_000, '12/05/2026')];
+    const detail = mkDetail('mismatch', [{ ndkt: '1701', vnd: '1,000,000' }]);
+    detail.suspectedMismatch = true;
+    detail.detailIntegrity = 'MISMATCH';
+
+    const r = GntStatisticsEngine.build(slips, new Map([['mismatch', detail]]));
+    expect(GntStatisticsEngine.amountOf(r, '05/2026', 'VAT')).toBe(0);
+    expect(GntStatisticsEngine.amountOf(r, '05/2026', 'NO_DETAIL')).toBe(1_000_000);
+    expect(r.noDetailCount).toBe(1);
+  });
 });

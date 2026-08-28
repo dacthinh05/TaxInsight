@@ -102,29 +102,8 @@ export const FilingQuickPreviewDrawer: React.FC<FilingQuickPreviewDrawerProps> =
           if (isSubscribed) setLoading(false);
         });
     } else {
-      setTimeout(() => {
-        if (!isSubscribed) return;
-        const mock: FilingPreviewData = {
-          filingId: filing.id,
-          title: filing.title,
-          taxType: filing.taxType,
-          procedureCode: filing.procedureCode,
-          declarationCode: filing.declarationCode,
-          period: filing.period,
-          submittedAt: filing.submittedAt,
-          filingType: filing.filingType,
-          supplementalNo: filing.supplementalNo,
-          status: filing.status || 'Đã chấp nhận',
-          taxAuthority: 'Chi cục Thuế Quản lý',
-          metrics: [
-            { code: '[21]', label: 'Tổng số người lao động', value: '125', type: 'quantity', unit: 'người', group: 'NHÂN SỰ' }
-          ],
-          xmlSnippet: `<?xml version="1.0" encoding="UTF-8"?>\n<HSoThueDTu>\n  <TTinChung>\n    <maTKhai>${filing.declarationCode || '01/GTGT'}</maTKhai>\n  </TTinChung>\n</HSoThueDTu>`
-        };
-        cache.set(cacheKey, mock);
-        setPreviewData(mock);
-        setLoading(false);
-      }, 200);
+      setError('Không kết nối được tiến trình chính để tải nội dung xem nhanh.');
+      setLoading(false);
     }
 
     return () => {

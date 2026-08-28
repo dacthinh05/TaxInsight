@@ -2,17 +2,21 @@ import { app, BrowserWindow, nativeImage } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { DownloadManager } from './downloader/DownloadManager';
+import { LegacyFilingDownloader } from './downloader/LegacyFilingDownloader';
 import { FileOrganizer } from './files/FileOrganizer';
 import { setupIpcHandlers } from './ipc/ipcHandlers';
 import { AuditLogger } from './persistence/AuditLogger';
 import { CheckpointStore } from './persistence/CheckpointStore';
 import { GntCheckpointStore } from './persistence/GntCheckpointStore';
+import { HistoricalCheckpointStore } from './persistence/HistoricalCheckpointStore';
 import { SettingsStore } from './persistence/SettingsStore';
 import { CaptchaManager } from './portal/CaptchaManager';
+import { LegacyFilingClient } from './portal/LegacyFilingClient';
 import { PaymentSlipClient } from './portal/PaymentSlipClient';
 import { PortalSession } from './portal/PortalSession';
 import { TaxPortalClient } from './portal/TaxPortalClient';
 import { TaxScanEngine } from './scanner/TaxScanEngine';
+import { LegacyFilingLookupWorkflow } from './scanner/LegacyFilingLookupWorkflow';
 import { AppUpdater } from './updater/AppUpdater';
 
 // Đảm bảo tên ứng dụng và thư mục userData luôn thống nhất trên mọi môi trường
@@ -24,42 +28,66 @@ let mainWindow: BrowserWindow | null = null;
 // Trước đây createWindow() tạo lại toàn bộ service + đăng ký lại ~45 IPC handler
 // mỗi lần gọi — trên macOS, activate sau khi đóng cửa sổ sẽ throw
 // "Attempted to register a second handler" và để lại cửa sổ trắng + IPC chết.
-const serviceContainer: {
-  session?: PortalSession;
-  client?: TaxPortalClient;
-  paymentSlipClient?: PaymentSlipClient;
-  captchaManager?: CaptchaManager;
-  fileOrganizer?: FileOrganizer;
-  scanEngine?: TaxScanEngine;
-  downloadManager?: DownloadManager;
-  checkpointStore?: CheckpointStore;
-  gntCheckpointStore?: GntCheckpointStore;
-  auditLogger?: AuditLogger;
-} = {};
+type AppServices = {
+  session: PortalSession;
+  client: TaxPortalClient;
+  paymentSlipClient: PaymentSlipClient;
+  legacyFilingClient: LegacyFilingClient;
+  captchaManager: CaptchaManager;
+  fileOrganizer: FileOrganizer;
+  scanEngine: TaxScanEngine;
+  downloadManager: DownloadManager;
+  legacyFilingDownloader: LegacyFilingDownloader;
+  legacyFilingWorkflow: LegacyFilingLookupWorkflow;
+  checkpointStore: CheckpointStore;
+  gntCheckpointStore: GntCheckpointStore;
+  historicalCheckpointStore: HistoricalCheckpointStore;
+  auditLogger: AuditLogger;
+};
+const serviceContainer: Partial<AppServices> = {};
 let ipcRegistered = false;
 let updaterStarted = false;
 
-function getOrCreateServices(initialDownloadDir: string) {
+function getOrCreateServices(initialDownloadDir: string): AppServices {
   if (!serviceContainer.session) {
-    serviceContainer.session = new PortalSession();
-    serviceContainer.client = new TaxPortalClient(serviceContainer.session);
-    serviceContainer.paymentSlipClient = new PaymentSlipClient(serviceContainer.session);
-    serviceContainer.captchaManager = new CaptchaManager(serviceContainer.client);
-    serviceContainer.fileOrganizer = new FileOrganizer(initialDownloadDir);
-    serviceContainer.scanEngine = new TaxScanEngine(serviceContainer.client, serviceContainer.captchaManager);
-    serviceContainer.downloadManager = new DownloadManager(serviceContainer.client, serviceContainer.fileOrganizer);
-    serviceContainer.checkpointStore = new CheckpointStore(initialDownloadDir);
-    serviceContainer.gntCheckpointStore = new GntCheckpointStore(initialDownloadDir);
-    serviceContainer.auditLogger = new AuditLogger(initialDownloadDir);
+    const session = new PortalSession();
+    const client = new TaxPortalClient(session);
+    const paymentSlipClient = new PaymentSlipClient(session);
+    const legacyFilingClient = new LegacyFilingClient(session);
+    const captchaManager = new CaptchaManager(client);
+    const fileOrganizer = new FileOrganizer(initialDownloadDir);
+    const historicalCheckpointStore = new HistoricalCheckpointStore(initialDownloadDir);
+
+    Object.assign(serviceContainer, {
+      session,
+      client,
+      paymentSlipClient,
+      legacyFilingClient,
+      captchaManager,
+      fileOrganizer,
+      scanEngine: new TaxScanEngine(client, captchaManager),
+      downloadManager: new DownloadManager(client, fileOrganizer),
+      legacyFilingDownloader: new LegacyFilingDownloader(legacyFilingClient, fileOrganizer),
+      legacyFilingWorkflow: new LegacyFilingLookupWorkflow(
+        legacyFilingClient,
+        historicalCheckpointStore,
+        fileOrganizer
+      ),
+      checkpointStore: new CheckpointStore(initialDownloadDir),
+      gntCheckpointStore: new GntCheckpointStore(initialDownloadDir),
+      historicalCheckpointStore,
+      auditLogger: new AuditLogger(initialDownloadDir)
+    } satisfies AppServices);
   }
-  return serviceContainer as Required<NonNullable<typeof serviceContainer>>;
+  return serviceContainer as AppServices;
 }
 
 function createWindow() {
   const initialDownloadDir = SettingsStore.getDownloadDir();
   const {
-    session, client, paymentSlipClient, captchaManager, fileOrganizer,
-    scanEngine, downloadManager, checkpointStore, gntCheckpointStore, auditLogger
+    session, client, paymentSlipClient, legacyFilingClient, captchaManager, fileOrganizer,
+    scanEngine, downloadManager, legacyFilingDownloader, legacyFilingWorkflow,
+    checkpointStore, gntCheckpointStore, historicalCheckpointStore, auditLogger
   } = getOrCreateServices(initialDownloadDir);
 
   // Tìm icon đa fallback đảm bảo luôn tải được icon trên mọi môi trường
@@ -106,7 +134,7 @@ function createWindow() {
 
   // ── TEMP DEBUG: ghi lỗi renderer ra file để chẩn đoán màn hình trắng ──
   // (giới hạn kích thước: rotate khi vượt 2MB thay vì append vô hạn)
-  try {
+  if (!app.isPackaged || process.env.TAXINSIGHT_RENDERER_DEBUG === '1') try {
     const dbgLogPath = path.join(app.getPath('temp'), 'taxrecord_renderer.log');
     const dbgLog = (m: string) => {
       try {
@@ -146,12 +174,16 @@ function createWindow() {
       session,
       client,
       paymentSlipClient,
+      legacyFilingClient,
       captchaManager,
       scanEngine,
       downloadManager,
+      legacyFilingDownloader,
+      legacyFilingWorkflow,
       fileOrganizer,
       checkpointStore,
       gntCheckpointStore,
+      historicalCheckpointStore,
       auditLogger,
       sendToRenderer
     );
@@ -161,7 +193,9 @@ function createWindow() {
   const updater = AppUpdater.getInstance();
   updater.setMainWindow(mainWindow);
   if (!updaterStarted) {
-    updater.startAutoCheckTimer(1000);
+    // Kiểm tra ngay khi ứng dụng mở; AppUpdater có single-flight nên lời gọi
+    // đồng thời từ renderer không tạo hai request kiểm tra release.
+    updater.startAutoCheckTimer(0);
     updaterStarted = true;
   }
 
@@ -203,6 +237,25 @@ process.on('unhandledRejection', reason => {
 // để renderer bị chiếm (CDN hỏng, update poisoned) không điều hướng app sang
 // nội dung tấn công và không spawn cửa sổ kế thừa webPreferences.
 const ALLOWED_DEV_SERVER_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
+const ALLOWED_EXTERNAL_HOSTS = new Set([
+  'github.com',
+  'www.github.com',
+  'img.vietqr.io',
+  'dichvucong.gdt.gov.vn',
+  'thuedientu.gdt.gov.vn'
+]);
+
+function isAllowedExternalUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'https:' && (
+      ALLOWED_EXTERNAL_HOSTS.has(url.hostname.toLowerCase()) ||
+      url.hostname.toLowerCase().endsWith('.gdt.gov.vn')
+    );
+  } catch {
+    return false;
+  }
+}
 
 function isAllowedInternalUrl(rawUrl: string): boolean {
   try {
@@ -225,6 +278,13 @@ function isAllowedInternalUrl(rawUrl: string): boolean {
 }
 
 app.on('web-contents-created', (_event, contents) => {
+  // Ứng dụng không cần camera/micro/vị trí/thông báo. Từ chối mặc định để nội
+  // dung portal hoặc renderer bị chèn script không thể xin thêm quyền hệ thống.
+  contents.session.setPermissionCheckHandler(() => false);
+  contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
+
   // Chặn điều hướng ra ngoài tập URL cho phép (window chính load dist/dev,
   // auth popup điều hướng gdt.gov.vn)
   contents.on('will-navigate', (event, url) => {
@@ -239,7 +299,7 @@ app.on('web-contents-created', (_event, contents) => {
   contents.setWindowOpenHandler(({ url }) => {
     try {
       const u = new URL(url);
-      if ((u.protocol === 'https:' || u.protocol === 'http:') && /^https?:\/\//i.test(url)) {
+      if (isAllowedExternalUrl(url)) {
         const { shell } = require('electron') as typeof import('electron');
         shell.openExternal(url).catch(() => {});
       }

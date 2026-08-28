@@ -4,6 +4,8 @@ node_modules/
 # Build outputs
 dist/
 dist-electron/
+dist-build/
+artifacts-dist/
 release/
 release*/
 release-v*/

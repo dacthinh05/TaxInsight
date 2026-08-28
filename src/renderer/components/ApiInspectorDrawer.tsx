@@ -193,7 +193,7 @@ export const ApiInspectorDrawer: React.FC<ApiInspectorDrawerProps> = ({ isOpen, 
               <div className="flex items-center space-x-2">
                 <h2 className="font-bold text-sm text-white tracking-tight">API Inspector</h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-950 text-purple-300 border border-purple-800/80">
-                  ADMIN ONLY
+                  ĐÃ ẨN DỮ LIỆU NHẠY CẢM
                 </span>
                 {isLiveStreaming && (
                   <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800/80 animate-pulse">

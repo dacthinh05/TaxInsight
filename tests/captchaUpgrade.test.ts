@@ -159,3 +159,50 @@ describe('UPGRADE #3 — segmentGlyphs chuẩn hóa về đúng 5 ký tự', () 
     expect(glyphs.map(g => g.x0)).toEqual(BAR_XS);
   });
 });
+
+describe('UPGRADE #4 — cổng an toàn auto-submit CAPTCHA', () => {
+  const candidate = (text: string, source: string) => ({
+    text,
+    confidence: 96,
+    source,
+    chars: text.split(''),
+    charConfs: [96, 96, 96, 96, 96]
+  });
+
+  it('không tự gửi khi chỉ 3/11 pipeline cùng đọc một kết quả dù confidence cao', () => {
+    const candidates = [
+      candidate('q1atq', 'charseg_gray'),
+      candidate('q1atq', 'charseg_lowthr_gray'),
+      candidate('q1atq', 'charseg_dilated_gray'),
+      candidate('qtetq', 'otsu_clean'),
+      candidate('qtetq', 'high_contrast'),
+      candidate('qhetq', 'low_threshold'),
+      candidate('qhetq', 'otsu_raw'),
+      candidate('qketq', 'sauvola_adaptive'),
+      candidate('qletq', 'grayscale_stretched'),
+      candidate('qdatq', 'charseg_bin'),
+      candidate('qiatq', 'charseg_sauvola_gray')
+    ];
+    expect(CaptchaSolver.isSafeForAutoSubmit({
+      text: 'q1atq',
+      confidence: 96.2,
+      accepted: true,
+      reason: '3_sources_identical',
+      candidates
+    })).toBe(false);
+  });
+
+  it('chỉ tự gửi khi tối thiểu 60% pipeline đầy đủ đồng thuận', () => {
+    const candidates = [
+      ...Array.from({ length: 6 }, (_, index) => candidate('etsyd', `agree_${index}`)),
+      ...Array.from({ length: 4 }, (_, index) => candidate('eksyd', `other_${index}`))
+    ];
+    expect(CaptchaSolver.isSafeForAutoSubmit({
+      text: 'etsyd',
+      confidence: 95,
+      accepted: true,
+      reason: 'strong_consensus',
+      candidates
+    })).toBe(true);
+  });
+});

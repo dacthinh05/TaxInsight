@@ -21,9 +21,13 @@ export class TaxDeadlineEngine {
 
     // 1. Xác định ngày deadline cơ sở (Base Date) trước khi tính ngày nghỉ
     let baseDate: Date | null = null;
-    let rulePeriodType: 'MONTH' | 'QUARTER' | 'YEAR' | 'FINALIZATION_CIT' = 'MONTH';
+    let rulePeriodType: 'MONTH' | 'QUARTER' | 'YEAR' | 'FINALIZATION_CIT' | 'FINALIZATION_PIT' = 'MONTH';
 
-    if (isFinalization || declarationCode === '03/TNDN' || declarationCode === '05/QTT-TNCN' || periodType === 'YEAR') {
+    const isIndividualPitFinalization = declarationCode === '02/QTT-TNCN';
+    if (isIndividualPitFinalization) {
+      rulePeriodType = 'FINALIZATION_PIT';
+      baseDate = new Date(year + 1, 3, 30);
+    } else if (isFinalization || declarationCode === '03/TNDN' || declarationCode === '05/QTT-TNCN' || periodType === 'YEAR') {
       rulePeriodType = 'FINALIZATION_CIT';
       // Quyết toán năm: Ngày cuối cùng của tháng thứ 3 năm tiếp theo (31/03/YYYY+1)
       baseDate = new Date(year + 1, 2, 31); // Month 2 = March in JS Date (0-indexed)
@@ -83,6 +87,10 @@ export class TaxDeadlineEngine {
     if (extensionCheck.hasPossibleExtension) {
       notes.push(extensionCheck.reason);
     }
+    const holidayCalendarCovered = BusinessDayCalendar.hasHolidayCoverage(baseDate.getFullYear());
+    if (!holidayCalendarCovered) {
+      notes.push(`Lịch nghỉ lễ năm ${baseDate.getFullYear()} chưa được cấu hình đầy đủ; chỉ điều chỉnh Thứ Bảy/Chủ Nhật.`);
+    }
 
     return {
       baseFilingDeadline: this.formatDateVn(baseDate),
@@ -93,7 +101,7 @@ export class TaxDeadlineEngine {
       legalBasis,
       extensionApplied: false, // Chưa tự ý khẳng định gia hạn nếu chưa có xác nhận điều kiện
       extensionReason: extensionCheck.hasPossibleExtension ? extensionCheck.reason : undefined,
-      confidence: extensionCheck.hasPossibleExtension ? 'NEEDS_REVIEW' : 'CONFIRMED',
+      confidence: extensionCheck.hasPossibleExtension || !holidayCalendarCovered ? 'NEEDS_REVIEW' : 'CONFIRMED',
       notes: notes.length > 0 ? notes : undefined,
       isAdjustedForHoliday: holidayCheck.wasAdjusted,
       originalDateBeforeHoliday: holidayCheck.wasAdjusted ? this.formatDateVn(baseDate) : undefined

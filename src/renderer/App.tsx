@@ -6,6 +6,8 @@ import {
   CaptchaChallenge,
   CheckpointData,
   DownloadSummary,
+  FilingSourceMode,
+  LegacyFilingScanProgress,
   MissingPeriodCheck,
   PaymentSlipDetail,
   PaymentSlipRecord,
@@ -39,9 +41,9 @@ import { TaxObligationSummary } from '../shared/obligationTypes';
 import { TaxObligationTable } from './components/TaxObligationTable';
 import { LicenseModal } from './components/LicenseModal';
 import { UpdateNotificationModal } from './components/UpdateNotificationModal';
-import { AdminPinModal } from './components/AdminPinModal';
 import { ApiInspectorDrawer } from './components/ApiInspectorDrawer';
-import { AdminAuthStatus, ApiInspectorEntry, UpdateInfo } from '../shared/types';
+import { AdminPinModal } from './components/AdminPinModal';
+import { ApiInspectorEntry, UpdateInfo } from '../shared/types';
 
 type PaymentQueryStatus = 'CONNECTED_WITH_DATA' | 'CONNECTED_NO_DATA' | 'QUERY_FAILED' | 'NOT_QUERIED';
 
@@ -56,6 +58,7 @@ export const App: React.FC = () => {
   const [gntDetails, setGntDetails] = useState<Map<string, PaymentSlipDetail>>(new Map());
   const [paymentQueryStatus, setPaymentQueryStatus] = useState<PaymentQueryStatus>('NOT_QUERIED');
   const gntDetailReqId = useRef(0);
+  const failedGntDetailIds = useRef<Set<string>>(new Set());
   // ── Thanh lệnh GNT (đã nén vào ScanCommandBar): tìm kiếm + modal thống kê ──
   const [gntSearchQuery, setGntSearchQuery] = useState('');
   const [gntStatsOpen, setGntStatsOpen] = useState(false);
@@ -66,21 +69,32 @@ export const App: React.FC = () => {
   const [scanRangeMode, setScanRangeMode] = useState<string>('YEAR_TO_DATE');
   const [selectedTaxType, setSelectedTaxType] = useState<TaxType>('ALL');
 
+  // ── Tra Cứu Tờ Khai Năm Cũ qua eTax (Legacy Filing) State ──
+  const [sourceMode, setSourceMode] = useState<FilingSourceMode>('CURRENT');
+  const [legacyYearFrom, setLegacyYearFrom] = useState<number>(() => Math.max(2018, new Date().getFullYear() - 4));
+  const [legacyYearTo, setLegacyYearTo] = useState<number>(() => new Date().getFullYear() - 1);
+  const [legacyMaTKhai, setLegacyMaTKhai] = useState<string>('00');
+  const [legacyFormOptions, setLegacyFormOptions] = useState<{ value: string; text: string }[]>([]);
+  const [onlyMissing, setOnlyMissing] = useState<boolean>(false);
+  const [legacyScanProgress, setLegacyScanProgress] = useState<LegacyFilingScanProgress | null>(null);
+  const activeDownloadSource = useRef<'CURRENT' | 'LEGACY'>('CURRENT');
+
   // Auto-Updater State
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
 
-  // API Inspector (Admin / Developer Diagnostics)
+  // API Inspector chỉ mở sau khi main process xác thực quyền quản trị.
   const [isApiInspectorOpen, setIsApiInspectorOpen] = useState(false);
-  const [isAdminPinModalOpen, setIsAdminPinModalOpen] = useState(false);
+  const [isAdminPinOpen, setIsAdminPinOpen] = useState(false);
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
   const [inspectorErrorCount, setInspectorErrorCount] = useState(0);
 
-  const handleOpenInspector = () => {
-    if (isAdminUnlocked) {
+  const handleOpenInspector = async () => {
+    const status = await window.taxPortalAPI?.inspectorGetAdminStatus?.();
+    if (status?.isAdmin || isAdminUnlocked) {
       setIsApiInspectorOpen(true);
     } else {
-      setIsAdminPinModalOpen(true);
+      setIsAdminPinOpen(true);
     }
   };
 
@@ -129,11 +143,19 @@ export const App: React.FC = () => {
     setIsDownloadModalOpen(true);
 
     try {
-      const res = await window.taxPortalAPI.startDownload({
-        filings: batch,
-        taxCode: session.taxCode,
-        year: selectedYear
-      });
+      const isLegacy = sourceMode === 'DVC_ETAX_LEGACY' || batch.some(f => f.source === 'dvc-etax-html');
+      activeDownloadSource.current = isLegacy ? 'LEGACY' : 'CURRENT';
+      const res = isLegacy
+        ? await window.taxPortalAPI.startLegacyFilingDownload({
+            filings: batch,
+            taxCode: session.taxCode,
+            year: selectedYear
+          })
+        : await window.taxPortalAPI.startDownload({
+            filings: batch,
+            taxCode: session.taxCode,
+            year: selectedYear
+          });
 
       if (res.success && res.summary) {
         setDownloadSummary(res.summary);
@@ -239,6 +261,50 @@ export const App: React.FC = () => {
         setIsAuthRequiredModalOpen(true);
       }),
 
+      // Legacy Filing listeners
+      window.taxPortalAPI.onLegacyFilingProgress && window.taxPortalAPI.onLegacyFilingProgress((data: LegacyFilingScanProgress) => {
+        setLegacyScanProgress(data);
+        setIsScanning(data.status === 'SCANNING' || data.status === 'SSO_INITIALIZING');
+        const mappedStatus: ScanProgressState['status'] =
+          data.status === 'COMPLETED'
+            ? 'COMPLETED'
+            : data.status === 'CANCELLED'
+              ? 'CANCELLED'
+              : data.status === 'ERROR' || data.status === 'AUTH_EXPIRED'
+                ? 'ERROR'
+                : 'SCANNING';
+        setScanProgress({
+          status: mappedStatus,
+          level: 'YEAR',
+          completedRanges: data.currentPage,
+          totalRanges: Math.max(1, data.totalPages),
+          foundFilingsCount: data.foundFilingsCount,
+          currentRange: {
+            fromDate: `01/01/${data.currentYear}`,
+            toDate: `31/12/${data.currentYear}`,
+            label: `Năm ${data.currentYear} (Trang ${data.currentPage}/${Math.max(1, data.totalPages)})`,
+            level: 'YEAR'
+          }
+        });
+      }),
+
+      window.taxPortalAPI.onLegacyFilingDownloadProgress && window.taxPortalAPI.onLegacyFilingDownloadProgress((data: any) => {
+        setDownloadSummary(data.summary);
+        if (data.currentItem?.filing) {
+          setFilings(prev =>
+            prev.map(f => (f.id === data.currentItem.filingId ? { ...f, ...data.currentItem.filing } : f))
+          );
+        }
+      }),
+
+      window.taxPortalAPI.onLegacyFilingDownloadCompleted && window.taxPortalAPI.onLegacyFilingDownloadCompleted((summary: any) => {
+        setDownloadSummary(summary);
+      }),
+
+      window.taxPortalAPI.onLegacyFilingAuthExpired && window.taxPortalAPI.onLegacyFilingAuthExpired(() => {
+        setIsAuthRequiredModalOpen(true);
+      }),
+
       window.taxPortalAPI.onVatProgress(data => {
         setVatProgressMessage(data.message);
       }),
@@ -274,13 +340,7 @@ export const App: React.FC = () => {
 
     ].filter(Boolean) as (() => void)[];
 
-    // Khởi tạo trạng thái Admin & Đếm lỗi Inspector ban đầu
-    if (window.taxPortalAPI?.inspectorGetAdminStatus) {
-      window.taxPortalAPI.inspectorGetAdminStatus().then(status => {
-        if (status?.isAdmin) setIsAdminUnlocked(true);
-      });
-    }
-
+    // Đếm lỗi Inspector ban đầu
     if (window.taxPortalAPI?.inspectorGetEntries) {
       window.taxPortalAPI.inspectorGetEntries().then(entries => {
         const errs = (entries || []).filter(
@@ -294,6 +354,15 @@ export const App: React.FC = () => {
     // Trước đây chỉ dựa vào timer phía main (check sau 4s) — khi đó renderer chưa
     // kịp gắn listener nên sự kiện bị rơi, bảng cập nhật chỉ hiện ở lần check kế
     // tiếp (1 tiếng sau) tức là khi người dùng đã đăng nhập và dùng app.
+    if (window.taxPortalAPI?.getUpdateStatus) {
+      window.taxPortalAPI.getUpdateStatus().then((status: UpdateInfo) => {
+        if (!status) return;
+        setUpdateInfo(status);
+        if (status.state === 'AVAILABLE' || status.state === 'DOWNLOADED') {
+          setIsUpdateModalOpen(true);
+        }
+      }).catch(() => {});
+    }
     if (window.taxPortalAPI?.checkForUpdates) {
       window.taxPortalAPI.checkForUpdates().then((res: UpdateInfo) => {
         if (res && (res.state === 'AVAILABLE' || res.state === 'DOWNLOADED')) {
@@ -322,7 +391,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isAdminUnlocked]);
+  }, []);
 
   const checkExistingCheckpoint = async (taxCode: string, year: number) => {
     if (!window.taxPortalAPI || !taxCode) return;
@@ -343,6 +412,7 @@ export const App: React.FC = () => {
     try {
       const res = await window.taxPortalAPI.getGntCheckpoint({ taxCode, year });
       if (res?.success && res.data?.slips?.length > 0) {
+        failedGntDetailIds.current.clear();
         setPaymentSlips(res.data.slips as PaymentSlipRecord[]);
         setPaymentQueryStatus('CONNECTED_WITH_DATA');
       }
@@ -465,7 +535,8 @@ export const App: React.FC = () => {
         alert(res.error || 'Có lỗi xảy ra trong quá trình quét hồ sơ');
       }
     } else {
-      simulateMockScan();
+      alert('Không kết nối được tiến trình chính. Không thể quét dữ liệu Cổng Thuế.');
+      setIsScanning(false);
     }
 
     if (scanId === latestScanId.current) {
@@ -473,37 +544,53 @@ export const App: React.FC = () => {
     }
   };
 
-  const simulateMockScan = () => {
-    setTimeout(() => {
-      const mock: TaxFiling[] = [
-        {
-          id: '000.701.18.G12-251219-27110000132363',
-          procedureCode: '1.007014',
-          declarationCode: '01/GTGT',
-          title: 'Khai thuế GTGT đối với phương pháp khấu trừ',
-          taxType: 'VAT',
-          period: `Tháng 11/${selectedYear}`,
-          submittedAt: `19/12/${selectedYear} 14:59`,
-          filingType: 'ORIGINAL',
-          status: 'Đã chấp nhận',
-          downloadAvailable: true
-        },
-        {
-          id: '000.701.18.G12-251226-27110000025488',
-          procedureCode: '1.008500',
-          title: 'Đăng ký thuế lần đầu cho người phụ thuộc để giảm trừ gia cảnh',
-          taxType: 'PIT',
-          period: `Năm ${selectedYear}`,
-          submittedAt: `26/12/${selectedYear} 10:03`,
-          filingType: 'ORIGINAL',
-          status: 'Đã trả kết quả',
-          downloadAvailable: true
+  const handleStartLegacyScan = async () => {
+    if (!session.taxCode || !window.taxPortalAPI?.scanLegacyFilings) return;
+
+    const scanId = ++latestScanId.current;
+    setIsScanning(true);
+    setAvailableCheckpoint(null);
+    setSelectedIds(new Set());
+    setDownloadSummary(null);
+
+    try {
+      const res = await window.taxPortalAPI.scanLegacyFilings({
+        yearFrom: legacyYearFrom,
+        yearTo: legacyYearTo,
+        maTKhai: legacyMaTKhai,
+        onlyMissing
+      });
+
+      if (scanId !== latestScanId.current) return;
+
+      if (res.success && res.filings) {
+        setFilings(res.filings);
+        const optionResponse = await window.taxPortalAPI.getLegacyFilingFormOptions?.();
+        if (optionResponse?.success && Array.isArray(optionResponse.options)) {
+          setLegacyFormOptions(optionResponse.options);
         }
-      ];
-      setFilings(mock);
-      setSelectedIds(new Set());
-      setIsScanning(false);
-    }, 1000);
+        const byYear: Record<number, TaxFiling[]> = {};
+        for (const f of res.filings) {
+          const y = f.periodNormalized?.year || selectedYear;
+          if (!byYear[y]) byYear[y] = [];
+          if (!byYear[y].some(item => item.id === f.id)) {
+            byYear[y].push(f);
+          }
+        }
+        setFilingsByYear(prev => ({ ...prev, ...byYear }));
+        setMissingVat(checkMissingPeriods(res.filings, selectedYear, 'VAT', true));
+        setMissingPit(checkMissingPeriods(res.filings, selectedYear, 'PIT', true));
+        setSelectedIds(new Set());
+      } else {
+        alert(res.error || 'Có lỗi xảy ra trong quá trình tra cứu tờ khai năm cũ.');
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Lỗi khi tra cứu tờ khai năm cũ.');
+    } finally {
+      if (scanId === latestScanId.current) {
+        setIsScanning(false);
+      }
+    }
   };
 
   const handleCaptchaSubmit = async (captcha: string) => {
@@ -519,6 +606,33 @@ export const App: React.FC = () => {
     }
     setCaptchaChallenge(null);
     setIsScanning(false);
+  };
+
+  const pauseActiveDownload = async () => {
+    if (!window.taxPortalAPI) return;
+    if (activeDownloadSource.current === 'LEGACY') {
+      await window.taxPortalAPI.pauseLegacyFilingDownload?.();
+    } else {
+      await window.taxPortalAPI.pauseDownload();
+    }
+  };
+
+  const resumeActiveDownload = async () => {
+    if (!window.taxPortalAPI) return;
+    if (activeDownloadSource.current === 'LEGACY') {
+      await window.taxPortalAPI.resumeLegacyFilingDownload?.();
+    } else {
+      await window.taxPortalAPI.resumeDownload();
+    }
+  };
+
+  const cancelActiveDownload = async () => {
+    if (!window.taxPortalAPI) return;
+    if (activeDownloadSource.current === 'LEGACY') {
+      await window.taxPortalAPI.cancelLegacyFilingDownload?.();
+    } else {
+      await window.taxPortalAPI.cancelDownload();
+    }
   };
 
   // Quick Preview State
@@ -935,7 +1049,7 @@ export const App: React.FC = () => {
   // Ở tab Giấy Nộp Tiền: tải chi tiết cho TOÀN BỘ danh sách để hiển thị cột Loại thuế/Kỳ.
   const pendingDetailKey = useMemo(
     () => successfulPaymentSlips
-      .filter(s => !gntDetails.has(s.id)).map(s => s.id).join(','),
+      .filter(s => !gntDetails.has(s.id) && !failedGntDetailIds.current.has(s.id)).map(s => s.id).join(','),
     [successfulPaymentSlips, gntDetails]
   );
 
@@ -946,30 +1060,75 @@ export const App: React.FC = () => {
       !window.taxPortalAPI?.getPaymentSlipDetail
     ) return;
     const reqId = ++gntDetailReqId.current;
-    const queue = pendingDetailKey.split(',');
+    const queue = pendingDetailKey.split(',').map(ctuId => ({ ctuId, retries: 0 }));
     let cancelled = false;
+    let stopBatch = false;
+
+    const stopForAuthentication = () => {
+      // Các chứng từ còn lại chưa hề được thử, vì vậy không được đưa chúng vào
+      // failedGntDetailIds. Sau khi người dùng xác thực/quét lại, toàn bộ batch
+      // phải có khả năng chạy tiếp.
+      stopBatch = true;
+      queue.splice(0);
+    };
 
     const worker = async () => {
-      while (!cancelled && reqId === gntDetailReqId.current && queue.length > 0) {
-        const ctuId = queue.shift()!;
+      while (!cancelled && !stopBatch && reqId === gntDetailReqId.current && queue.length > 0) {
+        const task = queue.shift()!;
+        const ctuId = task.ctuId;
         try {
-          const res: any = await window.taxPortalAPI.getPaymentSlipDetail({ ctuId });
+          await new Promise(r => setTimeout(r, 150));
+          const slip = successfulPaymentSlips.find(item => item.id === ctuId);
+          const res: any = await window.taxPortalAPI.getPaymentSlipDetail({
+            ctuId,
+            soGnt: slip?.soGnt,
+            maGiaoDich: slip?.maGiaoDich
+          });
           if (!cancelled && res?.success && res.detail) {
             setGntDetails(prev => {
               const next = new Map(prev);
               next.set(ctuId, res.detail as PaymentSlipDetail);
               return next;
             });
+          } else {
+            const code = String(res?.errorCode || '');
+            if (code === 'AUTH_REQUIRED' || code === 'SESSION_EXPIRED') {
+              stopForAuthentication();
+            } else if (code === 'RATE_LIMIT') {
+              if (task.retries < 1) {
+                await new Promise(r => setTimeout(r, 2000));
+                queue.unshift({ ...task, retries: task.retries + 1 });
+              } else {
+                failedGntDetailIds.current.add(ctuId);
+              }
+            } else {
+              failedGntDetailIds.current.add(ctuId);
+            }
           }
-        } catch {
-          // Bỏ qua GNT lỗi chi tiết — matcher sẽ fallback về chế độ header-only
+        } catch (err: any) {
+          const code = String(err?.code || err?.errorCode || '');
+          const status = Number(err?.response?.status || 0);
+          if (status === 401 || ['SESSION_EXPIRED', 'AUTH_REQUIRED'].includes(code)) {
+            stopForAuthentication();
+          } else if (status === 429 || code === 'RATE_LIMIT') {
+            if (task.retries < 1) {
+              await new Promise(r => setTimeout(r, 2000));
+              queue.unshift({ ...task, retries: task.retries + 1 });
+            } else {
+              failedGntDetailIds.current.add(ctuId);
+            }
+          } else {
+            // Chỉ poison đúng chứng từ đã thực sự thất bại; matcher sẽ fallback
+            // về chế độ header-only và worker tiếp tục các chứng từ sau.
+            failedGntDetailIds.current.add(ctuId);
+          }
         }
       }
     };
 
-    Promise.all([worker(), worker(), worker(), worker()]);
+    void worker();
     return () => { cancelled = true; };
-  }, [viewMode, pendingDetailKey]);
+  }, [viewMode, pendingDetailKey, successfulPaymentSlips]);
 
   const handleOpenFolder = async (targetYear?: number | any) => {
     if (window.taxPortalAPI) {
@@ -1041,6 +1200,7 @@ export const App: React.FC = () => {
     setIsVatDrawerOpen(false);
     setPaymentSlips([]);
     setGntDetails(new Map());
+    failedGntDetailIds.current.clear();
     setPaymentQueryStatus('NOT_QUERIED');
     setTargetLoginTaxCode('');
   };
@@ -1055,6 +1215,7 @@ export const App: React.FC = () => {
     setIsVatDrawerOpen(false);
     setPaymentSlips([]);
     setGntDetails(new Map());
+    failedGntDetailIds.current.clear();
     setPaymentQueryStatus('NOT_QUERIED');
     setTargetLoginTaxCode(targetMst);
   };
@@ -1067,7 +1228,7 @@ export const App: React.FC = () => {
         if (res.state === 'AVAILABLE') {
           setIsUpdateModalOpen(true);
         } else if (res.state === 'NOT_AVAILABLE' || res.state === 'IDLE') {
-          alert(`Phần mềm đang ở phiên bản mới nhất (v${res.currentVersion || '2.7.0'}).`);
+          alert(`Phần mềm đang ở phiên bản mới nhất (v${res.currentVersion || __APP_VERSION__}).`);
         } else if (res.state === 'ERROR') {
           alert('Không thể kết nối máy chủ cập nhật: ' + (res.error || 'Lỗi mạng'));
         }
@@ -1099,9 +1260,32 @@ export const App: React.FC = () => {
         selectedYear,
         scanRangeMode.startsWith('MULTI') ? 'FULL_YEAR' : scanRangeMode
       );
-      const res: any = await window.taxPortalAPI.scanPaymentSlips({ range });
+      let res: any = await window.taxPortalAPI.scanPaymentSlips({ range });
+
+      // eTax đôi lúc chặn chuỗi SSO nền ở trang kiểm tra plugin dù người dùng
+      // đã đăng nhập DVC. Mở cửa sổ xác thực đúng một lần, đồng bộ cookie +
+      // DSE state rồi tự chạy lại truy vấn; người dùng không phải tự tìm nút
+      // "Mở eTax" và bấm "Thử lại" thêm một vòng.
+      if (
+        !res?.success &&
+        res?.errorCode === 'AUTH_REQUIRED' &&
+        window.taxPortalAPI?.openPaymentSlipsAuthWindow
+      ) {
+        const authResult: any = await window.taxPortalAPI.openPaymentSlipsAuthWindow();
+        if (authResult?.success) {
+          res = await window.taxPortalAPI.scanPaymentSlips({ range });
+        } else if (authResult?.error || authResult?.message) {
+          res = {
+            ...res,
+            error: authResult.error || authResult.message,
+            errorCode: 'AUTH_REQUIRED'
+          };
+        }
+      }
+
       if (res?.success) {
         const slips: PaymentSlipRecord[] = res.paymentSlips || [];
+        failedGntDetailIds.current.clear();
         setPaymentSlips(slips);
         setGntDetails(new Map());
         setPaymentSlipsError(null);
@@ -1143,7 +1327,13 @@ export const App: React.FC = () => {
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-100 font-sans antialiased text-slate-800 overflow-hidden select-none">
       {!session.isLoggedIn ? (
-        <LoginPage onLoginSuccess={handleLoginSuccess} initialTaxCode={targetLoginTaxCode} />
+        <LoginPage
+          onLoginSuccess={handleLoginSuccess}
+          initialTaxCode={targetLoginTaxCode}
+          updateInfo={updateInfo}
+          onCheckUpdate={handleCheckUpdate}
+          onOpenUpdate={() => setIsUpdateModalOpen(true)}
+        />
       ) : (
         <>
           {/* 1. Header ứng dụng */}
@@ -1161,7 +1351,6 @@ export const App: React.FC = () => {
             onOpenLicense={() => setIsLicenseModalOpen(true)}
             onCheckUpdate={handleCheckUpdate}
             onOpenInspector={handleOpenInspector}
-            isAdminUnlocked={isAdminUnlocked}
             inspectorErrorCount={inspectorErrorCount}
             hasNewUpdate={updateInfo?.state === 'AVAILABLE' || updateInfo?.state === 'DOWNLOADED'}
             isLicenseActivated={isLicenseActivated}
@@ -1207,9 +1396,25 @@ export const App: React.FC = () => {
           selectedTaxType={selectedTaxType}
           onTaxTypeChange={setSelectedTaxType}
           isScanning={isScanning || isScanningGnt}
-          onStartScan={viewMode === 'PAYMENT_SLIPS' ? handleScanPaymentSlips : handleStartScan}
+          onStartScan={
+            viewMode === 'PAYMENT_SLIPS'
+              ? handleScanPaymentSlips
+              : (sourceMode === 'DVC_ETAX_LEGACY' ? handleStartLegacyScan : handleStartScan)
+          }
           viewMode={viewMode}
           onViewModeChange={setViewMode}
+          // ── Chế độ Tra Cứu Tờ Khai Năm Cũ (Legacy Filing) ──
+          sourceMode={sourceMode}
+          onSourceModeChange={setSourceMode}
+          legacyYearFrom={legacyYearFrom}
+          onLegacyYearFromChange={setLegacyYearFrom}
+          legacyYearTo={legacyYearTo}
+          onLegacyYearToChange={setLegacyYearTo}
+          legacyMaTKhai={legacyMaTKhai}
+          onLegacyMaTKhaiChange={setLegacyMaTKhai}
+          legacyFormOptions={legacyFormOptions}
+          onlyMissing={onlyMissing}
+          onOnlyMissingChange={setOnlyMissing}
           // ── Chế độ GNT: gộp search + tóm tắt + Thống kê/Xuất Excel vào 1 thanh lệnh ──
           gntSearchValue={gntSearchQuery}
           onGntSearchChange={setGntSearchQuery}
@@ -1288,15 +1493,15 @@ export const App: React.FC = () => {
               onDownloadSelected={handleDownloadSelected}
               downloadSummary={downloadSummary}
               onOpenDetails={() => setIsDownloadModalOpen(true)}
-              onPauseDownload={() => window.taxPortalAPI?.pauseDownload()}
+              onPauseDownload={pauseActiveDownload}
               onResumeDownload={async () => {
                 if (downloadSummary?.state === 'AUTH_REQUIRED' || downloadSummary?.state === 'PAUSED_AUTH_REQUIRED') {
                   setIsAuthRequiredModalOpen(true);
                 } else {
-                  await window.taxPortalAPI?.resumeDownload();
+                  await resumeActiveDownload();
                 }
               }}
-              onCancelDownload={() => window.taxPortalAPI?.cancelDownload()}
+              onCancelDownload={cancelActiveDownload}
               onRetryFailed={handleRetryFailed}
               onOpenFolder={handleOpenFolder}
               onDismissDownload={() => setDownloadSummary(null)}
@@ -1370,15 +1575,15 @@ export const App: React.FC = () => {
       {isDownloadModalOpen && downloadSummary && (
         <DownloadProgressModal
           summary={downloadSummary}
-          onPause={() => window.taxPortalAPI?.pauseDownload()}
+          onPause={pauseActiveDownload}
           onResume={async () => {
             if (downloadSummary.state === 'AUTH_REQUIRED' || downloadSummary.state === 'PAUSED_AUTH_REQUIRED') {
               setIsAuthRequiredModalOpen(true);
             } else {
-              await window.taxPortalAPI?.resumeDownload();
+              await resumeActiveDownload();
             }
           }}
-          onCancel={() => window.taxPortalAPI?.cancelDownload()}
+          onCancel={cancelActiveDownload}
           onOpenFolder={handleOpenFolder}
           onClose={() => setIsDownloadModalOpen(false)}
         />
@@ -1398,13 +1603,13 @@ export const App: React.FC = () => {
             setSession(info);
 
             if (window.taxPortalAPI && (isDownloadModalOpen || isDownloadingActive)) {
-              await window.taxPortalAPI.resumeDownload();
+              await resumeActiveDownload();
             }
           }}
           onCancel={async () => {
             setIsAuthRequiredModalOpen(false);
             if (window.taxPortalAPI) {
-              await window.taxPortalAPI.cancelDownload();
+              await cancelActiveDownload();
             }
           }}
         />
@@ -1432,14 +1637,13 @@ export const App: React.FC = () => {
       />
 
       <AdminPinModal
-        isOpen={isAdminPinModalOpen}
-        onClose={() => setIsAdminPinModalOpen(false)}
+        isOpen={isAdminPinOpen}
+        onClose={() => setIsAdminPinOpen(false)}
         onSuccess={() => {
           setIsAdminUnlocked(true);
           setIsApiInspectorOpen(true);
         }}
       />
-
       <ApiInspectorDrawer
         isOpen={isApiInspectorOpen}
         onClose={() => setIsApiInspectorOpen(false)}

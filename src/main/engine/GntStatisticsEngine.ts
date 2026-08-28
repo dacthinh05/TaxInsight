@@ -11,7 +11,7 @@
  * Khoản tiền khi KHÔNG lấy được chi tiết sẽ vào cột "Chưa phân loại" (giữ bảo toàn tiền).
  */
 import { PaymentSlipDetail, PaymentSlipRecord } from '../../shared/types';
-import { parseMoneyToBigInt } from '../../shared/moneyUtils';
+import { GntMoneyParser } from '../scanner/GntMoneyParser';
 import { TaxNdktClassifier } from './TaxNdktClassifier';
 
 export type GntStatBucket = 'VAT' | 'PIT' | 'CIT' | 'FCT' | 'HOUSE_LAND' | 'OTHER' | 'NO_DETAIL';
@@ -68,9 +68,7 @@ function isPaidSuccess(record: PaymentSlipRecord): boolean {
 }
 
 function parseVnd(formatted?: string): number {
-  // Ủy quyền cho parser BigInt chung: trước đây strip mọi ký tự non-digit khiến
-  // "99,921,049.00" thành 999210490 (sai ×10) và "1.234" thành 1234.
-  return Number(parseMoneyToBigInt(formatted ?? ''));
+  return GntMoneyParser.toSafeNumber(formatted ?? '');
 }
 
 export class GntStatisticsEngine {
@@ -113,7 +111,13 @@ export class GntStatisticsEngine {
       paidCount++;
 
       const detail = detailMap.get(slip.id);
-      if (!detail || !detail.items || detail.items.length === 0) {
+      if (
+        !detail ||
+        !detail.items ||
+        detail.items.length === 0 ||
+        detail.suspectedMismatch ||
+        detail.detailIntegrity === 'MISMATCH'
+      ) {
         noDetailCount++;
         add(monthKey, 'NO_DETAIL', Math.round(slip.soTien || 0));
         continue;
@@ -121,15 +125,44 @@ export class GntStatisticsEngine {
 
       // Phân rã từng khoản nộp theo NDKT; nếu tổng khoản lệch tổng giấy nộp
       // (dữ liệu lạ), phần chênh bù vào NO_DETAIL để luôn bảo toàn tiền.
+      const allocations: Array<{ bucket: GntStatBucket; amount: number }> = [];
       let allocSum = 0;
+      let allocationInvalid = false;
       for (const item of detail.items) {
-        const amt = parseVnd(item.soTienVND);
-        allocSum += amt;
-        add(monthKey, bucketOf(item.maNDKT, item.noiDungKhoanNop), amt);
+        try {
+          const amount = parseVnd(item.soTienVND);
+          if (amount < 0) {
+            allocationInvalid = true;
+            break;
+          }
+          allocSum += amount;
+          allocations.push({
+            bucket: bucketOf(item.maNDKT, item.noiDungKhoanNop),
+            amount
+          });
+        } catch {
+          allocationInvalid = true;
+          break;
+        }
       }
-      const declaredTotal = parseVnd(detail.tongTienVND) || Math.round(slip.soTien || 0);
-      const diff = declaredTotal - allocSum;
-      if (diff !== 0) add(monthKey, 'NO_DETAIL', diff);
+
+      const listTotal = Math.round(slip.soTien || 0);
+      let declaredTotal = listTotal;
+      try {
+        declaredTotal = parseVnd(detail.tongTienVND) || listTotal;
+      } catch {}
+      const targetTotal = listTotal > 0 ? listTotal : declaredTotal;
+      if (allocationInvalid || allocSum > targetTotal) {
+        noDetailCount++;
+        add(monthKey, 'NO_DETAIL', targetTotal);
+        continue;
+      }
+
+      for (const allocation of allocations) {
+        add(monthKey, allocation.bucket, allocation.amount);
+      }
+      const diff = targetTotal - allocSum;
+      if (diff > 0) add(monthKey, 'NO_DETAIL', diff);
     }
 
     const cells = [...acc.values()];

@@ -6,6 +6,14 @@ import { safePathSegment } from './pathConfinement';
 // "chuỗi kết thúc bằng n" — heuristic cũ biến mọi string dạng "123n" (vd mã
 // giao dịch) thành BigInt khi đọc.
 const BIGINT_TAG = '__bigint__';
+// Tăng phiên bản khi logic ánh xạ XML VAT/PIT thay đổi. Snapshot cũ không có
+// version từng làm kết quả phân tích tiếp tục sai dù parser đã được sửa.
+const SNAPSHOT_CACHE_VERSION = 2;
+
+interface SnapshotEnvelope<T> {
+  cacheVersion: number;
+  data: T;
+}
 
 function replacer(_key: string, value: unknown): unknown {
   if (typeof value === 'bigint') {
@@ -60,8 +68,16 @@ export class ParsedSnapshotStore {
       if (!fs.existsSync(filePath)) return null;
 
       const raw = fs.readFileSync(filePath, 'utf-8');
-      const parsed = JSON.parse(raw, reviver);
-      return parsed as T;
+      const parsed = JSON.parse(raw, reviver) as Partial<SnapshotEnvelope<T>>;
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        parsed.cacheVersion !== SNAPSHOT_CACHE_VERSION ||
+        !Object.prototype.hasOwnProperty.call(parsed, 'data')
+      ) {
+        return null;
+      }
+      return parsed.data as T;
     } catch {
       return null;
     }
@@ -75,7 +91,11 @@ export class ParsedSnapshotStore {
     const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
 
     try {
-      const serialized = JSON.stringify(data, replacer, 2);
+      const envelope: SnapshotEnvelope<T> = {
+        cacheVersion: SNAPSHOT_CACHE_VERSION,
+        data
+      };
+      const serialized = JSON.stringify(envelope, replacer, 2);
 
       fs.writeFileSync(tempPath, serialized, 'utf-8');
       fs.renameSync(tempPath, filePath);

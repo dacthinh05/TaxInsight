@@ -4,6 +4,7 @@ import { CookieJar } from 'tough-cookie';
 import { PORTAL_CONFIG } from '../../shared/constants';
 import { UserSessionInfo } from '../../shared/types';
 import { ApiInspectorManager } from '../inspector/ApiInspectorManager';
+import { attachPortalRequestScheduler, globalPortalRequestScheduler } from './PortalRequestScheduler';
 
 export class PortalSession {
   private jar: CookieJar;
@@ -12,7 +13,11 @@ export class PortalSession {
 
   constructor() {
     this.jar = new CookieJar();
-    this.client = wrapper(
+    this.client = this.createClient();
+  }
+
+  private createClient(): AxiosInstance {
+    const client = wrapper(
       axios.create({
         baseURL: PORTAL_CONFIG.BASE_URL,
         jar: this.jar,
@@ -26,7 +31,9 @@ export class PortalSession {
         withCredentials: true
       })
     );
-    ApiInspectorManager.getInstance().attachAxios(this.client);
+    ApiInspectorManager.getInstance().attachAxios(client);
+    attachPortalRequestScheduler(client);
+    return client;
   }
 
   public getSessionInfo(): UserSessionInfo {
@@ -43,7 +50,11 @@ export class PortalSession {
   }
 
   public clearSession() {
-    this.jar.removeAllCookiesSync();
+    // Thay mới cả jar và Axios client. Response của request cũ nếu về muộn chỉ
+    // ghi vào jar cũ đã bị loại, không thể "hồi sinh" phiên sau logout.
+    globalPortalRequestScheduler.reset();
+    this.jar = new CookieJar();
+    this.client = this.createClient();
     this.sessionInfo = { isLoggedIn: false };
   }
 

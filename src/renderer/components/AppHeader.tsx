@@ -16,7 +16,6 @@ interface AppHeaderProps {
   onOpenLicense?: () => void;
   onCheckUpdate?: () => void;
   onOpenInspector?: () => void;
-  isAdminUnlocked?: boolean;
   inspectorErrorCount?: number;
   hasNewUpdate?: boolean;
   isLicenseActivated?: boolean;
@@ -39,7 +38,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onOpenLicense,
   onCheckUpdate,
   onOpenInspector,
-  isAdminUnlocked = false,
   inspectorErrorCount = 0,
   hasNewUpdate = false,
   isLicenseActivated = false,
@@ -50,7 +48,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   const [savedAccounts, setSavedAccounts] = React.useState<SavedAccountInfo[]>([]);
   const [isSwitchMenuOpen, setIsSwitchMenuOpen] = React.useState(false);
   const [isFolderMenuOpen, setIsFolderMenuOpen] = React.useState(false);
-  const [appVersion, setAppVersion] = React.useState('2.7.0');
+  const [appVersion, setAppVersion] = React.useState(__APP_VERSION__);
   const [versionClicks, setVersionClicks] = React.useState(0);
 
   const handleVersionClick = () => {
@@ -358,7 +356,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           </button>
         )}
 
-        {isAdminUnlocked && onOpenInspector && (
+        {onOpenInspector && (
           <button
             type="button"
             onClick={onOpenInspector}

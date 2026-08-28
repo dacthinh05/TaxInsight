@@ -76,6 +76,7 @@ export class FileOrganizer {
       xmlPath: result.xmlPath,
       pdfPath: result.pdfPath,
       sha256: result.sha256,
+      fileHashes: result.fileHashes,
       downloadedAt: new Date().toISOString()
     });
 

@@ -44,6 +44,50 @@ describe('PIT XML Parser & Flow Engine Test Suite', () => {
     expect(snap?.ct35_tongThuePhaiNop).toBe(16500000n);
   });
 
+  it('1b. Ánh xạ đúng chỉ tiêu 05/KK-TNCN TT80 maTKhai=864 từ XML thực tế', () => {
+    const tt80Xml = `<?xml version="1.0" encoding="UTF-8"?>
+      <HSoThueDTu>
+        <TTinChung>
+          <TTinTKhaiThue>
+            <TKhaiThue>
+              <maTKhai>864</maTKhai>
+              <tenTKhai>TK khấu trừ thuế thu nhập cá nhân Mẫu 05/KK-TNCN (TT80/2021)</tenTKhai>
+              <KyKKhaiThue><kyKKhai>11/2025</kyKKhai></KyKKhaiThue>
+            </TKhaiThue>
+          </TTinTKhaiThue>
+        </TTinChung>
+        <CTieuTKhaiChinh>
+          <ct16>1817</ct16>
+          <ct17>1789</ct17>
+          <ct21>20058722974</ct21>
+          <ct26>11011650470</ct26>
+          <ct29>114075169</ct29>
+          <ct30>114075169</ct30>
+          <ct31>0</ct31>
+        </CTieuTKhaiChinh>
+      </HSoThueDTu>`;
+    const filing: TaxFiling = {
+      id: 'PIT_TT80_864',
+      declarationCode: '05/KK-TNCN',
+      title: 'Tờ khai khấu trừ thuế thu nhập cá nhân',
+      taxType: 'PIT',
+      period: '11/2025',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    const snap = PitXmlParser.parsePitXml(tt80Xml, filing, '0000000000');
+    expect(snap).not.toBeNull();
+    expect(snap?.ct21_tongSoNguoiLaoDong).toBe(1817n);
+    expect(snap?.ct22_caNhanCuTru).toBe(1789n);
+    expect(snap?.ct24_tongThuNhapChiuThue).toBe(20058722974n);
+    expect(snap?.ct27_tongThuNhapChiuThueKhauTru).toBe(11011650470n);
+    expect(snap?.ct31_tongThueTncnDaKhauTru).toBe(114075169n);
+    expect(snap?.ct32_khauTruCaNhanCuTru).toBe(114075169n);
+    expect(snap?.ct33_khauTruCaNhanKhongCuTru).toBe(0n);
+    expect(snap?.ct34_tongThueKhauTru).toBe(114075169n);
+  });
+
   it('2. Bóc tách XML tờ khai Quyết toán năm 05/QTT-TNCN', () => {
     const mockXml = `<?xml version="1.0" encoding="UTF-8"?>
     <HSoThueDTu>

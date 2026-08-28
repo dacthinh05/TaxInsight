@@ -10,6 +10,7 @@ export type PortalErrorCode =
   | 'SESSION_EXPIRED'
   | 'RATE_LIMIT'
   | 'SERVER_ERROR'
+  | 'FILING_PAYLOAD_REJECTED'
   | 'PARSE_ERROR'
   | 'DOWNLOAD_INVALID'
   | 'FILE_WRITE_ERROR'
@@ -48,6 +49,10 @@ export interface TaxFiling {
   // biến thể với cả 2 khóa maHoSo/idTKhai — trước đây chỉ giữ 1 ID nên nửa số
   // hồ sơ (TNCN, GTGT kỳ cũ) tải không được.
   altIds?: string[];
+  source?: 'dvc-ho-so' | 'dvc-etax-html';
+  messageId?: string;
+  noticeAvailable?: boolean;
+  noticeId?: string;
   // ─────────────────────────────────────────────────────────────────────────
   downloadStatus?: 'PENDING' | 'DOWNLOADING' | 'COMPLETED' | 'EXISTING' | 'FAILED';
   downloadError?: string;
@@ -56,6 +61,66 @@ export interface TaxFiling {
     pdf?: string;
     other?: string[];
   };
+}
+
+export type FilingSourceMode = 'CURRENT' | 'DVC_ETAX_LEGACY';
+
+export interface HistoricalFilingRecord {
+  source: 'dvc-etax-html';
+  messageId: string;
+  transactionId?: string;
+  formCode?: string;
+  formName: string;
+  taxPeriodRaw: string;
+  taxPeriodNormalized?: {
+    year: number;
+    type: 'YEAR' | 'QUARTER' | 'MONTH' | 'OTHER';
+    quarter?: number;
+    month?: number;
+  };
+  filingType?: string;
+  submissionNo?: number;
+  amendmentNo?: number;
+  submittedAt?: string;
+  taxAuthority?: string;
+  status?: string;
+  downloadAvailable: boolean;
+  noticeAvailable: boolean;
+  downloadStatus?: 'PENDING' | 'DOWNLOADING' | 'COMPLETED' | 'EXISTING' | 'FAILED';
+  downloadError?: string;
+  downloadedFiles?: {
+    xml?: string;
+    pdf?: string;
+    other?: string[];
+  };
+}
+
+export interface HistoricalLookupCheckpoint {
+  taxpayerId: string;
+  yearFrom: number;
+  yearTo: number;
+  currentYear: number;
+  currentPage: number;
+  discoveredMessageIds: string[];
+  downloadedMessageIds: string[];
+  failedMessageIds: string[];
+  status: 'IN_PROGRESS' | 'PAUSED' | 'AUTH_EXPIRED' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
+  updatedAt: string;
+}
+
+export interface LegacyFilingScanProgress {
+  currentYear: number;
+  yearFrom: number;
+  yearTo: number;
+  currentPage: number;
+  totalPages: number;
+  totalRecordsInYear: number;
+  foundFilingsCount: number;
+  downloadedCount: number;
+  skippedCount: number;
+  errorCount: number;
+  status: 'IDLE' | 'SSO_INITIALIZING' | 'SCANNING' | 'DOWNLOADING' | 'COMPLETED' | 'PAUSED' | 'CANCELLED' | 'AUTH_EXPIRED' | 'ERROR';
+  errorMessage?: string;
 }
 
 export interface FilingMetricItem {
@@ -113,6 +178,10 @@ export interface CaptchaChallenge {
   purpose: 'LOGIN' | 'SEARCH';
   targetRange?: DateRange;
   imageBase64: string; // Data URL format `data:image/png;base64,...`
+  requestReason?: 'INITIAL_SEARCH' | 'NEXT_PAGE' | 'RETRY_INVALID';
+  page?: number;
+  attempt?: number;
+  maxAttempts?: number;
 }
 
 export interface DownloadQueueItem {

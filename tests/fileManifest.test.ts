@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import crypto from 'crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileManifest } from '../src/main/files/FileManifest';
 import { FileOrganizer } from '../src/main/files/FileOrganizer';
@@ -90,7 +91,37 @@ describe('Two-Tier Deduplication & FileManifest', () => {
       downloadedAt: new Date().toISOString()
     });
 
-    expect(fs.existsSync(path.join(tempDir, `${taxCode}_${year}`, '.tax_manifest.json'))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, `.tax_manifest_${taxCode}.json`))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, `${taxCode}_${year}`))).toBe(false);
     expect(fs.existsSync(path.join(tempDir, taxCode, String(year)))).toBe(false);
+  });
+
+  it('invalidates a manifest entry when a downloaded file was overwritten or corrupted', () => {
+    const organizer = new FileOrganizer(tempDir);
+    const manifest = organizer.getManifest(taxCode, year);
+    const filing: TaxFiling = {
+      id: 'hash-integrity-check',
+      title: 'Tờ khai thuế TNCN',
+      taxType: 'PIT',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+    const filePath = path.join(tempDir, 'hash-check.xml');
+    const original = Buffer.from('<?xml version="1.0"?><TNCN>original</TNCN>');
+    fs.writeFileSync(filePath, original);
+    const hash = crypto.createHash('sha256').update(original).digest('hex');
+
+    manifest.recordDownload({
+      filingId: filing.id,
+      filingType: filing.filingType,
+      savedPaths: [filePath],
+      xmlPath: filePath,
+      fileHashes: { [filePath]: hash },
+      downloadedAt: new Date().toISOString()
+    });
+
+    expect(organizer.checkPreDownloadStatus(taxCode, filing, year).isAlreadyDownloaded).toBe(true);
+    fs.writeFileSync(filePath, '<?xml version="1.0"?><TNCN>overwritten</TNCN>');
+    expect(organizer.checkPreDownloadStatus(taxCode, filing, year).isAlreadyDownloaded).toBe(false);
   });
 });

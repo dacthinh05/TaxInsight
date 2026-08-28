@@ -3,6 +3,7 @@ import path from 'path';
 import { sanitizeExcelCellValue, sanitizeFilename } from '../../shared/sanitizer';
 import { TaxFiling } from '../../shared/types';
 import { SLIP_TAX_TYPE_LABELS } from '../../shared/gntClassification';
+import { GntMoneyParser } from '../scanner/GntMoneyParser';
 
 export class ExcelExporter {
   public static async exportFilingsToExcel(
@@ -141,13 +142,24 @@ export class ExcelExporter {
         .join('; ');
       const kyThueText = (cls?.periods || []).join('; ');
       const tieuMucText = (cls?.ndktCodes || []).join(', ');
+      const parsedAmount = GntMoneyParser.parse(slip.soTien);
+      let excelAmount: number | string = '';
+      if (parsedAmount.status === 'VALID') {
+        try {
+          excelAmount = GntMoneyParser.toSafeNumber(parsedAmount.value);
+        } catch {
+          // ExcelJS cũng dùng IEEE-754 cho cell number; giữ dạng chuỗi để không
+          // làm sai số tiền cực lớn.
+          excelAmount = parsedAmount.value.toString();
+        }
+      }
 
       const row = worksheet.addRow({
         stt: index + 1,
         taxCode: sanitizeExcelCellValue(taxCode),
         soChungTu: sanitizeExcelCellValue(slip.soChungTu || slip.soGnt || ''),
         ngayNop: sanitizeExcelCellValue(slip.ngayNopThue || slip.ngayLapGnt || ''),
-        soTien: Number(slip.soTien || 0),
+        soTien: excelAmount,
         loaiThue: sanitizeExcelCellValue(loaiThueText || ''),
         kyThue: sanitizeExcelCellValue(kyThueText || slip.kyThue || ''),
         tieuMuc: sanitizeExcelCellValue(tieuMucText || slip.tieuMuc || ''),
@@ -158,7 +170,9 @@ export class ExcelExporter {
 
       row.height = 22;
       row.alignment = { vertical: 'middle' };
-      row.getCell('soTien').numFmt = '#,##0';
+      if (typeof excelAmount === 'number') {
+        row.getCell('soTien').numFmt = '#,##0';
+      }
     });
 
     const fileName = sanitizeFilename(`Giay_nop_tien_GNT_${taxCode}_${year}_${Date.now()}.xlsx`);

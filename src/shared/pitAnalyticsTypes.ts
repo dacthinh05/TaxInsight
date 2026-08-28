@@ -15,25 +15,29 @@ export interface PitDeclarationSnapshot {
   submittedAt?: string;
   status: string;
 
-  // Các chỉ tiêu cốt lõi tờ khai 05/KK-TNCN (theo TT 80/2021/TT-BTC)
-  ct21_tongSoNguoiLaoDong: bigint;
-  ct22_caNhanCuTru: bigint;
-  ct24_tongThuNhapChiuThue: bigint;
-  ct27_tongThuNhapChiuThueKhauTru: bigint;
-  ct31_tongThueTncnDaKhauTru: bigint; // [31] trên một số phiên bản cũ hoặc [34]
-  ct32_khauTruCaNhanCuTru: bigint;    // Thuế TNCN đã khấu trừ - cá nhân cư trú
-  ct33_khauTruCaNhanKhongCuTru: bigint; // Thuế TNCN đã khấu trừ - cá nhân không cư trú
-  ct34_tongThueKhauTru: bigint;        // Tổng số thuế TNCN đã khấu trừ = [32] + [33]
+  // Giá trị ngữ nghĩa của 05/KK-TNCN. Tên property được giữ để tương thích
+  // dữ liệu/cache cũ; với TT80 nguồn XML đúng lần lượt là [16], [17], [21],
+  // [26], [29], [30], [31].
+  ct21_tongSoNguoiLaoDong: bigint; // TT80: [16]
+  ct22_caNhanCuTru: bigint;        // TT80: [17]
+  ct24_tongThuNhapChiuThue: bigint; // TT80: [21]
+  ct27_tongThuNhapChiuThueKhauTru: bigint; // TT80: [26]
+  ct31_tongThueTncnDaKhauTru: bigint; // TT80: [29]
+  ct32_khauTruCaNhanCuTru: bigint;    // TT80: [30]
+  ct33_khauTruCaNhanKhongCuTru: bigint; // TT80: [31]
+  ct34_tongThueKhauTru: bigint;        // TT80: [29] = [30] + [31]
   ct35_tongThuePhaiNop: bigint;        // Thuế TNCN phải nộp
 
   // Chỉ tiêu tờ khai Quyết toán năm 05/QTT-TNCN (nếu là tờ khai quyết toán)
   isFinalization: boolean;
-  ct36_qtt_tongThueDaKhauTruTrongNam?: bigint; // Chỉ tiêu [36] trên 05/QTT-TNCN
-  ct41_qtt_tongThuePhaiNopTrongNam?: bigint;   // Chỉ tiêu [41] trên 05/QTT-TNCN
-  ct44_qtt_tongThueNopThua?: bigint;           // Chỉ tiêu [44] trên 05/QTT-TNCN
+  ct36_qtt_tongThueDaKhauTruTrongNam?: bigint; // TT80: [31]
+  ct41_qtt_tongThuePhaiNopTrongNam?: bigint;   // TT80: [40]
+  ct44_qtt_tongThueNopThua?: bigint;           // TT80: [41]
 
   rawXml?: string;
   xmlAvailable?: boolean;
+  parseStatus?: 'SUCCESS' | 'FAILED';
+  errorMessage?: string;
 }
 
 export interface PitPeriodGroup {
@@ -56,4 +60,8 @@ export interface PitAnalyticsSummary {
   periodGroups: PitPeriodGroup[];
   finalizationSnapshot: PitDeclarationSnapshot | null; // Tờ khai 05/QTT-TNCN năm
   analyzedAt: string;
+  totalXmlAvailableCount?: number;
+  failedXmlCount?: number;
+  coverageStatus?: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE';
+  failedXmlDetails?: Array<{ submissionId: string; periodLabel: string; reason: string }>;
 }

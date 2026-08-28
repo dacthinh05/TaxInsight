@@ -1,6 +1,16 @@
 import { app, BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import https from 'https';
 import { UpdateInfo, UpdateState } from '../../shared/types';
+import {
+  compareVersions,
+  friendlyUpdaterError,
+  GithubLatestRelease,
+  hasCompleteWindowsUpdateAssets,
+  normalizeReleaseVersion
+} from './UpdaterReleaseGuard';
+
+const LATEST_RELEASE_API = 'https://api.github.com/repos/dacthinh05/TaxInsight/releases/latest';
 
 export class AppUpdater {
   private static instance: AppUpdater | null = null;
@@ -8,6 +18,7 @@ export class AppUpdater {
   private mainWindow: BrowserWindow | null = null;
   private autoCheckTimer: ReturnType<typeof setTimeout> | null = null;
   private autoCheckInterval: ReturnType<typeof setInterval> | null = null;
+  private checkPromise: Promise<UpdateInfo> | null = null;
 
   constructor() {
     this.currentStatus = {
@@ -77,9 +88,9 @@ export class AppUpdater {
     });
 
     autoUpdater.on('error', (err) => {
-      // Trong môi trường dev hoặc chưa upload release, bỏ qua lỗi mạng mà không làm crash app
+      // Không đẩy nguyên stack trace/URL nội bộ của electron-updater ra giao diện.
       this.updateState('ERROR', {
-        error: err.message || 'Không thể kết nối đến máy chủ cập nhật.'
+        error: friendlyUpdaterError(err)
       });
     });
     } catch {
@@ -107,17 +118,54 @@ export class AppUpdater {
   }
 
   public async checkForUpdates(): Promise<UpdateInfo> {
+    if (this.checkPromise) return this.checkPromise;
     if (!app || typeof app.getVersion !== 'function') {
       this.updateState('NOT_AVAILABLE');
       return this.getStatus();
     }
+    const check = (async () => {
+      try {
+        this.updateState('CHECKING', { error: undefined });
+
+        // electron-updater truy cập latest.yml ngay lập tức. Nếu release mới nhất
+        // trên GitHub bị upload thiếu artifact, thư viện trả nguyên HttpError 404
+        // rất dài. Kiểm tra metadata release trước để:
+        // 1) không gọi feed khi bản đang cài đã mới hơn GitHub;
+        // 2) báo lỗi ngắn gọn nếu release chưa đủ latest.yml + installer.
+        const release = await this.fetchLatestGithubRelease().catch(() => null);
+        if (release) {
+          const latestVersion = normalizeReleaseVersion(release.tag_name);
+          const currentVersion = app.getVersion();
+
+          if (latestVersion && compareVersions(latestVersion, currentVersion) <= 0) {
+            this.updateState('NOT_AVAILABLE', {
+              latestVersion,
+              error: undefined
+            });
+            return this.getStatus();
+          }
+
+          if (latestVersion && !hasCompleteWindowsUpdateAssets(release)) {
+            this.updateState('ERROR', {
+              latestVersion,
+              error: `Bản phát hành v${latestVersion} chưa có đủ bộ cài cập nhật (latest.yml và file .exe). Phiên bản hiện tại v${currentVersion} vẫn dùng bình thường.`
+            });
+            return this.getStatus();
+          }
+        }
+
+        await autoUpdater.checkForUpdates();
+      } catch (err: any) {
+        this.updateState('ERROR', { error: friendlyUpdaterError(err) });
+      }
+      return this.getStatus();
+    })();
+    this.checkPromise = check;
     try {
-      this.updateState('CHECKING');
-      await autoUpdater.checkForUpdates();
-    } catch (err: any) {
-      this.updateState('ERROR', { error: err.message });
+      return await check;
+    } finally {
+      if (this.checkPromise === check) this.checkPromise = null;
     }
-    return this.getStatus();
   }
 
   public async downloadUpdate(): Promise<{ success: boolean; error?: string }> {
@@ -126,8 +174,9 @@ export class AppUpdater {
       await autoUpdater.downloadUpdate();
       return { success: true };
     } catch (err: any) {
-      this.updateState('ERROR', { error: err.message });
-      return { success: false, error: err.message };
+      const error = friendlyUpdaterError(err);
+      this.updateState('ERROR', { error });
+      return { success: false, error };
     }
   }
 
@@ -149,5 +198,52 @@ export class AppUpdater {
         this.checkForUpdates().catch(() => {});
       }, 60 * 60 * 1000);
     }, delayMs);
+  }
+
+  private fetchLatestGithubRelease(): Promise<GithubLatestRelease> {
+    return new Promise((resolve, reject) => {
+      const request = https.get(
+        LATEST_RELEASE_API,
+        {
+          headers: {
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': `TaxInsight/${app.getVersion()}`,
+            'X-GitHub-Api-Version': '2022-11-28'
+          }
+        },
+        response => {
+          const chunks: Buffer[] = [];
+          let totalBytes = 0;
+          const maxBytes = 1024 * 1024;
+
+          response.on('data', (chunk: Buffer) => {
+            totalBytes += chunk.length;
+            if (totalBytes > maxBytes) {
+              request.destroy(new Error('Phản hồi máy chủ cập nhật quá lớn'));
+              return;
+            }
+            chunks.push(chunk);
+          });
+
+          response.on('end', () => {
+            const statusCode = response.statusCode || 0;
+            if (statusCode < 200 || statusCode >= 300) {
+              reject(new Error(`GitHub Releases trả HTTP ${statusCode}`));
+              return;
+            }
+            try {
+              resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as GithubLatestRelease);
+            } catch {
+              reject(new Error('Metadata bản phát hành không hợp lệ'));
+            }
+          });
+        }
+      );
+
+      request.setTimeout(7000, () => {
+        request.destroy(new Error('Timeout khi kiểm tra metadata bản cập nhật'));
+      });
+      request.on('error', reject);
+    });
   }
 }

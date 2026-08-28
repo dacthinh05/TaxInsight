@@ -11,6 +11,7 @@ export interface ExtractedZipResult {
   xmlPath?: string;
   pdfPath?: string;
   sha256: string;
+  fileHashes: Record<string, string>;
 }
 
 export class ZipExtractor {
@@ -21,6 +22,63 @@ export class ZipExtractor {
 
   public static computeSha256(buffer: Buffer): string {
     return crypto.createHash('sha256').update(buffer).digest('hex');
+  }
+
+  private static buildFilingIdentity(filing: TaxFiling, taxCode: string): string {
+    const rawIdentity = `${taxCode}|${filing.id || 'hoso'}`;
+    const identityHash = this.computeSha256(Buffer.from(rawIdentity, 'utf8')).slice(0, 10);
+    const cleanTaxCode = sanitizeFilename(taxCode || 'MST').replace(/\s+/g, '-').slice(0, 20);
+    const cleanId = sanitizeFilename(filing.id || 'hoso').replace(/\s+/g, '-').slice(0, 52);
+    return `${cleanTaxCode}_${cleanId}_${identityHash}`;
+  }
+
+  /**
+   * sanitizeFilename giới hạn cả chuỗi ở 150 ký tự. Tách extension ra ngoài để
+   * tên dài không bị cắt mất ".xml"/".pdf".
+   */
+  private static buildSafeFileName(baseName: string, extension: string): string {
+    const safeExtension = /^\.[a-z0-9]{1,12}$/i.test(extension) ? extension.toLowerCase() : '';
+    const sanitizedBase = sanitizeFilename(baseName, 'document');
+    const maxBaseLength = Math.max(1, 150 - safeExtension.length);
+    const boundedBase = sanitizedBase
+      .slice(0, maxBaseLength)
+      .replace(/[. ]+$/, '') || 'document';
+    return `${boundedBase}${safeExtension}`;
+  }
+
+  /**
+   * Không ghi đè file khác nội dung. Nếu tên chính đã được một file khác dùng,
+   * tạo tên ổn định theo hash nội dung để lần chạy sau vẫn nhận diện EXISTING.
+   */
+  private static resolveCollisionSafePath(
+    destDir: string,
+    fileName: string,
+    data: Buffer
+  ): { targetPath: string; isExisting: boolean; hash: string } {
+    const dataHash = this.computeSha256(data);
+    const primaryPath = path.join(destDir, fileName);
+
+    if (!fs.existsSync(primaryPath)) {
+      return { targetPath: primaryPath, isExisting: false, hash: dataHash };
+    }
+
+    const primaryHash = this.computeSha256(fs.readFileSync(primaryPath));
+    if (primaryHash === dataHash) {
+      return { targetPath: primaryPath, isExisting: true, hash: dataHash };
+    }
+
+    const ext = path.extname(fileName);
+    const base = path.basename(fileName, ext);
+    const collisionName = this.buildSafeFileName(`${base}_${dataHash.slice(0, 10)}`, ext);
+    const collisionPath = path.join(destDir, collisionName);
+    if (fs.existsSync(collisionPath)) {
+      const collisionHash = this.computeSha256(fs.readFileSync(collisionPath));
+      if (collisionHash === dataHash) {
+        return { targetPath: collisionPath, isExisting: true, hash: dataHash };
+      }
+    }
+
+    return { targetPath: collisionPath, isExisting: false, hash: dataHash };
   }
 
   /**
@@ -102,31 +160,27 @@ export class ZipExtractor {
     const filingSuffix = filing.filingType === 'SUPPLEMENTAL'
       ? `BoSung-L${filing.supplementalNo || 1}`
       : (isQuyetToan ? 'QuyetToan' : 'ChinhThuc');
+    const filingIdentity = this.buildFilingIdentity(filing, taxCode);
 
     // ─── 1. KIỂM TRA TỆP XML ĐƠN LẺ (Không nén trong ZIP) ──────────────
     const isDirectXml = this.isRealXmlContent(zipBuffer);
 
     if (isDirectXml) {
-      const cleanId = sanitizeFilename(filing.id || 'hoso');
-      const finalFileName = sanitizeFilename(`${prefixCode}_${cleanPeriod}_${filingSuffix}_${cleanId}.xml`);
-      const targetPath = path.join(destDir, finalFileName);
-
-      let isExisting = false;
-      if (fs.existsSync(targetPath)) {
-        const existingData = fs.readFileSync(targetPath);
-        if (this.computeSha256(existingData) === sha256) {
-          isExisting = true;
-        }
-      }
-      if (!isExisting) {
-        fs.writeFileSync(targetPath, zipBuffer);
+      const finalFileName = this.buildSafeFileName(
+        `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}`,
+        '.xml'
+      );
+      const resolved = this.resolveCollisionSafePath(destDir, finalFileName, zipBuffer);
+      if (!resolved.isExisting) {
+        fs.writeFileSync(resolved.targetPath, zipBuffer);
       }
 
       return {
-        isExisting,
-        savedPaths: [targetPath],
-        xmlPath: targetPath,
-        sha256
+        isExisting: resolved.isExisting,
+        savedPaths: [resolved.targetPath],
+        xmlPath: resolved.targetPath,
+        sha256,
+        fileHashes: { [resolved.targetPath]: resolved.hash }
       };
     }
 
@@ -134,26 +188,21 @@ export class ZipExtractor {
     const headerSlice = zipBuffer.slice(0, 5).toString('utf-8').trim();
     const isDirectPdf = headerSlice.startsWith('%PDF');
     if (isDirectPdf) {
-      const cleanId = sanitizeFilename(filing.id || 'hoso');
-      const finalFileName = sanitizeFilename(`${prefixCode}_${cleanPeriod}_${filingSuffix}_${cleanId}.pdf`);
-      const targetPath = path.join(destDir, finalFileName);
-
-      let isExisting = false;
-      if (fs.existsSync(targetPath)) {
-        const existingData = fs.readFileSync(targetPath);
-        if (this.computeSha256(existingData) === sha256) {
-          isExisting = true;
-        }
-      }
-      if (!isExisting) {
-        fs.writeFileSync(targetPath, zipBuffer);
+      const finalFileName = this.buildSafeFileName(
+        `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}`,
+        '.pdf'
+      );
+      const resolved = this.resolveCollisionSafePath(destDir, finalFileName, zipBuffer);
+      if (!resolved.isExisting) {
+        fs.writeFileSync(resolved.targetPath, zipBuffer);
       }
 
       return {
-        isExisting,
-        savedPaths: [targetPath],
-        pdfPath: targetPath,
-        sha256
+        isExisting: resolved.isExisting,
+        savedPaths: [resolved.targetPath],
+        pdfPath: resolved.targetPath,
+        sha256,
+        fileHashes: { [resolved.targetPath]: resolved.hash }
       };
     }
 
@@ -164,15 +213,20 @@ export class ZipExtractor {
     } catch (err: any) {
       // Fallback: nếu AdmZip thất bại nhưng buffer là XML hồ sơ hợp lệ
       if (this.isRealXmlContent(zipBuffer)) {
-        const cleanId = sanitizeFilename(filing.id || 'hoso');
-        const finalFileName = sanitizeFilename(`${prefixCode}_${cleanPeriod}_${filingSuffix}_${cleanId}.xml`);
-        const targetPath = path.join(destDir, finalFileName);
-        fs.writeFileSync(targetPath, zipBuffer);
+        const finalFileName = this.buildSafeFileName(
+          `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}`,
+          '.xml'
+        );
+        const resolved = this.resolveCollisionSafePath(destDir, finalFileName, zipBuffer);
+        if (!resolved.isExisting) {
+          fs.writeFileSync(resolved.targetPath, zipBuffer);
+        }
         return {
-          isExisting: false,
-          savedPaths: [targetPath],
-          xmlPath: targetPath,
-          sha256
+          isExisting: resolved.isExisting,
+          savedPaths: [resolved.targetPath],
+          xmlPath: resolved.targetPath,
+          sha256,
+          fileHashes: { [resolved.targetPath]: resolved.hash }
         };
       }
       throw new Error(`File không đúng định dạng ZIP: ${err.message}`);
@@ -188,6 +242,7 @@ export class ZipExtractor {
     let pdfPath: string | undefined;
     let allIdentical = true;
     let totalUncompressed = 0;
+    const fileHashes: Record<string, string> = {};
     // Đếm tên file đích đã dùng trong lần giải nén này: 2 entry khác thư mục
     // trùng basename (a/x.xml, b/x.xml) trước đây GHI ĐÈ nhau im lặng
     const usedTargetNames = new Set<string>();
@@ -216,8 +271,9 @@ export class ZipExtractor {
       const ext = path.extname(entryName).toLowerCase();
       const originalBasename = path.basename(entryName, ext);
 
-      let finalFileName = sanitizeFilename(
-        `${prefixCode}_${cleanPeriod}_${filingSuffix}_${originalBasename}${ext}`
+      let finalFileName = this.buildSafeFileName(
+        `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}_${originalBasename}`,
+        ext
       );
 
       // Trùng tên trong cùng lần giải nén → thêm hậu tố _2, _3... thay vì ghi đè
@@ -225,8 +281,9 @@ export class ZipExtractor {
         let counter = 2;
         let candidate: string;
         do {
-          candidate = sanitizeFilename(
-            `${prefixCode}_${cleanPeriod}_${filingSuffix}_${originalBasename}_${counter}${ext}`
+          candidate = this.buildSafeFileName(
+            `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}_${originalBasename}_${counter}`,
+            ext
           );
           counter++;
         } while (usedTargetNames.has(candidate.toLowerCase()));
@@ -234,29 +291,17 @@ export class ZipExtractor {
       }
       usedTargetNames.add(finalFileName.toLowerCase());
 
-      const targetPath = path.join(destDir, finalFileName);
       const entryData = entry.getData();
-
-      // Kiểm tra tính toàn vẹn và trùng lặp qua hash
-      if (fs.existsSync(targetPath)) {
-        const existingData = fs.readFileSync(targetPath);
-        const existingHash = this.computeSha256(existingData);
-        const entryHash = this.computeSha256(entryData);
-
-        if (existingHash === entryHash) {
-          savedPaths.push(targetPath);
-          if (ext === '.xml') xmlPath = targetPath;
-          if (ext === '.pdf') pdfPath = targetPath;
-          continue;
-        }
+      const resolved = this.resolveCollisionSafePath(destDir, finalFileName, entryData);
+      if (!resolved.isExisting) {
+        allIdentical = false;
+        fs.writeFileSync(resolved.targetPath, entryData);
       }
+      savedPaths.push(resolved.targetPath);
+      fileHashes[resolved.targetPath] = resolved.hash;
 
-      allIdentical = false;
-      fs.writeFileSync(targetPath, entryData);
-      savedPaths.push(targetPath);
-
-      if (ext === '.xml') xmlPath = targetPath;
-      if (ext === '.pdf') pdfPath = targetPath;
+      if (ext === '.xml') xmlPath = resolved.targetPath;
+      if (ext === '.pdf') pdfPath = resolved.targetPath;
     }
 
     return {
@@ -264,7 +309,8 @@ export class ZipExtractor {
       savedPaths,
       xmlPath,
       pdfPath,
-      sha256
+      sha256,
+      fileHashes
     };
   }
 }

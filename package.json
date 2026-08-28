@@ -1,6 +1,6 @@
 {
   "name": "tax-insight",
-  "version": "2.7.0",
+  "version": "2.8.1",
   "description": "Tải và quản lý hồ sơ, tờ khai thuế điện tử",
   "main": "dist-electron/main/main.js",
   "scripts": {
@@ -26,7 +26,7 @@
   "author": "TaxRecord",
   "license": "MIT",
   "dependencies": {
-    "adm-zip": "^0.5.16",
+    "adm-zip": "^0.6.0",
     "axios": "^1.8.1",
     "axios-cookiejar-support": "^5.0.5",
     "cheerio": "^1.2.0",
@@ -53,13 +53,16 @@
     "@types/tough-cookie": "^4.0.5",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "electron": "^34.2.0",
-    "electron-builder": "^25.1.8",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.5.2",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
     "vite": "^6.1.0",
     "vitest": "^3.0.5"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   },
   "build": {
     "appId": "com.taxrecord.app",
@@ -102,6 +105,7 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
@@ -110,6 +114,9 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
     }
   }
 }

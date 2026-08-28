@@ -325,6 +325,9 @@ export class GntParser {
     let treasuryName = '';
     const mTreasury = html.match(/Vào\s*tài\s*Khoản\s*KBNN:\s*[\s\S]*?<span[^>]*>([^<]+)<\/span>/i);
     if (mTreasury) treasuryName = mTreasury[1].trim();
+    const treasuryAccount =
+      $('#tk_kbnn, #so_tk_kbnn, [name="tk_kbnn"], [name="so_tk_kbnn"]').first().text().trim() ||
+      (/^\d{3,20}$/.test(treasuryName) ? treasuryName : '');
 
     let collectingBank = '';
     const mUnt = html.match(/Mở\s*tại\s*NH\s*ủy\s*nhiệm\s*thu:\s*[\s\S]*?<span[^>]*>([^<]+)<\/span>/i);
@@ -460,13 +463,13 @@ export class GntParser {
       transactionRef,
       paymentMethod: 'CHUYEN_KHOAN',
       currency: 'VND',
-      taxpayerName: taxpayerName || 'Người nộp thuế',
+      taxpayerName,
       taxpayerId: taxpayerId || '',
       address,
       province,
       debitBank,
       debitAccount,
-      treasuryAccount: '7111',
+      treasuryAccount,
       treasuryName,
       treasuryProvince: province,
       collectingBank,

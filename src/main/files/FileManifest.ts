@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { FilingType } from '../../shared/types';
 import { atomicWriteJson } from '../persistence/atomicWrite';
 import { safePathSegment } from '../persistence/pathConfinement';
@@ -15,6 +16,7 @@ export interface ManifestEntry {
   xmlPath?: string;
   pdfPath?: string;
   sha256?: string;
+  fileHashes?: Record<string, string>;
   downloadedAt: string;
 }
 
@@ -24,25 +26,30 @@ export class FileManifest {
   private entries: Map<string, ManifestEntry> = new Map();
 
   constructor(targetDir: string, taxCode: string, year: number) {
-    // Keep the manifest beside the files. The legacy nested path created a
-    // second MST/year tree even though FileOrganizer uses MST_year.
-    // safePathSegment: taxCode đến từ portal — chặn traversal defense-in-depth
     const safeTaxCode = safePathSegment(taxCode);
     const safeYear = Math.trunc(Number(year)) || new Date().getFullYear();
-    this.manifestPath = path.join(targetDir, `${safeTaxCode}_${safeYear}`, '.tax_manifest.json');
-    this.legacyManifestPath = path.join(targetDir, safeTaxCode, String(safeYear), '.tax_manifest.json');
+    this.manifestPath = path.join(targetDir, `.tax_manifest_${safeTaxCode}.json`);
+    this.legacyManifestPath = path.join(targetDir, `${safeTaxCode}_${safeYear}`, '.tax_manifest.json');
     this.load();
   }
 
   private load() {
     try {
-      const sourcePath = fs.existsSync(this.manifestPath) ? this.manifestPath : this.legacyManifestPath;
-      if (fs.existsSync(sourcePath)) {
-        const raw = fs.readFileSync(sourcePath, 'utf-8');
-        const data = JSON.parse(raw);
-        if (typeof data === 'object' && data !== null) {
-          for (const [key, val] of Object.entries(data)) {
-            this.entries.set(key, val as ManifestEntry);
+      const candidatePaths = [
+        this.manifestPath,
+        path.join(path.dirname(this.manifestPath), '.tax_manifest.json'),
+        this.legacyManifestPath
+      ];
+      for (const p of candidatePaths) {
+        if (fs.existsSync(p)) {
+          const raw = fs.readFileSync(p, 'utf-8');
+          const data = JSON.parse(raw);
+          if (typeof data === 'object' && data !== null) {
+            for (const [key, val] of Object.entries(data)) {
+              if (!this.entries.has(key)) {
+                this.entries.set(key, val as ManifestEntry);
+              }
+            }
           }
         }
       }
@@ -97,7 +104,18 @@ export class FileManifest {
     // Xác minh rằng các file đã ghi nhận trong manifest thực sự còn tồn tại trên đĩa
     if (entry.savedPaths && entry.savedPaths.length > 0) {
       const allFilesExist = entry.savedPaths.every(p => fs.existsSync(p));
-      if (allFilesExist) {
+      const allHashesMatch = allFilesExist && entry.fileHashes
+        ? entry.savedPaths.every(filePath => {
+            const expectedHash = entry.fileHashes?.[filePath];
+            if (!expectedHash) return false;
+            const actualHash = crypto
+              .createHash('sha256')
+              .update(fs.readFileSync(filePath))
+              .digest('hex');
+            return actualHash === expectedHash;
+          })
+        : allFilesExist;
+      if (allHashesMatch) {
         return { exists: true, entry };
       }
     }

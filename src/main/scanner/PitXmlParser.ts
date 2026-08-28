@@ -71,6 +71,11 @@ export class PitXmlParser {
       }
 
       const norm = normalizeVatPeriod(rawPeriod, filing.submittedAt);
+      const xmlFormId = this.findTag(xmlContent, ['maTKhai']) || '';
+      const xmlFormName = this.findTag(xmlContent, ['tenTKhai']) || '';
+      const isTt80Schema =
+        ['864', '953'].includes(xmlFormId.trim()) ||
+        /TT80\s*\/\s*2021|Thông tư số 80\/2021/i.test(xmlFormName);
 
       // ─── TỜ KHAI KHẤU TRỪ KỲ 05/KK-TNCN (Thông tư 80/2021/TT-BTC & TT92) ───
       let ct21 = 0n; // Tổng số lao động (người)
@@ -88,12 +93,20 @@ export class PitXmlParser {
       let ct44_qtt: bigint | undefined = undefined;
 
       // 1. Quét thẻ số lao động (người) - [21], [22]
-      const val21 = this.findTag(xmlContent, ['ct21', 'soLaoDong', 'tongSoLaoDong', 'ct_21']);
-      const val22 = this.findTag(xmlContent, ['ct22', 'caNhanCuTru', 'ct_22']);
+      const val21 = isTt80Schema
+        ? this.findTag(xmlContent, ['ct16'])
+        : this.findTag(xmlContent, ['ct21', 'soLaoDong', 'tongSoLaoDong', 'ct_21']);
+      const val22 = isTt80Schema
+        ? this.findTag(xmlContent, ['ct17'])
+        : this.findTag(xmlContent, ['ct22', 'caNhanCuTru', 'ct_22']);
 
       // 2. Quét thẻ Tổng thu nhập chịu thuế (TNCT) - [24], [27]
-      const val24 = this.findTag(xmlContent, ['ct24', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24']);
-      const val27 = this.findTag(xmlContent, ['ct27', 'tnctKhauTru', 'ct_27']);
+      const val24 = isTt80Schema
+        ? this.findTag(xmlContent, [isFinalization ? 'ct23' : 'ct21'])
+        : this.findTag(xmlContent, ['ct24', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24']);
+      const val27 = isTt80Schema
+        ? this.findTag(xmlContent, [isFinalization ? 'ct28' : 'ct26'])
+        : this.findTag(xmlContent, ['ct27', 'tnctKhauTru', 'ct_27']);
 
       if (val21 !== undefined) ct21 = this.parseBigIntSafe(val21);
       if (val22 !== undefined) ct22 = this.parseBigIntSafe(val22);
@@ -101,6 +114,20 @@ export class PitXmlParser {
       if (val27 !== undefined) ct27 = this.parseBigIntSafe(val27);
 
       if (!isFinalization) {
+        if (isTt80Schema) {
+          // Mẫu 05/KK-TNCN TT80/2021 (maTKhai=864):
+          // [16] tổng số NLĐ; [17] cá nhân cư trú có HĐLĐ;
+          // [21] tổng TNCT; [26] tổng TNCT thuộc diện khấu trừ;
+          // [29] tổng thuế đã khấu trừ = [30] cư trú + [31] không cư trú.
+          const totalWithheld = this.findTag(xmlContent, ['ct29']);
+          const residentWithheld = this.findTag(xmlContent, ['ct30']);
+          const nonResidentWithheld = this.findTag(xmlContent, ['ct31']);
+          ct31 = this.parseBigIntSafe(residentWithheld);
+          ct32 = this.parseBigIntSafe(nonResidentWithheld);
+          ct34 = this.parseBigIntSafe(totalWithheld);
+          if (ct34 === 0n && (ct31 > 0n || ct32 > 0n)) ct34 = ct31 + ct32;
+          ct35 = ct34;
+        } else {
         // ─── XỬ LÝ CHO TỜ KHAI KỲ 05/KK-TNCN ───
         // TT80: <ct30> là Tổng thuế khấu trừ, <ct31> là Cư trú, <ct32> là Không cư trú, <ct33> là Thuế phải nộp
         // TT92: <ct34> là Tổng thuế khấu trừ, <ct32> là Cư trú, <ct33> là Không cư trú, <ct35> là Thuế phải nộp
@@ -147,7 +174,26 @@ export class PitXmlParser {
         } else {
           ct35 = ct34;
         }
+        }
       } else {
+        if (isTt80Schema) {
+          // Mẫu 05/QTT-TNCN TT80/2021 (maTKhai=953):
+          // [31] tổng thuế đã khấu trừ = [32] cư trú + [33] không cư trú;
+          // [40] số thuế còn phải nộp; [41] số thuế nộp thừa.
+          const totalWithheld = this.findTag(xmlContent, ['ct31']);
+          const residentWithheld = this.findTag(xmlContent, ['ct32']);
+          const nonResidentWithheld = this.findTag(xmlContent, ['ct33']);
+          const additionalPayable = this.findTag(xmlContent, ['ct40']);
+          const overpaid = this.findTag(xmlContent, ['ct41']);
+          ct31 = this.parseBigIntSafe(residentWithheld);
+          ct32 = this.parseBigIntSafe(nonResidentWithheld);
+          ct34 = this.parseBigIntSafe(totalWithheld);
+          if (ct34 === 0n && (ct31 > 0n || ct32 > 0n)) ct34 = ct31 + ct32;
+          ct35 = this.parseBigIntSafe(additionalPayable);
+          ct36_qtt = ct34;
+          ct41_qtt = ct35;
+          ct44_qtt = this.parseBigIntSafe(overpaid);
+        } else {
         // ─── XỬ LÝ CHO TỜ KHAI QUYẾT TOÁN NĂM 05/QTT-TNCN ───
         // TT80:
         // [30] / [36]: Tổng số thuế TNCN đã khấu trừ
@@ -185,6 +231,7 @@ export class PitXmlParser {
         } else if (ct31 > 0n || ct32 > 0n) {
           ct34 = ct31 + ct32;
           ct36_qtt = ct34;
+        }
         }
       }
 

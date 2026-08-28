@@ -67,7 +67,7 @@ export class LegalRuleRegistry {
       documentNumber: '245/2026/NĐ-CP',
       documentTitle: 'Nghị định số 245/2026/NĐ-CP của Chính phủ',
       article: 'Điều 3 & Điều 4',
-      effectiveFrom: '2026-01-01',
+      effectiveFrom: '2026-06-27',
       effectiveTo: '2026-12-31',
       summary: 'Gia hạn thời hạn nộp thuế GTGT, TNDN, TNCN và tiền thuê đất trong năm 2026 (Áp dụng theo danh mục ngành nghề và điều kiện quy định).',
       reviewedAt: '2026-08-18'
@@ -107,6 +107,16 @@ export class LegalRuleRegistry {
       ruleType: 'LAST_DAY_THIRD_MONTH_NEXT_YEAR',
       legalBasis: [LegalRuleRegistry.documents.LUAT_QLT_38_2019, LegalRuleRegistry.documents.ND_126_2020]
     },
+    {
+      id: 'RULE_INDIVIDUAL_PIT_FINALIZATION_QLT38',
+      name: 'Quyết toán TNCN cá nhân trực tiếp (Luật QLT 38/2019)',
+      periodType: 'FINALIZATION_PIT',
+      taxTypes: ['PIT', 'ALL'],
+      effectiveFrom: '2020-07-01',
+      effectiveTo: '2026-06-30',
+      ruleType: 'LAST_DAY_FOURTH_MONTH_NEXT_YEAR',
+      legalBasis: [LegalRuleRegistry.documents.LUAT_QLT_38_2019, LegalRuleRegistry.documents.ND_126_2020]
+    },
 
     // ─── 2. LUẬT QLT 108/2025 (Từ 01/07/2026 trở đi) ─────────────────────
     {
@@ -134,6 +144,15 @@ export class LegalRuleRegistry {
       taxTypes: ['CIT', 'PIT', 'ALL'],
       effectiveFrom: '2026-07-01',
       ruleType: 'LAST_DAY_THIRD_MONTH_NEXT_YEAR',
+      legalBasis: [LegalRuleRegistry.documents.LUAT_QLT_108_2025, LegalRuleRegistry.documents.ND_252_2026]
+    },
+    {
+      id: 'RULE_INDIVIDUAL_PIT_FINALIZATION_QLT108',
+      name: 'Quyết toán TNCN cá nhân trực tiếp (Luật QLT 108/2025)',
+      periodType: 'FINALIZATION_PIT',
+      taxTypes: ['PIT', 'ALL'],
+      effectiveFrom: '2026-07-01',
+      ruleType: 'LAST_DAY_FOURTH_MONTH_NEXT_YEAR',
       legalBasis: [LegalRuleRegistry.documents.LUAT_QLT_108_2025, LegalRuleRegistry.documents.ND_252_2026]
     }
   ];

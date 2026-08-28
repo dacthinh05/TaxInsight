@@ -49,6 +49,7 @@ export function useGntReconciliation({
 
   const gntDetailReqId = useRef(0);
   const gntLoadReqId = useRef(0);
+  const failedGntDetailIds = useRef<Set<string>>(new Set());
 
   // ─── TẢI CHECKPOINT GNT KHI ĐĂNG NHẬP / ĐỔI NĂM ──────────────────────
   // Nhờ đó đối chiếu vẫn hoạt động ngay sau khi khởi động lại app mà không cần tra cứu lại eTax.
@@ -89,6 +90,7 @@ export function useGntReconciliation({
       const res: any = await window.taxPortalAPI.scanPaymentSlips({ range });
       if (res?.success) {
         const slips: PaymentSlipRecord[] = res.paymentSlips || [];
+        failedGntDetailIds.current.clear();
         setPaymentSlips(slips);
         setGntDetails(new Map());
         setPaymentSlipsError(null);
@@ -132,7 +134,7 @@ export function useGntReconciliation({
   // Chỉ tải các GNT nộp thành công chưa có trong cache; PaymentSlipClient bên main
   // có cache + chống trùng request nên gọi lặp lại an toàn.
   const pendingDetailKey = useMemo(
-    () => paymentSlips.filter(isPaidSuccessSlip).filter(s => !gntDetails.has(s.id)).map(s => s.id).join(','),
+    () => paymentSlips.filter(isPaidSuccessSlip).filter(s => !gntDetails.has(s.id) && !failedGntDetailIds.current.has(s.id)).map(s => s.id).join(','),
     [paymentSlips, gntDetails]
   );
 
@@ -141,33 +143,60 @@ export function useGntReconciliation({
     const reqId = ++gntDetailReqId.current;
     const queue = pendingDetailKey.split(',');
     let cancelled = false;
+    let stopBatch = false;
+
+    const stopRemaining = () => {
+      stopBatch = true;
+      for (const remainingId of queue.splice(0)) {
+        failedGntDetailIds.current.add(remainingId);
+      }
+    };
 
     const worker = async () => {
-      while (!cancelled && reqId === gntDetailReqId.current && queue.length > 0) {
+      while (!cancelled && !stopBatch && reqId === gntDetailReqId.current && queue.length > 0) {
         const ctuId = queue.shift()!;
         try {
-          const res: any = await window.taxPortalAPI.getPaymentSlipDetail({ ctuId });
+          await new Promise(r => setTimeout(r, 100));
+          const slip = paymentSlips.find(item => item.id === ctuId);
+          const res: any = await window.taxPortalAPI.getPaymentSlipDetail({
+            ctuId,
+            soGnt: slip?.soGnt,
+            maGiaoDich: slip?.maGiaoDich
+          });
           if (!cancelled && res?.success && res.detail) {
             setGntDetails(prev => {
               const next = new Map(prev);
               next.set(ctuId, res.detail as PaymentSlipDetail);
               return next;
             });
+          } else {
+            failedGntDetailIds.current.add(ctuId);
+            const code = String(res?.errorCode || '');
+            if (['RATE_LIMIT', 'ETAX_SYSTEM_ERROR', 'SESSION_EXPIRED', 'AUTH_REQUIRED'].includes(code)) {
+              stopRemaining();
+            }
           }
-        } catch {
+        } catch (err: any) {
           // Bỏ qua GNT lỗi chi tiết — matcher sẽ fallback về chế độ header-only
+          failedGntDetailIds.current.add(ctuId);
+          const code = String(err?.code || err?.errorCode || '');
+          const status = Number(err?.response?.status || 0);
+          if (status === 429 || status >= 500 || ['RATE_LIMIT', 'ETAX_SYSTEM_ERROR', 'SESSION_EXPIRED', 'AUTH_REQUIRED'].includes(code)) {
+            stopRemaining();
+          }
         }
       }
     };
 
-    Promise.all([worker(), worker(), worker(), worker()]);
+    void worker();
     return () => { cancelled = true; };
-  }, [viewMode, pendingDetailKey]);
+  }, [viewMode, pendingDetailKey, paymentSlips]);
 
   // ─── RESET (logout / đổi tài khoản) ──────────────────────────────────
   const resetGntData = () => {
     gntDetailReqId.current++;
     gntLoadReqId.current++;
+    failedGntDetailIds.current.clear();
     setPaymentSlips([]);
     setGntDetails(new Map());
     setPaymentSlipsError(null);

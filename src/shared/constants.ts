@@ -9,6 +9,11 @@ export const PORTAL_CONFIG = {
   SEARCH_API: 'https://dichvucong.gdt.gov.vn/tthc/ho-so/search',
   VALIDATE_TKHAI_API: 'https://dichvucong.gdt.gov.vn/tthc/tchs/validateIdTkhai',
   DOWNLOAD_API: 'https://dichvucong.gdt.gov.vn/tthc/tchs/downloadhoso',
+  // Form fallback được render trực tiếp trên trang chi tiết hồ sơ.
+  DOWNLOAD_FORM_API: 'https://dichvucong.gdt.gov.vn/tthc/downloadhoso',
+  // Luồng tải từng tài liệu đính kèm được chính trang chi tiết hồ sơ sử dụng.
+  ATTACHMENT_LIST_API: 'https://dichvucong.gdt.gov.vn/tthc/tchs/data-tai-lieu-dkem',
+  ATTACHMENT_DOWNLOAD_API: 'https://dichvucong.gdt.gov.vn/tthc/tchs/download-tai-lieu-dkem',
   // Nhánh tải hồ sơ Thuế Điện Tử (isThueDienTu=true): /downloadhoso-tdt?loaiTraCuu=<value>
   DOWNLOAD_TDT_API: 'https://dichvucong.gdt.gov.vn/tthc/tchs/downloadhoso-tdt',
   DETAIL_FILE_URL: 'https://dichvucong.gdt.gov.vn/tthc/tchs/files/detail',
@@ -20,10 +25,16 @@ export const PORTAL_CONFIG = {
   // Nếu portal bổ sung nhóm khác (02...) cần mở rộng thành danh sách và gom nhiều đợt tra cứu.
   GNT_TYPE_TAX: '01',
   // ─────────────────────────────────────────────────────────────────────────
-  DEFAULT_PAGE_SIZE: 20,
-  MAX_PAGE_RESULTS_SUSPICIOUS_THRESHOLD: 20, // Server GDT giới hạn cứng 20 bản ghi/trang -> Nếu đủ 20 bản ghi thì bắt buộc tự động phân rã tháng
+  // JavaScript production của DVC gọi onChangePage(page, 10) và gửi field
+  // `size=10`. Dùng 20/pageSize khiến fallback xác định trang cuối sai khi
+  // fragment HTML thiếu/đổi phần tổng trang.
+  DEFAULT_PAGE_SIZE: 10,
+  MAX_PAGE_RESULTS_SUSPICIOUS_THRESHOLD: 10,
   REQUEST_TIMEOUT_MS: 30000,
-  DOWNLOAD_CONCURRENCY: 2,
+  // Cổng Thuế hiện rate-limit endpoint tải rất gắt (thực tế request thứ ba
+  // trong < 1 giây đã trả 429). Tải tuần tự để mỗi hồ sơ có đủ ngân sách thử
+  // đúng ID/payload mà không bị worker khác chiếm hạn mức.
+  DOWNLOAD_CONCURRENCY: 1,
   MAX_RETRIES: 3,
   RETRY_BASE_DELAY_MS: 2000
 };

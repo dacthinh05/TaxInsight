@@ -59,6 +59,26 @@ describe('PRODUCTION AUDIT & HARDENING TEST SUITE', () => {
     expect(loaded?.xmlAvailable).toBe(true);
   });
 
+  it('Bug A2 — ParsedSnapshotStore rejects unversioned parser snapshots after mapping changes', () => {
+    const taxCode = '0101234567';
+    const submissionId = 'STALE-PARSER-SNAPSHOT';
+    const snapshotDir = path.join(tempDir, taxCode, '.cache_snapshots');
+    fs.mkdirSync(snapshotDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(snapshotDir, `${submissionId}.json`),
+      JSON.stringify({
+        submissionId,
+        xmlAvailable: true,
+        ct21_tongSoNguoiLaoDong: '20058722974n'
+      }),
+      'utf8'
+    );
+
+    expect(
+      ParsedSnapshotStore.getSnapshot(tempDir, taxCode, submissionId)
+    ).toBeNull();
+  });
+
   // 2. EXCEL FORMULA INJECTION & NEGATIVE NUMBERS
   it('Bug B — FormulaSanitizer neutralizes formula injection while preserving real negative numbers', () => {
     expect(sanitizeExcelCellValue('=SUM(A1:A2)')).toBe("'=SUM(A1:A2)");
@@ -279,10 +299,10 @@ describe('PRODUCTION AUDIT & HARDENING TEST SUITE', () => {
     expect(p2).not.toBeNull();
     expect(p2?.content).toBe('UEsDBBQAAAAIAAAAAAAAAAAAAAAAAAAAAAA=');
 
-    // 3. Binary Buffer
+    // 3. Unknown binary must be rejected: GDT can return CAPTCHA/placeholder
+    // bytes with HTTP 200, which must never be saved as a fake ZIP.
     const buffer = Buffer.from('TEST_BINARY_FILE_BUFFER');
     const p3 = (client as any).extractPayloadContent(buffer, '12345');
-    expect(p3).not.toBeNull();
-    expect(p3?.content).toBe(buffer.toString('base64'));
+    expect(p3).toBeNull();
   });
 });

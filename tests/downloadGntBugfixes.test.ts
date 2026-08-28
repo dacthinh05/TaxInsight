@@ -225,7 +225,10 @@ describe('BUGFIX #4 — login không false-positive trên trang lỗi HTML chứ
       <body><a href="/tthc/home">Trang chủ</a>
       <div class="error">Mật khẩu không đúng</div></body></html>`;
 
-    vi.spyOn(session.client, 'get').mockResolvedValue({ status: 200, data: '' } as any);
+    vi.spyOn(session.client, 'get').mockResolvedValue({
+      status: 200,
+      data: '<html><body><a onclick="dangXuat()">Đăng xuất</a><div>tchs</div></body></html>'
+    } as any);
     const postSpy = vi
       .spyOn(session.client, 'post')
       .mockResolvedValue({ status: 200, data: fakeErrorPage } as any);
@@ -243,7 +246,10 @@ describe('BUGFIX #4 — login không false-positive trên trang lỗi HTML chứ
     const session = new PortalSession();
     const client = new TaxPortalClient(session);
 
-    vi.spyOn(session.client, 'get').mockResolvedValue({ status: 200, data: '' } as any);
+    vi.spyOn(session.client, 'get').mockResolvedValue({
+      status: 200,
+      data: '<html><body><a onclick="dangXuat()">Đăng xuất</a><div>tchs</div></body></html>'
+    } as any);
     vi.spyOn(session.client, 'post').mockResolvedValue({
       status: 200,
       data: '<response><status>200</status><desc>OK</desc></response>'
@@ -252,6 +258,26 @@ describe('BUGFIX #4 — login không false-positive trên trang lỗi HTML chứ
     const res = await client.login('3702735709', 'pass', '1234');
     expect(res.success).toBe(true);
 
+    vi.restoreAllMocks();
+  });
+
+  it('Response có marker thành công nhưng không tạo được session thật phải bị từ chối', async () => {
+    const session = new PortalSession();
+    const client = new TaxPortalClient(session);
+
+    vi.spyOn(session.client, 'get').mockResolvedValue({
+      status: 200,
+      data: '<html><body><form><input name="tenDN"><input name="matKhau"></form></body></html>'
+    } as any);
+    vi.spyOn(session.client, 'post').mockResolvedValue({
+      status: 200,
+      data: '<response><status>200</status><desc>OK</desc></response>'
+    } as any);
+
+    const res = await client.login('3702735709', 'pass', '1234');
+
+    expect(res).toMatchObject({ success: false, errorField: 'SESSION' });
+    expect(session.getSessionInfo().isLoggedIn).toBe(false);
     vi.restoreAllMocks();
   });
 });
