@@ -247,4 +247,23 @@ describe('Legacy Filing: EtaxFilingResultParser Suite', () => {
     const res = EtaxFilingResultParser.parse(html);
     expect(res.filings[0]?.messageId).toBe('MSG_2022-01.abc');
   });
+
+  it('7. Hỗ trợ hàm downTkhai và tham số số không có dấu nháy', () => {
+    const html = `
+      <table>
+        <thead><tr>
+          <th>Tờ khai/Phụ lục</th><th>Kỳ tính thuế</th>
+        </tr></thead>
+        <tbody id="allResultTableBody">
+          <tr>
+            <td><a onclick="downTkhai(11320260199999999)">01/GTGT - Tờ khai GTGT</a></td>
+            <td>Tháng 01/2026</td>
+          </tr>
+        </tbody>
+      </table>
+    `;
+    const res = EtaxFilingResultParser.parse(html);
+    expect(res.filings).toHaveLength(1);
+    expect(res.filings[0]?.messageId).toBe('11320260199999999');
+  });
 });

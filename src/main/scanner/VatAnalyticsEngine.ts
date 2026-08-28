@@ -216,7 +216,7 @@ export class VatAnalyticsEngine {
         }
 
         // 4. Nếu chưa có XML, tải trực tuyến vào bộ nhớ RAM (có retry khi bị rate-limit/mạng)
-        if (!snapshot && filing.downloadAvailable) {
+        if (!snapshot && filing.downloadAvailable !== false) {
           try {
             const res = await this.downloadHoSoWithRetry(filing);
 

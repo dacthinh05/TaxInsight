@@ -48,9 +48,9 @@ export class EtaxFilingResultParser {
   ): string | undefined {
     const names = functionNames.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
     const match = rowHtml.match(
-      new RegExp(`(?:${names})\\s*\\(\\s*(['"])([^'"<>\\r\\n]{1,256})\\1`, 'i')
+      new RegExp(`(?:${names})\\s*\\(\\s*(?:(['"])([^'"<>\\r\\n]{1,256})\\1|([A-Za-z0-9._-]{5,64}))`, 'i')
     );
-    const value = match?.[2]?.trim();
+    const value = (match?.[2] || match?.[3])?.trim();
     if (!value || !/^[^\s"'<>()[\]{}]{1,256}$/.test(value)) return undefined;
     return value;
   }
@@ -136,17 +136,20 @@ export class EtaxFilingResultParser {
         cells.push($(cell).text().replace(/\s+/g, ' ').trim());
       });
       const rowHtml = $row.html() || '';
-      const messageId = this.extractCallArgument(rowHtml, ['downloadTkhai']);
+      const messageId =
+        this.extractCallArgument(rowHtml, ['downloadTkhai', 'downTkhai', 'downTKhai', 'downloadTKhai', 'taiTkhai', 'taiTKhai', 'downFile', 'downloadFile', 'taiToKhai']) ||
+        $row.find('[data-messageid]').attr('data-messageid')?.trim() ||
+        $row.find('[data-id]').attr('data-id')?.trim();
       if (!messageId || seenMessageIds.has(messageId)) return;
       seenMessageIds.add(messageId);
 
       const noticeId = this.extractCallArgument(
         rowHtml,
-        ['thongBao', 'downloadTBao', 'downloadThongBao', 'viewTBao']
+        ['thongBao', 'downloadTBao', 'downloadThongBao', 'viewTBao', 'downTBao']
       );
       const transactionId = this.getCell(cells, columnMap.maGiaoDich);
       const titleCell = $cells.eq(columnMap.tenTKhai!);
-      const $downloadLink = titleCell.find('a[onclick*="downloadTkhai"]').first();
+      const $downloadLink = titleCell.find('a[onclick*="Tkhai"], a[onclick*="TKhai"], a[onclick*="down"], a[onclick*="tai"]').first();
       const rawTitle = ($downloadLink.length ? $downloadLink.text() : titleCell.text())
         .replace(/\s+/g, ' ')
         .trim();

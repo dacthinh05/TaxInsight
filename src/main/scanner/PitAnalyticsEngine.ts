@@ -209,7 +209,7 @@ export class PitAnalyticsEngine {
         }
 
         // 4. Nếu chưa có XML, tải trực tiếp vào RAM (có retry & metadata đầy đủ)
-        if (!snapshot && filing.downloadAvailable) {
+        if (!snapshot && filing.downloadAvailable !== false) {
           try {
             const res = await this.downloadHoSoWithRetry(filing);
 
