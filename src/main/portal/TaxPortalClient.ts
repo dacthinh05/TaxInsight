@@ -1383,58 +1383,25 @@ export class TaxPortalClient {
         }),
         abortSignal
       );
-      // F-002: kiểm tra kết quả validateIdTkhai. Nếu trả về non-200 (ví dụ 400 do session TCHS chưa nạp),
-      // tự động nạp lại trang TCHS_URL và retry validate 1 lần.
-      let validationResult = Buffer.isBuffer(validateResponse?.data)
+      if (validateResponse?.status !== 200) {
+        const err = this.createDownloadWorkflowError(
+          `validateIdTkhai trả HTTP ${validateResponse?.status ?? 'không xác định'} (yêu cầu 200).`,
+          'FILING_VALIDATION_FAILED'
+        );
+        Object.assign(err, { validationResult: '', httpStatus: validateResponse?.status });
+        throw err;
+      }
+      const validationResult = Buffer.isBuffer(validateResponse?.data)
         ? validateResponse.data.toString('utf8').trim()
         : String(validateResponse?.data ?? '').trim();
-
-      if (validateResponse?.status !== 200 || validationResult !== '200') {
-        try {
-          await this.session.client.get(PORTAL_CONFIG.TCHS_URL, {
-            headers: {
-              'Referer': 'https://dichvucong.gdt.gov.vn/tthc/home',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
-            },
-            timeout: 8000
-          });
-          const refreshedContext = await this.loadDeterministicDownloadContext(cleanId, abortSignal, attemptContext, filingMeta);
-          context = refreshedContext;
-          const refreshedValUrl = `${PORTAL_CONFIG.VALIDATE_TKHAI_API}?${new URLSearchParams({
-            idTKhai: context.action.maHoSo
-          }).toString()}`;
-          const retryResponse = await this.diagRequest(
-            attemptContext,
-            'VALIDATE-idTKhai-retry',
-            refreshedValUrl,
-            () => this.session.client.get(refreshedValUrl, {
-              signal: abortSignal,
-              headers: {
-                'Accept': 'text/plain, application/json, */*',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Referer': context.detailUrl,
-                [context.csrfHeaderName]: context.csrfToken
-              },
-              timeout: 7000
-            }),
-            abortSignal
-          );
-          if (retryResponse?.status === 200) {
-            const retryResult = Buffer.isBuffer(retryResponse?.data)
-              ? retryResponse.data.toString('utf8').trim()
-              : String(retryResponse?.data ?? '').trim();
-            if (retryResult === '200') {
-              validationResult = '200';
-            }
-          }
-        } catch {}
+      if (validationResult !== '200') {
+        const err = this.createDownloadWorkflowError(
+          `Hồ sơ không vượt qua validateIdTkhai (kết quả nghiệp vụ: "${validationResult || 'rỗng'}" !== "200").`,
+          'FILING_VALIDATION_FAILED'
+        );
+        Object.assign(err, { validationResult });
+        throw err;
       }
-
-      const isValidationPassed = validationResult === '200';
-      if (!isValidationPassed) {
-        console.warn(`[TaxPortalClient] validateIdTkhai phản hồi "${validationResult || 'rỗng'}" (non-200), tiếp tục thử tải qua POST downloadhoso...`);
-      }
-
       let hasRetried = false;
       while (true) {
         let downloadResponse: any = null;
@@ -1568,14 +1535,6 @@ export class TaxPortalClient {
         }
 
         const isZeroByte = rawDataLength === 0;
-        if (!isValidationPassed) {
-          const err = this.createDownloadWorkflowError(
-            `Hồ sơ không vượt qua validateIdTkhai (kết quả nghiệp vụ: "${validationResult || 'rỗng'}" !== "200").`,
-            'FILING_VALIDATION_FAILED'
-          );
-          Object.assign(err, { validationResult });
-          throw err;
-        }
         throw this.createDownloadWorkflowError(
           isZeroByte
             ? 'Cổng Thuế trả về phản hồi rỗng (0 byte).'

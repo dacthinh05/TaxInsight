@@ -1106,11 +1106,9 @@ export const App: React.FC = () => {
     return () => { cancelled = true; };
   }, [viewMode, pendingDetailKey, successfulPaymentSlips]);
 
-  const handleOpenFolder = async (targetYear?: number | any) => {
+  const handleOpenFolder = async (_targetYear?: number | any) => {
     if (window.taxPortalAPI) {
-      const validYear = typeof targetYear === 'number' && !isNaN(targetYear) ? targetYear : selectedYear;
-      const subFolder = session.taxCode ? `${session.taxCode}_${validYear}` : '';
-      await window.taxPortalAPI.openPath(subFolder);
+      await window.taxPortalAPI.openPath('');
     }
   };
 
