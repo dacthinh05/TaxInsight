@@ -578,3 +578,141 @@ describe('BUGFIX #10 — ipcHandlers executeJavaScript không chứa cú pháp T
     }
   });
 });
+
+describe('BUGFIX F-006 — attachment fallback xác minh ownership và định danh payload', () => {
+  const validXml = '<?xml version="1.0"?><HSoThue><TKhai>01/GTGT</TKhai></HSoThue>';
+  const validBase64 = Buffer.from(validXml, 'utf8').toString('base64');
+
+  const buildDetailHtml = (extraAttrs: string = '') => `
+      <html>
+        <head><meta name="_csrf" content="mock-token"/></head>
+        <body>
+          <button onclick="downloadHoSo(this)" data-mahoso="G12.18-260720-00263029" data-is-tdt="N"></button>
+          <div data-tai-lieu-dkem="true"${extraAttrs ? ' ' + extraAttrs : ''}></div>
+        </body>
+      </html>
+    `;
+
+  const mockGet = (detailHtml: string) =>
+    vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/files/detail/')) {
+        return Promise.resolve({ status: 200, data: detailHtml, headers: { 'content-type': 'text/html' } });
+      }
+      if (url.includes('/validateIdTkhai')) {
+        return Promise.resolve({ status: 200, data: '200', headers: { 'content-type': 'text/plain' } });
+      }
+      return Promise.resolve({ status: 404, data: '' });
+    });
+
+  it('lọc attachment sai maHso (ownership) và chỉ tải file khớp ID hồ sơ', async () => {
+    const session = new PortalSession();
+    const client = new TaxPortalClient(session);
+    session.client.get = mockGet(buildDetailHtml());
+
+    const wrongXml = '<?xml version="1.0"?><HSoThue><TKhai>99/KHAC</TKhai></HSoThue>';
+    const wrongBase64 = Buffer.from(wrongXml, 'utf8').toString('base64');
+    const downloadFileCalls: any[] = [];
+
+    session.client.post = vi.fn().mockImplementation((url: string, body?: any) => {
+      if (url.includes('/tchs/downloadhoso')) {
+        const err: any = new Error('Request failed with status code 500');
+        err.response = { status: 500, data: { error: 'Hồ sơ truyền lên không hợp lệ' }, headers: {} };
+        return Promise.reject(err);
+      }
+      if (url.includes('/data-tai-lieu-dkem')) {
+        return Promise.resolve({
+          status: 200,
+          data: [
+            { maHso: 'G99.99-OTHER-99999999', maTep: 'FILE_WRONG', fileName: 'wrong.xml', dinhDangTep: 'xml' },
+            { maHso: 'G12.18-260720-00263029', maTep: 'FILE_RIGHT', fileName: 'to_khai.xml', dinhDangTep: 'xml' }
+          ]
+        });
+      }
+      if (url.includes('/download-tai-lieu-dkem')) {
+        downloadFileCalls.push(body);
+        if (body?.idGiaoDichTthcFile === 'FILE_RIGHT') {
+          return Promise.resolve({ status: 200, data: { content: validBase64, fileName: 'to_khai.xml' } });
+        }
+        return Promise.resolve({ status: 200, data: { content: wrongBase64, fileName: 'wrong.xml' } });
+      }
+      return Promise.resolve({ status: 404, data: '' });
+    });
+
+    const payload = await client.downloadHoSo('G12.18-260720-00263029');
+    expect(payload).toBeDefined();
+    expect(payload.content).toBe(validBase64);
+    // Ownership filter phải loại FILE_WRONG trước khi tải: chỉ gọi đúng 1 lần với FILE_RIGHT
+    expect(downloadFileCalls.length).toBe(1);
+    expect(downloadFileCalls[0].idGiaoDichTthcFile).toBe('FILE_RIGHT');
+  });
+
+  it('bỏ qua attachment payload có XML không chứa MST của trang detail và throw DOWNLOAD_EMPTY_PAYLOAD', async () => {
+    const session = new PortalSession();
+    const client = new TaxPortalClient(session);
+    session.client.get = mockGet(buildDetailHtml('data-mst="0123456789"'));
+
+    // XML hợp lệ về cấu trúc nhưng thuộc MST khác (9999999999), không chứa 0123456789
+    const otherMstXml = '<?xml version="1.0"?><HSoThue><TKhai>01/GTGT</TKhai><MST>9999999999</MST></HSoThue>';
+    const otherMstBase64 = Buffer.from(otherMstXml, 'utf8').toString('base64');
+
+    session.client.post = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/tchs/downloadhoso')) {
+        // Main endpoint trả 200 nhưng body rỗng (0 byte) — không phải lỗi 500
+        return Promise.resolve({ status: 200, data: '', headers: {} });
+      }
+      if (url.includes('/data-tai-lieu-dkem')) {
+        return Promise.resolve({
+          status: 200,
+          data: [{ maHso: 'G12.18-260720-00263029', maTep: 'FILE_01', fileName: 'to_khai.xml', dinhDangTep: 'xml' }]
+        });
+      }
+      if (url.includes('/download-tai-lieu-dkem')) {
+        return Promise.resolve({ status: 200, data: { content: otherMstBase64, fileName: 'to_khai.xml' } });
+      }
+      return Promise.resolve({ status: 404, data: '' });
+    });
+
+    // Payload sai MST bị skip → không còn payload nào → 0 byte → DOWNLOAD_EMPTY_PAYLOAD
+    await expect(client.downloadHoSo('G12.18-260720-00263029')).rejects.toMatchObject({ code: 'DOWNLOAD_EMPTY_PAYLOAD' });
+  });
+});
+
+describe('BUGFIX F-007 — lỗi SESSION_EXPIRED từ attachment fallback phải lan truyền, không bị nuốt thành lỗi khác', () => {
+  it('attachment list throw SESSION_EXPIRED → downloadHoSoSingle throw SESSION_EXPIRED, không chuyển thành DOWNLOAD_EMPTY_PAYLOAD', async () => {
+    const detailHtml = `
+      <html>
+        <head><meta name="_csrf" content="mock-token"/></head>
+        <body>
+          <button onclick="downloadHoSo(this)" data-mahoso="G12.18-260720-00263029" data-is-tdt="N"></button>
+          <div data-tai-lieu-dkem="true"></div>
+        </body>
+      </html>
+    `;
+    const session = new PortalSession();
+    const client = new TaxPortalClient(session);
+    session.client.get = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/files/detail/')) {
+        return Promise.resolve({ status: 200, data: detailHtml, headers: { 'content-type': 'text/html' } });
+      }
+      if (url.includes('/validateIdTkhai')) {
+        return Promise.resolve({ status: 200, data: '200', headers: { 'content-type': 'text/plain' } });
+      }
+      return Promise.resolve({ status: 404, data: '' });
+    });
+    session.client.post = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/tchs/downloadhoso')) {
+        const err: any = new Error('Request failed with status code 500');
+        err.response = { status: 500, data: { error: 'Hồ sơ truyền lên không hợp lệ' }, headers: {} };
+        return Promise.reject(err);
+      }
+      if (url.includes('/data-tai-lieu-dkem')) {
+        const sessionErr: any = new Error('Phiên đăng nhập đã hết hạn');
+        Object.assign(sessionErr, { code: 'SESSION_EXPIRED', errorCode: 'SESSION_EXPIRED' });
+        return Promise.reject(sessionErr);
+      }
+      return Promise.resolve({ status: 404, data: '' });
+    });
+
+    await expect(client.downloadHoSo('G12.18-260720-00263029')).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
+  });
+});

@@ -402,6 +402,35 @@ Không sửa code khi phát hiện lỗi (đã tuân thủ).
 
 ---
 
+## Trạng thái xử lý findings (cập nhật 2026-08-29 — phase sửa code)
+
+Toàn bộ 12 findings đã được fix (CODE-CONFIRMED lại sau khi sửa):
+
+| ID | Fix | Trạng thái |
+|---|---|---|
+| F-001 | navigationGuard: bỏ ngoại lệ `index.html` cho file:// | DONE + test (tests/navigationGuard.test.ts) |
+| F-002 | validateIdTkhai dead code: xóa call thừa, đưa vào production path | DONE + test (tests/sessionLifecycle.test.ts) |
+| F-003 | ZipExtractor catch branch: stat-check trước khi bỏ qua | DONE + test |
+| F-004 | FileManifest: throw thay vì silent return | DONE + test |
+| F-005 | verifyXmlPayloadIdentity main payload trước khi dùng | DONE + test |
+| F-006 | Attachment fallback: ownership filter + verify identity từng file | DONE + test (tests/downloadGntBugfixes.test.ts, describe "BUGFIX F-006") |
+| F-007 | Catch attachment fallback: lan truyền SESSION_EXPIRED/RATE_LIMIT/CANCELLED/budget | DONE + test (describe "BUGFIX F-007") |
+| F-008 | Re-GET detail qua diagRequest + throwIfLoginHtmlResponse | DONE |
+| F-009 | Bỏ seed JSESSIONID hardcode; GNT_05 FAIL NEEDS_FULL_SSO + throw SESSION_EXPIRED | DONE + test (tests/paymentSlipSession.test.ts) |
+| F-010 | assertGeneration: cả `code` và `errorCode` = CANCELLED | DONE + test; grep toàn repo: mọi consumer kiểm tra `err.code`, chỉ assertGeneration đặt thêm `errorCode` — thống nhất |
+| F-011 | fallbackCodes: loại FILING_VALIDATION_FAILED khỏi danh sách retry ID | DONE |
+| F-012 | PortalErrorCode union: bổ sung các code còn thiếu | DONE |
+
+Kiểm tra sau sửa (chạy trong workspace, 2026-08-29):
+
+- `npx tsc -p tsconfig.electron.json --noEmit` → EXIT 0
+- `npx tsc --noEmit` → EXIT 0
+- `npx vitest run tests/paymentSlipSession.test.ts tests/downloadGntBugfixes.test.ts` → **BLOCKED trong VM**: `Cannot find module @rollup/rollup-linux-x64-gnu` (rollup native binding thiếu cho Linux x64; không sửa node_modules theo ràng buộc). Số test khai báo: downloadGntBugfixes 26 (11 describe), paymentSlipSession 4 (2 describe), navigationGuard 8, sessionLifecycle 11. **Cần chạy `npm test` trên máy Windows để xác nhận pass/fail thực tế.**
+
+Kết luận phase sửa: **chưa GO**. Unit/typecheck pass không đủ điều kiện GO theo quy tắc review; cần (1) chạy vitest thực trên máy người dùng và (2) chạy checklist Artifact 7 với hồ sơ thật.
+
+---
+
 ## Evidence types
 
 - **CODE-CONFIRMED:** Đã đọc file/dòng và grep call-site (đa số findings trên).

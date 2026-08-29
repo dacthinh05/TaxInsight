@@ -237,12 +237,11 @@ export class PaymentSlipClient {
         'Referer': 'https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
         'X-Requested-With': 'XMLHttpRequest',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        'Accept': '*/*'
       };
       if (csrfToken) {
         ssoHeaders['X-XSRF-TOKEN'] = csrfToken;
       }
-
       this.logCheckpoint('GNT_02_ETAX_ENTRY_TRIGGERED', 'PASS', csrfToken ? `Gửi request SSO module=330410 (CSRF: ${csrfToken.slice(0, 8)}***)` : 'Gửi request SSO module=330410 (KHÔNG có CSRF token!)');
 
       // ── CHECKPOINT 03: Phát hiện SSO Handoff Mechanism ───────────────
@@ -748,14 +747,12 @@ export class PaymentSlipClient {
 
         const params = new URLSearchParams();
         params.append('dse_sessionId', st.sessionId);
-        params.append('dse_applicationId', st.applicationId!);
-        params.append('dse_operationName', st.operationName!);
-        params.append('dse_pageId', st.pageId!);
-        params.append('dse_processorState', st.processorState!);
-        params.append('dse_processorId', st.processorId!);
+        params.append('dse_applicationId', st.applicationId || '-1');
+        params.append('dse_operationName', st.operationName || 'corpQueryTaxProc');
+        params.append('dse_pageId', st.pageId || '1');
+        if (st.processorState) params.append('dse_processorState', st.processorState);
+        if (st.processorId) params.append('dse_processorId', st.processorId);
         if (st.errorPage) params.append('dse_errorPage', st.errorPage);
-        // Ưu tiên event mà form sống công bố; chỉ dùng "query" khi form không
-        // khai báo (tương thích với một số response cũ).
         params.append('dse_nextEventName', st.nextEventName || st.hiddenFields?.dse_nextEventName || 'query');
         params.append('pn', String(query.page || 1));
         params.append('sct', '');
