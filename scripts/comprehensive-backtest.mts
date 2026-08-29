@@ -126,10 +126,9 @@ async function main() {
           try {
             console.log(`[DOWNLOAD ${y}] ${filing.declarationCode || filing.title} | Kỳ: ${filing.period} (ID: ${filing.messageId})...`);
             const file = await legacyClient.downloadFiling(filing.messageId);
-            const filePath = path.join(outDir, file.fileName);
+            const cleanName = (file.fileName || `filing_${filing.messageId}.xml`).replace(/[\/\\]/g, '-');
+            const filePath = path.join(outDir, cleanName);
             fs.writeFileSync(filePath, file.dataBuffer);
-
-            console.log(`  -> OK: ${file.fileName} (${file.contentType}, ${(file.dataBuffer.length / 1024).toFixed(1)} KB)`);
             report.downloads.success++;
 
             const isXml = file.fileName.toLowerCase().endsWith('.xml') || file.contentType.includes('xml');
@@ -150,13 +149,13 @@ async function main() {
             report.downloads.failed++;
             report.errors.push(`Tải ${filing.declarationCode} (${y}) lỗi: ${err.message}`);
           }
-          await new Promise(r => setTimeout(r, 600));
+          await new Promise(r => setTimeout(r, 900));
         }
       } catch (err: any) {
         console.log(`[LỖI NĂM ${y}] ${err.message}`);
         report.errors.push(`Tra cứu năm ${y} lỗi: ${err.message}`);
       }
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 1000));
     }
   } catch (err: any) {
     console.log(`[LEGACY SSO ERROR] ${err.message}`);

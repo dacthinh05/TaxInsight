@@ -349,11 +349,10 @@ export class DownloadManager extends EventEmitter {
     item.filing.downloadStatus = 'DOWNLOADING';
     this.emitProgress(item);
 
-    // Jitter nhẹ tránh xung đột đồng thời giữa các workers
-    await new Promise(r => setTimeout(r, 50 + Math.random() * 100));
+    // Pacing an toàn giữa các lượt tải để bảo vệ không bị máy chủ Cổng Thuế chặn tần suất (HTTP 429)
+    await new Promise(r => setTimeout(r, 750 + Math.random() * 450));
 
     if (generation !== this.queueGeneration || this.isPaused || this.isCancelled) {
-      if (item.status === 'DOWNLOADING') item.status = 'PENDING';
       item.filing.downloadStatus = 'PENDING';
       return;
     }
