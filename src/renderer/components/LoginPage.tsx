@@ -214,15 +214,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             });
 
         if (res.success) {
+          const finalMst = (res as any).adjustedTaxCode || cleanMst;
           // Lưu tài khoản & mật khẩu (nếu người dùng tùy chọn lưu)
           if (window.taxPortalAPI.saveAccount) {
             await window.taxPortalAPI.saveAccount({
-              taxCode: cleanMst,
+              taxCode: finalMst,
               password: useSavedPassword ? undefined : password,
               savePassword: Boolean(savePassword)
             });
           }
-          onLoginSuccess(cleanMst);
+          onLoginSuccess(finalMst);
         } else {
           const field = (res as any).errorField || 'GENERAL';
           setErrorMessage(res.message || 'Đăng nhập không thành công, vui lòng kiểm tra lại thông tin');

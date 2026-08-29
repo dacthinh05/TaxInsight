@@ -137,13 +137,15 @@ export function setupIpcHandlers(
     );
   };
 
+  const normalizeMstKey = (val: string): string => String(val || '').replace(/-ql$/i, '').trim().toLowerCase();
+
   const requireSessionTaxCode = (requested?: unknown): string => {
     const sessionTaxCode = String(session.getSessionInfo().taxCode || '').trim();
     if (!isValidTaxCode(sessionTaxCode)) {
       throw new Error('Phiên đăng nhập không có mã số thuế hợp lệ.');
     }
     const requestedTaxCode = String(requested || '').trim();
-    if (requestedTaxCode && requestedTaxCode !== sessionTaxCode) {
+    if (requestedTaxCode && normalizeMstKey(requestedTaxCode) !== normalizeMstKey(sessionTaxCode)) {
       throw new Error('Mã số thuế yêu cầu không khớp phiên đăng nhập hiện tại.');
     }
     return sessionTaxCode;
@@ -350,9 +352,18 @@ export function setupIpcHandlers(
         return { success: false, message: 'Mã CAPTCHA không hợp lệ.', errorField: 'CAPTCHA' };
       }
       auditLogger.log('INFO', 'Bắt đầu đăng nhập Cổng Thuế', `MST: ${safeTaxCode}`);
-      const res = await client.login(safeTaxCode, safePassword, safeCaptcha);
+      let res = await client.login(safeTaxCode, safePassword, safeCaptcha);
+      if (!res.success && (res.errorField === 'PASSWORD' || (res.message && res.message.includes('mật khẩu không đúng'))) && /^\d{10}$/.test(safeTaxCode)) {
+        // Tự động thử lại với hậu tố -ql nếu là MST 10 số doanh nghiệp
+        try {
+          const retryRes = await client.login(`${safeTaxCode}-ql`, safePassword, safeCaptcha);
+          if (retryRes.success) {
+            res = { ...retryRes, adjustedTaxCode: `${safeTaxCode}-ql` } as any;
+          }
+        } catch {}
+      }
       if (res.success) {
-        auditLogger.log('SUCCESS', 'Đăng nhập Cổng Thuế thành công', `MST: ${safeTaxCode}`);
+        auditLogger.log('SUCCESS', 'Đăng nhập Cổng Thuế thành công', `MST: ${(res as any).adjustedTaxCode || safeTaxCode}`);
       } else {
         auditLogger.log('WARNING', 'Đăng nhập không thành công', res.message);
       }
@@ -503,7 +514,7 @@ export function setupIpcHandlers(
       if (!isValidTaxCode(sessionTaxCode)) {
         return { success: false, error: 'Phiên đăng nhập không có mã số thuế hợp lệ.' };
       }
-      if (requestedTaxCode && requestedTaxCode !== sessionTaxCode) {
+      if (requestedTaxCode && normalizeMstKey(requestedTaxCode) !== normalizeMstKey(sessionTaxCode)) {
         return { success: false, error: 'Mã số thuế tải xuống không khớp phiên đăng nhập hiện tại.' };
       }
       const currentTaxCode = sessionTaxCode;
