@@ -39,7 +39,7 @@ export const PORTAL_CONFIG = {
   RETRY_BASE_DELAY_MS: 2000
 };
 
-export const PROCEDURE_MAPPING: Record<string, { type: 'VAT' | 'PIT' | 'CIT' | 'FCT' | 'REFUND' | 'REPORT' | 'OTHER'; standardName: string }> = {
+export const PROCEDURE_MAPPING: Record<string, { type: 'VAT' | 'PIT' | 'CIT' | 'FCT' | 'HOUSE_LAND' | 'REFUND' | 'REPORT' | 'OTHER'; standardName: string }> = {
   // ─── GTGT (VAT) ──────────────────────────────────────────────────────────
   '1.007014': { type: 'VAT', standardName: '01/GTGT - Tờ khai thuế GTGT khấu trừ' },
   '1.007015': { type: 'VAT', standardName: '04/GTGT - Tờ khai thuế GTGT trực tiếp' },
@@ -66,8 +66,7 @@ export const PROCEDURE_MAPPING: Record<string, { type: 'VAT' | 'PIT' | 'CIT' | '
   '02/KK-TNCN': { type: 'PIT', standardName: '02/KK-TNCN - Tờ khai quyết toán thuế TNCN' },
   '02/QTT-TNCN': { type: 'PIT', standardName: '02/QTT-TNCN - Quyết toán thuế TNCN' },
   '05/QTT-TNCN': { type: 'PIT', standardName: '05/QTT-TNCN - Quyết toán thuế TNCN' },
-
-  // ─── TNDN (CIT) ──────────────────────────────────────────────────────────
+  '02TH': { type: 'OTHER', standardName: '02TH - Bảng tổng hợp đăng ký người phụ thuộc' },
   '1.008346': { type: 'CIT', standardName: '03/TNDN - Quyết toán thuế TNDN' },
   '1.007026': { type: 'CIT', standardName: '04/TNDN - Khai thuế TNDN theo tỷ lệ' },
   '1.008335': { type: 'CIT', standardName: 'Khai thuế TNDN chuyển nhượng BĐS' },
@@ -83,6 +82,11 @@ export const PROCEDURE_MAPPING: Record<string, { type: 'VAT' | 'PIT' | 'CIT' | '
   '02/NTNN': { type: 'FCT', standardName: '02/NTNN - Quyết toán thuế nhà thầu nước ngoài' },
   '03/NTNN': { type: 'FCT', standardName: '03/NTNN - Tờ khai thuế nhà thầu nước ngoài' },
   '04/NTNN': { type: 'FCT', standardName: '04/NTNN - Tờ khai thuế nhà thầu nước ngoài' },
+  '01/NTNN-TT80': { type: 'FCT', standardName: '01/NTNN - Tờ khai thuế nhà thầu nước ngoài' },
+  // ─── THUẾ NHÀ ĐẤT & PHI NÔNG NGHIỆP (HOUSE_LAND) ────────────────────────
+  '01/TK-SDDPNN': { type: 'HOUSE_LAND', standardName: '01/TK-SDDPNN - Khai thuế SD đất phi nông nghiệp' },
+  '02/TK-SDDPNN': { type: 'HOUSE_LAND', standardName: '02/TK-SDDPNN - Khai tổng hợp thuế SDĐPNN' },
+  '01/TM-TMD': { type: 'HOUSE_LAND', standardName: 'Khai tiền thuê đất, thuê mặt nước' },
 
   // ─── THỦ TỤC & BÁO CÁO & KHÁC ──────────────────────────────────────────
   '1.008500': { type: 'OTHER', standardName: '20-ĐK-TH-TCT - Đăng ký người phụ thuộc' },
@@ -90,5 +94,7 @@ export const PROCEDURE_MAPPING: Record<string, { type: 'VAT' | 'PIT' | 'CIT' | '
   '1.008498': { type: 'OTHER', standardName: 'Đăng ký thuế lần đầu' },
   '20-ĐK-TH-TCT': { type: 'OTHER', standardName: '20-ĐK-TH-TCT - Đăng ký người phụ thuộc' },
   'BC26/AC': { type: 'REPORT', standardName: 'BC26/AC - Báo cáo tình hình sử dụng hóa đơn' },
-  'BCTC': { type: 'REPORT', standardName: 'BCTC - Báo cáo tài chính' }
+  'BCTC': { type: 'REPORT', standardName: 'BCTC - Báo cáo tài chính' },
+  'TT200': { type: 'REPORT', standardName: 'TT200 - Bộ Báo cáo tài chính' },
+  'TT133': { type: 'REPORT', standardName: 'TT133 - Bộ Báo cáo tài chính' }
 };
