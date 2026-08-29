@@ -344,9 +344,8 @@ export class LegacyFilingClient {
           nextUrl = this.resolveEtaxUrl(clean(redirectTarget), currentUrl);
           nextMethod = 'GET';
         } else if (
-          this.currentFormState.actionUrl &&
-          Object.keys(this.currentFormState.hiddenFields).length > 0 &&
-          this.currentFormState.dseSessionId
+          this.currentFormState.dseSessionId &&
+          (this.currentFormState.actionUrl || Object.keys(this.currentFormState.hiddenFields).length > 0 || currentHtml.includes('dse_sessionId'))
         ) {
           // Form auto-submit
           const fields = { ...this.currentFormState.hiddenFields };
