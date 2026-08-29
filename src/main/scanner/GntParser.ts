@@ -104,9 +104,11 @@ export class GntParser {
     if (!html || typeof html !== 'string') return results;
 
     const $ = cheerio.load(html);
-    const tbody = $('#allResultTableBody');
+    let tbody = $('#allResultTableBody');
+    if (!tbody.length) {
+      tbody = $('table.table-result tbody, table.table_data tbody, table tbody, tbody, table').first();
+    }
     if (!tbody.length) return results;
-
     // ── Header mapping: đọc vị trí cột thật từ dòng header của bảng ─────────
     const headerTexts: string[] = [];
     tbody.closest('table').find('th').each((_, th) => {

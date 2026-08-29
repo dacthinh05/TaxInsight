@@ -413,7 +413,9 @@ export class DownloadManager extends EventEmitter {
                 isThueDienTu: item.filing.isThueDienTu,
                 loaiTraCuu: item.filing.loaiTraCuu,
                 maTkhai: item.filing.maTkhai,
-                altIds: item.filing.altIds
+                altIds: item.filing.altIds,
+                period: item.filing.period,
+                declarationCode: item.filing.declarationCode
               }
             );
           } catch (dvcErr: any) {

@@ -281,33 +281,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           <p className="text-xs text-slate-500 font-normal mt-1">
             Hệ Thống Soát Xét & Đối Chiếu Hồ Sơ Thuế Điện Tử
           </p>
-          <div className="mt-2 flex items-center justify-center">
-            {updateInfo?.state === 'AVAILABLE' || updateInfo?.state === 'DOWNLOADED' ? (
-              <button
-                type="button"
-                onClick={onOpenUpdate}
-                className="inline-flex items-center space-x-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100"
-              >
-                <DownloadCloud className="h-3.5 w-3.5" />
-                <span>Có bản mới v{updateInfo.latestVersion} — cập nhật trước khi đăng nhập</span>
-              </button>
-            ) : updateInfo?.state === 'CHECKING' ? (
-              <span className="inline-flex items-center space-x-1.5 text-[11px] font-medium text-teal-700">
-                <RefreshCw className="h-3 w-3 animate-spin" />
-                <span>Đang kiểm tra phiên bản mới…</span>
-              </span>
-            ) : updateInfo?.state === 'NOT_AVAILABLE' ? (
-              <span className="text-[11px] font-medium text-emerald-700">✓ Đang dùng phiên bản mới nhất</span>
-            ) : (
-              <button
-                type="button"
-                onClick={onCheckUpdate}
-                className="text-[11px] font-medium text-slate-500 hover:text-teal-700"
-              >
-                Kiểm tra cập nhật
-              </button>
-            )}
-          </div>
         </div>
 
         {/* Form */}

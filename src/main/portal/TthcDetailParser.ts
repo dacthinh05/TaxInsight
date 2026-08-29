@@ -55,8 +55,8 @@ export class TthcDetailParser {
   private static parseBooleanAttribute(value: string | undefined): boolean | undefined {
     if (value === undefined) return undefined;
     const normalized = value.trim().toLowerCase();
-    if (normalized === 'true') return true;
-    if (normalized === 'false') return false;
+    if (normalized === 'true' || normalized === 'y' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === 'n' || normalized === '0') return false;
     return undefined;
   }
 

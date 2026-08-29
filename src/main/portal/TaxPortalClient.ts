@@ -30,6 +30,9 @@ interface DownloadAttemptRecord {
   ms: number;
   contentType: string;
   head: string;
+  dataType?: string;
+  byteLength?: number;
+  payloadKind?: 'ZIP' | 'PDF' | 'XML' | 'JSON' | 'HTML' | 'BASE64' | 'EMPTY' | 'BINARY' | 'UNKNOWN';
 }
 
 interface DownloadAttemptContext {
@@ -79,10 +82,47 @@ export class TaxPortalClient {
     data: any
   ): void {
     let head = '';
+    let dataType: string = String(typeof data);
+    let byteLength = 0;
+    let payloadKind: DownloadAttemptRecord['payloadKind'] = 'UNKNOWN';
     try {
-      if (Buffer.isBuffer(data)) head = data.subarray(0, 150).toString('utf-8').replace(/\s+/g, ' ').trim();
-      else if (typeof data === 'string') head = data.slice(0, 150).replace(/\s+/g, ' ').trim();
-      else if (data !== undefined) head = JSON.stringify(data).slice(0, 150).replace(/\s+/g, ' ').trim();
+      if (Buffer.isBuffer(data)) {
+        dataType = 'Buffer';
+        byteLength = data.length;
+        const magic = data.subarray(0, 4);
+        payloadKind = byteLength === 0
+          ? 'EMPTY'
+          : magic.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) || (magic[0] === 0x50 && magic[1] === 0x4b)
+            ? 'ZIP'
+            : magic.equals(Buffer.from('%PDF'))
+              ? 'PDF'
+              : 'BINARY';
+        head = data.subarray(0, 64).toString('hex');
+      } else if (typeof data === 'string') {
+        byteLength = Buffer.byteLength(data, 'utf8');
+        const trimmed = data.trim();
+        payloadKind = !trimmed
+          ? 'EMPTY'
+          : /^<(!doctype html|html\b)/i.test(trimmed)
+            ? 'HTML'
+            : /^<\?xml|^<[A-Za-z_]/.test(trimmed)
+              ? 'XML'
+              : /^\s*[{[]/.test(trimmed)
+                ? 'JSON'
+                : /^[A-Za-z0-9+/_=-]{20,}$/.test(trimmed)
+                  ? 'BASE64'
+                  : 'UNKNOWN';
+        head = data.slice(0, 64).replace(/\s+/g, ' ').trim();
+      } else if (data !== undefined && data !== null) {
+        dataType = Array.isArray(data) ? 'Array' : (data.constructor?.name || 'object');
+        const json = JSON.stringify(data);
+        byteLength = Buffer.byteLength(json || '', 'utf8');
+        payloadKind = 'JSON';
+        head = json.slice(0, 64).replace(/\s+/g, ' ').trim();
+      } else {
+        dataType = data === null ? 'null' : 'undefined';
+        payloadKind = 'EMPTY';
+      }
     } catch {}
     head = head
       .replace(
@@ -90,14 +130,22 @@ export class TaxPortalClient {
         '$1=******'
       )
       .replace(/((?:Bearer|Basic)\s+)[a-z0-9._~+/=-]+/gi, '$1******');
-    context.attempts.push({
+    const safeUrl = url
+      .replace(PORTAL_CONFIG.BASE_URL, '')
+      .replace(/([A-Za-z0-9]{8,})/g, value => `${value.slice(0, 3)}***${value.slice(-2)}`);
+    const attempt = {
       label,
-      url: url.replace(PORTAL_CONFIG.BASE_URL, ''),
+      url: safeUrl,
       status: status || 0,
       ms,
       contentType: contentType || '',
-      head
-    });
+      head,
+      dataType,
+      byteLength,
+      payloadKind
+    };
+    context.attempts.push(attempt);
+    console.info(`[TaxPortalClient] Download diagnostic ${JSON.stringify(attempt)}`);
     if (context.attempts.length > 60) context.attempts.shift();
   }
 
@@ -323,6 +371,7 @@ export class TaxPortalClient {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await this.ensureSessionInitialized();
+        await TaxPortalClient.waitForGlobalRateLimit();
 
         const url = `${PORTAL_CONFIG.CAPTCHA_URL}?t=${Date.now()}`;
 
@@ -359,6 +408,9 @@ export class TaxPortalClient {
       } catch (err: any) {
         const normalized = this.handleAxiosError(err, 'Lấy ảnh CAPTCHA thất bại');
         const code = String((normalized as any).code || '');
+        if (err?.response?.status === 429 || code === 'RATE_LIMIT') {
+          TaxPortalClient.triggerGlobalRateLimit(3000);
+        }
         // 429/5xx/xác thực là tín hiệu dừng, không tự gửi thêm request. Retry
         // tự động chỉ dành cho lỗi kết nối/timeout và vẫn có backoff hữu hạn.
         if (
@@ -738,41 +790,6 @@ export class TaxPortalClient {
     }
   }
   /**
-   * Xác thực ID tờ khai trước khi tải
-   */
-  public async validateIdTkhai(idTKhai: string): Promise<boolean> {
-    try {
-      const cleanId = idTKhai.trim();
-      if (!cleanId) return false;
-      const activeToken = await this.resolveXsrfToken();
-      const validateUrl = `${PORTAL_CONFIG.VALIDATE_TKHAI_API}?${new URLSearchParams({
-        idTKhai: cleanId
-      }).toString()}`;
-
-      const headers: Record<string, string> = {
-        'Accept': '*/*',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Referer': `${PORTAL_CONFIG.DETAIL_FILE_URL}/${cleanId}?loai=`,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
-      };
-      if (activeToken) {
-        headers['X-XSRF-TOKEN'] = activeToken;
-      }
-
-      const response = await this.session.client.get(validateUrl, {
-        headers,
-        timeout: 8000
-      });
-      const responseText = Buffer.isBuffer(response.data)
-        ? response.data.toString('utf8').trim()
-        : String(response.data ?? '').trim();
-      return response.status === 200 && responseText === '200';
-    } catch (err: any) {
-      throw this.handleAxiosError(err, `Không thể xác thực hồ sơ ID: ${idTKhai.trim()}`);
-    }
-  }
-
-  /**
    * Phát hiện phản hồi HTML trang Đăng nhập / Hết phiên trong luồng tải file.
    */
   private throwIfLoginHtmlResponse(resData: any): void {
@@ -1044,6 +1061,73 @@ export class TaxPortalClient {
   }
 
   /**
+   * F-005/F-006: Xác minh nội dung XML tải về thuộc đúng filing đang tải.
+   * MST là hard check (lệch => loại ngay). Kỳ tính thuế / mã tờ khai là soft check
+   * dựa trên bao hàm chuỗi số/ký tự để tránh lệch định dạng trong XML.
+   * Không có trường nào kiểm được => pass (cảnh báo), để tầng extract quyết định.
+   * Không log MST/mã hồ sơ đầy đủ.
+   */
+  private verifyXmlPayloadIdentity(
+    base64Content: string,
+    expected: { taxCode?: string; period?: string; declarationCode?: string }
+  ): boolean {
+    let xmlText = '';
+    try {
+      xmlText = Buffer.from(String(base64Content || ''), 'base64').toString('utf-8');
+    } catch {
+      return true; // không giải mã được => để tầng extract xử lý
+    }
+    const trimmed = xmlText.trim();
+    if (!trimmed.startsWith('<')) return true; // không phải XML => bỏ qua identity check
+
+    const hasAnyExpected = Boolean(
+      (expected.taxCode || '').trim() || (expected.period || '').trim() || (expected.declarationCode || '').trim()
+    );
+    if (!hasAnyExpected) {
+      console.warn('[verifyXmlIdentity] Không có trường tham chiếu (MST/kỳ/mã tờ khai) — bỏ qua xác minh.');
+      return true;
+    }
+
+    // 1. MST — hard check: MST (hoặc 10 số đầu với chi nhánh 13 số) phải xuất hiện trong XML
+    const rawTaxCode = String(expected.taxCode || '').replace(/-ql$/i, '').trim();
+    const expectedTaxDigits = rawTaxCode.replace(/[^0-9]/g, '');
+    if (expectedTaxDigits.length >= 10) {
+      const base10 = expectedTaxDigits.slice(0, 10);
+      const hasFullRaw = rawTaxCode.length >= 10 && xmlText.includes(rawTaxCode);
+      const hasDigits = xmlText.includes(expectedTaxDigits);
+      const hasBase10 = xmlText.includes(base10);
+      if (!hasFullRaw && !hasDigits && !hasBase10) {
+        return false;
+      }
+    }
+
+    // 2. Kỳ tính thuế — soft check: kiểm tra năm (4 chữ số) có xuất hiện trong XML không
+    const rawPeriod = String(expected.period || '').trim();
+    const yearMatch = rawPeriod.match(/\b(19\d\d|20\d\d)\b/);
+    if (yearMatch) {
+      const year = yearMatch[1];
+      if (!xmlText.includes(year)) {
+        return false;
+      }
+    }
+
+    // 3. Mã tờ khai — soft check: tìm token đặc trưng (>=3 ký tự)
+    const normalizeText = (value: string): string =>
+      value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase();
+    const codeTokens = normalizeText(String(expected.declarationCode || '')).match(/[a-z0-9]{3,}/g) || [];
+    if (codeTokens.length > 0) {
+      const normalizedXml = normalizeText(xmlText);
+      // Soft check: nếu có token và tìm thấy token thì tốt, nếu không có token nào nhưng MST và năm đã khớp thì vẫn cho qua
+      const hasAnyToken = codeTokens.some(token => normalizedXml.includes(token));
+      if (!hasAnyToken && !yearMatch && expectedTaxDigits.length < 10) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
    * Luồng mà nút "Tài liệu đính kèm" trên trang chi tiết GDT thực sự gọi.
    * Endpoint tải toàn bộ /downloadhoso có thể trả 500 với ID hiển thị G12.18-*,
    * trong khi từng XML/ZIP vẫn tải được qua hai API này.
@@ -1054,7 +1138,8 @@ export class TaxPortalClient {
     detailUrl: string,
     baseHeaders: Record<string, string>,
     abortSignal: AbortSignal | undefined,
-    attemptContext: DownloadAttemptContext
+    attemptContext: DownloadAttemptContext,
+    expectedIdentity?: { period?: string; declarationCode?: string }
   ): Promise<DownloadResponsePayload | null> {
     const hasAttachmentMarker =
       detailHtml.includes('data-tai-lieu-dkem') ||
@@ -1091,6 +1176,12 @@ export class TaxPortalClient {
     const attachments = this.parseAttachmentList(listResponse?.data);
     if (attachments.length === 0) return null;
 
+    // Chỉ nhận các attachment có maHso khớp với ID đang tải
+    const matchingAttachments = attachments.filter(
+      item => !item.maHso || item.maHso === primaryId || item.maHso.includes(primaryId) || primaryId.includes(item.maHso)
+    );
+    if (matchingAttachments.length === 0) return null;
+
     const extensionPriority = (item: FilingAttachment): number => {
       const ext = String(item.dinhDangTep || item.tenTep?.split('.').pop() || '').toLowerCase();
       if (ext === 'xml') return 0;
@@ -1098,15 +1189,13 @@ export class TaxPortalClient {
       if (ext === 'pdf') return 2;
       return 3;
     };
-    attachments.sort((a, b) => extensionPriority(a) - extensionPriority(b));
-
+    matchingAttachments.sort((a, b) => extensionPriority(a) - extensionPriority(b));
     const mst =
       detailHtml.match(/data-mst=["']([^"']+)["']/i)?.[1]?.trim() ||
       this.session.getSessionInfo().taxCode?.replace(/-ql$/i, '') ||
       '';
 
-    for (const attachment of attachments.slice(0, 4)) {
-      if (abortSignal?.aborted) break;
+    for (const attachment of matchingAttachments.slice(0, 4)) {
       await new Promise(resolve => setTimeout(resolve, 750));
       const fileResponse = await this.diagRequest(
         attemptContext,
@@ -1136,7 +1225,17 @@ export class TaxPortalClient {
 
       const responseData = fileResponse?.data?.data ?? fileResponse?.data;
       const payload = this.extractPayloadContent(responseData, primaryId);
-      if (payload) return payload;
+      if (!payload) continue;
+      // F-006: không chấp nhận payload đầu tiên — xác minh nội dung thuộc đúng filing trước khi return
+      if (!this.verifyXmlPayloadIdentity(payload.content, {
+        taxCode: mst || this.session.getSessionInfo().taxCode,
+        period: expectedIdentity?.period,
+        declarationCode: expectedIdentity?.declarationCode
+      })) {
+        console.warn('[downloadFilingAttachment] Payload không khớp định danh filing (MST/kỳ/mã) — bỏ qua, thử file kế tiếp.');
+        continue;
+      }
+      return payload;
     }
 
     return null;
@@ -1157,30 +1256,22 @@ export class TaxPortalClient {
   }
 
   private resolveDeterministicDownloadUrl(
-    action: Extract<DownloadAction, { kind: 'filing' }>
+    action: Extract<DownloadAction, { kind: 'filing' }>,
+    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[]; period?: string; declarationCode?: string }
   ): string {
-    if (action.isThueDienTu === undefined) {
-      throw this.createDownloadWorkflowError(
-        'Trang chi tiết hồ sơ không cung cấp data-is-thue-dien-tu hợp lệ.',
-        'DOWNLOAD_METADATA_INCOMPLETE'
-      );
-    }
-    if (!action.isThueDienTu) return PORTAL_CONFIG.DOWNLOAD_API;
-    if (!action.loaiTraCuu) {
-      throw this.createDownloadWorkflowError(
-        'Hồ sơ Thuế điện tử thiếu loaiTraCuu trên action tải của trang chi tiết.',
-        'DOWNLOAD_METADATA_INCOMPLETE'
-      );
-    }
+    const isTdt = action.isThueDienTu !== undefined ? action.isThueDienTu : (filingMeta?.isThueDienTu ?? false);
+    if (!isTdt) return PORTAL_CONFIG.DOWNLOAD_API;
+    const loaiTraCuu = action.loaiTraCuu || filingMeta?.loaiTraCuu || '1';
     return `${PORTAL_CONFIG.DOWNLOAD_TDT_API}?${new URLSearchParams({
-      loaiTraCuu: action.loaiTraCuu
+      loaiTraCuu
     }).toString()}`;
   }
 
   private async loadDeterministicDownloadContext(
     requestedId: string,
     abortSignal: AbortSignal | undefined,
-    attemptContext: DownloadAttemptContext
+    attemptContext: DownloadAttemptContext,
+    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[]; period?: string; declarationCode?: string }
   ): Promise<{
     detailUrl: string;
     action: Extract<DownloadAction, { kind: 'filing' }>;
@@ -1229,7 +1320,7 @@ export class TaxPortalClient {
     const csrfHeaderName = /^[A-Za-z0-9-]+$/.test(parsed.csrf?.headerName || '')
       ? parsed.csrf!.headerName!
       : 'X-XSRF-TOKEN';
-    const downloadUrl = this.resolveDeterministicDownloadUrl(parsed.filingAction);
+    const downloadUrl = this.resolveDeterministicDownloadUrl(parsed.filingAction, filingMeta);
     this.csrfToken = csrfToken;
     return {
       detailUrl,
@@ -1251,7 +1342,7 @@ export class TaxPortalClient {
   private async downloadHoSoSingle(
     maHoSo: string,
     abortSignal?: AbortSignal,
-    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[] }
+    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[]; period?: string; declarationCode?: string }
   ): Promise<DownloadResponsePayload> {
     const cleanId = String(maHoSo || '').trim();
     const attemptContext: DownloadAttemptContext = {
@@ -1264,13 +1355,13 @@ export class TaxPortalClient {
         'INVALID_FILING_ID'
       );
     }
-    void filingMeta;
 
     try {
       let context = await this.loadDeterministicDownloadContext(
         cleanId,
         abortSignal,
-        attemptContext
+        attemptContext,
+        filingMeta
       );
 
       const validateUrl = `${PORTAL_CONFIG.VALIDATE_TKHAI_API}?${new URLSearchParams({
@@ -1292,12 +1383,23 @@ export class TaxPortalClient {
         }),
         abortSignal
       );
+      // F-002: giữ strict check status===200 && body==='200' (trùng semantics
+      // validateIdTkhai cũ). axios mặc định đã throw non-2xx, nhưng check
+      // tường minh để chặn mọi response 2xx-khác-200 trả body '200'.
+      if (validateResponse?.status !== 200) {
+        const err = this.createDownloadWorkflowError(
+          `validateIdTkhai trả HTTP ${validateResponse?.status ?? 'không xác định'} (yêu cầu 200).`,
+          'FILING_VALIDATION_FAILED'
+        );
+        Object.assign(err, { validationResult: '', httpStatus: validateResponse?.status });
+        throw err;
+      }
       const validationResult = Buffer.isBuffer(validateResponse?.data)
         ? validateResponse.data.toString('utf8').trim()
         : String(validateResponse?.data ?? '').trim();
-      if (validationResult === '400' || validationResult === '404' || validationResult === 'false') {
+      if (validationResult !== '200') {
         const err = this.createDownloadWorkflowError(
-          `Hồ sơ không vượt qua validateIdTkhai (kết quả nghiệp vụ: ${validationResult || 'rỗng'}).`,
+          `Hồ sơ không vượt qua validateIdTkhai (kết quả nghiệp vụ: "${validationResult || 'rỗng'}" !== "200").`,
           'FILING_VALIDATION_FAILED'
         );
         Object.assign(err, { validationResult });
@@ -1306,8 +1408,11 @@ export class TaxPortalClient {
 
       let hasRetried = false;
       while (true) {
+        let downloadResponse: any = null;
+        let postError: any = null;
+
         try {
-          const downloadResponse = await this.diagRequest(
+          downloadResponse = await this.diagRequest(
             attemptContext,
             'DOWNLOAD-verified-contract',
             context.downloadUrl,
@@ -1329,21 +1434,10 @@ export class TaxPortalClient {
             ),
             abortSignal
           );
-          const payload = this.extractPayloadContent(downloadResponse?.data, context.action.maHoSo);
-          if (!payload) {
-            throw this.createDownloadWorkflowError(
-              'Cổng Thuế không trả file ZIP/XML/PDF hợp lệ theo contract đã xác minh.',
-              'DOWNLOAD_INVALID_RESPONSE',
-              Number(downloadResponse?.status || 0) || undefined
-            );
-          }
-          return payload;
         } catch (err: any) {
+          postError = err;
           if (abortSignal?.aborted) {
-            throw this.createDownloadWorkflowError(
-              'Tác vụ tải đã bị dừng bởi người dùng.',
-              'CANCELLED'
-            );
+            throw this.createDownloadWorkflowError('Tác vụ tải đã bị dừng bởi người dùng.', 'CANCELLED');
           }
           const status = Number(err?.response?.status || err?.httpStatus || 0);
           if (status === 429 || err?.code === 'RATE_LIMIT') {
@@ -1353,29 +1447,105 @@ export class TaxPortalClient {
           if (status === 401) {
             throw this.handleAxiosError(err, `Phiên hết hạn khi tải hồ sơ ID: ${cleanId}`);
           }
-          if (hasRetried || (status !== 403 && status < 500)) throw err;
+        }
 
-          hasRetried = true;
-          if (status === 403) {
-            const refreshed = await this.loadDeterministicDownloadContext(
-              cleanId,
-              abortSignal,
-              attemptContext
+        let payload = downloadResponse ? this.extractPayloadContent(downloadResponse?.data, context.action.maHoSo) : null;
+        const rawDataLength = Buffer.isBuffer(downloadResponse?.data)
+          ? downloadResponse.data.length
+          : typeof downloadResponse?.data === 'string'
+            ? Buffer.byteLength(downloadResponse.data, 'utf8')
+            : 0;
+
+        // F-005: xác minh payload chính khớp định danh filing (MST/kỳ/mã) trước khi dùng.
+        // Không khớp → bỏ payload này, thử attachment fallback thay vì lưu nhầm hồ sơ khác.
+        const expectedIdentity = {
+          taxCode: this.session.getSessionInfo().taxCode?.replace(/-ql$/i, ''),
+          period: filingMeta?.period,
+          declarationCode: filingMeta?.declarationCode
+        };
+        if (payload && !this.verifyXmlPayloadIdentity(payload.content, expectedIdentity)) {
+          console.warn('[downloadHoSoSingle] Payload chính không khớp định danh filing (MST/kỳ/mã) — thử attachment fallback.');
+          payload = null;
+        }
+
+        // Nếu POST /downloadhoso thất bại (HTTP 500) hoặc trả về body rỗng (0 bytes),
+        // tự động thử lấy từ danh sách tài liệu đính kèm (files/tai-lieu-dkem)
+        if (!payload) {
+          try {
+            const detailHtmlResponse = await this.diagRequest(
+              attemptContext,
+              'STD-detail-attachment-sweep',
+              context.detailUrl,
+              () => this.session.client.get(context.detailUrl, {
+                signal: abortSignal,
+                headers: {
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                  'Referer': PORTAL_CONFIG.TCHS_URL,
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+                },
+                timeout: 8000
+              }),
+              abortSignal
             );
-            if (
-              refreshed.action.maHoSo !== context.action.maHoSo ||
-              refreshed.downloadUrl !== context.downloadUrl
-            ) {
-              throw this.createDownloadWorkflowError(
-                'Metadata action tải thay đổi sau khi refresh CSRF; dừng để tránh gửi sai endpoint.',
-                'DOWNLOAD_CONTRACT_CHANGED'
+            // F-008: HTML re-GET cũng phải qua kiểm tra hết phiên như response chính
+            this.throwIfLoginHtmlResponse(detailHtmlResponse?.data);
+            if (typeof detailHtmlResponse?.data === 'string') {
+              payload = await this.downloadFilingAttachment(
+                context.action.maHoSo,
+                detailHtmlResponse.data,
+                context.detailUrl,
+                {
+                  'Origin': 'https://dichvucong.gdt.gov.vn',
+                  'Referer': context.detailUrl,
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+                  [context.csrfHeaderName]: context.csrfToken
+                },
+                abortSignal,
+                attemptContext,
+                expectedIdentity
               );
             }
+          } catch (attErr: any) {
+            // F-007: chỉ nuốt lỗi transient của attachment path; luôn lan truyền
+            // hết phiên / rate-limit / vượt budget để downloadHoSo không thử ID khác
+            if (this.mustStopDownloadFallback(attErr)) throw attErr;
+          }
+        }
+
+        if (payload) {
+          // F-005: chốt xác minh định danh lần cuối trước khi trả về — payload đã
+          // qua verify ở cả main path lẫn attachment path, nhưng chặn thêm ở đây để
+          // không có nhánh nào bỏ sót (defense in depth).
+          if (!this.verifyXmlPayloadIdentity(payload.content, expectedIdentity)) {
+            throw this.createDownloadWorkflowError(
+              'Nội dung tải về không khớp định danh filing (MST/kỳ/mã tờ khai) — từ chối lưu để tránh sai hồ sơ.',
+              'DOWNLOAD_IDENTITY_MISMATCH'
+            );
+          }
+          return payload;
+        }
+
+        if (postError) {
+          const status = Number(postError?.response?.status || postError?.httpStatus || 0);
+          if (hasRetried || (status !== 403 && status < 500)) throw postError;
+          hasRetried = true;
+          if (status === 403) {
+            const refreshed = await this.loadDeterministicDownloadContext(cleanId, abortSignal, attemptContext, filingMeta);
             context = refreshed;
           } else {
             await new Promise(resolve => setTimeout(resolve, 1200 + Math.random() * 400));
           }
+          continue;
         }
+
+        const isZeroByte = rawDataLength === 0;
+        throw this.createDownloadWorkflowError(
+          isZeroByte
+            ? 'Cổng Thuế trả về phản hồi rỗng (0 byte).'
+            : 'Cổng Thuế không trả file ZIP/XML/PDF hợp lệ theo contract đã xác minh.',
+          isZeroByte ? 'DOWNLOAD_EMPTY_PAYLOAD' : 'DOWNLOAD_INVALID_RESPONSE',
+          Number(downloadResponse?.status || 0) || undefined
+        );
       }
     } catch (err: any) {
       (err as any).attempts = [...attemptContext.attempts];
@@ -1395,7 +1565,7 @@ export class TaxPortalClient {
   public async downloadHoSo(
     maHoSo: string,
     abortSignal?: AbortSignal,
-    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[] }
+    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[]; period?: string; declarationCode?: string }
   ): Promise<DownloadResponsePayload> {
     const candidates = Array.from(new Set([
       String(maHoSo || '').trim(),
@@ -1414,9 +1584,11 @@ export class TaxPortalClient {
       'INVALID_FILING_ID',
       'DOWNLOAD_ACTION_NOT_FOUND',
       'DOWNLOAD_CONTRACT_UNVERIFIED',
-      'CSRF_CONTEXT_MISSING',
+      'DOWNLOAD_METADATA_INCOMPLETE',
       'FILING_VALIDATION_FAILED',
+      'CSRF_CONTEXT_MISSING',
       'DOWNLOAD_INVALID_RESPONSE',
+      'DOWNLOAD_IDENTITY_MISMATCH',
       'DOWNLOAD_CONTRACT_CHANGED',
       'FILING_PAYLOAD_REJECTED'
     ]);
@@ -1438,535 +1610,6 @@ export class TaxPortalClient {
     throw lastError;
   }
 
-  /**
-   * Implementation adaptive cũ được giữ tạm thời để đối chiếu regression,
-   * không còn được gọi bởi workflow production.
-   */
-  private async downloadHoSoAdaptiveLegacy(
-    maHoSo: string,
-    abortSignal?: AbortSignal,
-    filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[] }
-  ): Promise<DownloadResponsePayload> {
-    const cleanId = maHoSo.trim();
-    const isTdtPreferred = filingMeta?.isThueDienTu === true;
-    const allAttempts: DownloadAttemptRecord[] = [];
-
-    const idVariants = [cleanId, ...(filingMeta?.altIds || []).map(v => String(v).trim())]
-      .filter((v, i, arr) => v && arr.indexOf(v) === i)
-      .slice(0, 3);
-
-    // Mỗi route có budget riêng. Trước đây Standard dùng hết 8 request thì lỗi
-    // DOWNLOAD_ATTEMPT_BUDGET chặn luôn TDT, làm dual-routing chỉ tồn tại trên
-    // danh nghĩa đối với các hồ sơ TNCN có detail/attachment/altIds phức tạp.
-    const runStandard = async (): Promise<DownloadResponsePayload> => {
-      const context: DownloadAttemptContext = { attempts: [], maxNetworkAttempts: 8 };
-      try {
-        return await this.downloadHoSoStandard(
-          idVariants,
-          filingMeta?.maTkhai,
-          abortSignal,
-          context
-        );
-      } finally {
-        allAttempts.push(...context.attempts);
-      }
-    };
-    const runTdt = async (): Promise<DownloadResponsePayload> => {
-      const context: DownloadAttemptContext = { attempts: [], maxNetworkAttempts: 6 };
-      try {
-        return await this.downloadHoSoTdt(
-          idVariants,
-          filingMeta?.loaiTraCuu,
-          filingMeta?.maTkhai,
-          abortSignal,
-          context
-        );
-      } finally {
-        allAttempts.push(...context.attempts);
-      }
-    };
-
-    try {
-      try {
-        return isTdtPreferred ? await runTdt() : await runStandard();
-      } catch (primaryErr: any) {
-        if (
-          abortSignal?.aborted ||
-          primaryErr.code === 'CANCELLED' ||
-          primaryErr.code === 'SESSION_EXPIRED' ||
-          primaryErr.code === 'FILING_VALIDATION_FAILED'
-        ) {
-          throw primaryErr;
-        }
-
-        if (primaryErr.code === 'RATE_LIMIT' || primaryErr.httpStatus === 429) {
-          TaxPortalClient.triggerGlobalRateLimit(2500);
-          throw primaryErr;
-        }
-
-        // Tự động chuyển nhánh (Adaptive Dual-Routing Fallback):
-        // Nếu nhánh chính (TDT hoặc Standard) không tìm thấy hồ sơ hoặc trả lỗi payload/500,
-        // tự động thử ngay nhánh còn lại trước khi kết luận thất bại.
-        try {
-          await new Promise(r => setTimeout(r, 200));
-          if (isTdtPreferred) {
-            console.warn(`[TaxPortalClient] Nhánh TDT thất bại cho ID ${cleanId}, tự động fallback sang nhánh Standard: ${primaryErr.message}`);
-            return await runStandard();
-          }
-          console.warn(`[TaxPortalClient] Nhánh Standard thất bại cho ID ${cleanId}, tự động fallback sang nhánh TDT: ${primaryErr.message}`);
-          return await runTdt();
-        } catch (fallbackErr: any) {
-          if (
-            abortSignal?.aborted ||
-            fallbackErr.code === 'CANCELLED' ||
-            fallbackErr.code === 'SESSION_EXPIRED'
-          ) {
-            throw fallbackErr;
-          }
-          if (fallbackErr.code === 'RATE_LIMIT' || fallbackErr.httpStatus === 429) {
-            TaxPortalClient.triggerGlobalRateLimit(2500);
-            throw fallbackErr;
-          }
-          throw fallbackErr;
-        }
-      }
-      throw new Error(`Không nhận được nội dung hồ sơ ID: ${maHoSo}`);
-    } catch (err: any) {
-      // Đính kèm toàn bộ chẩn đoán từng lần thử để audit log/UI chỉ ra chính xác
-      // server trả gì ở từng bước thay vì một câu lỗi chung chung
-      (err as any).attempts = [...allAttempts];
-      throw err;
-    }
-  }
-
-  /**
-   * Nhánh Thuế Điện Tử: POST /tthc/tchs/downloadhoso-tdt?loaiTraCuu=<value>
-   */
-  private async downloadHoSoTdt(
-    idVariants: string[],
-    loaiTraCuu?: string,
-    maTkhai?: string,
-    abortSignal?: AbortSignal,
-    attemptContext: DownloadAttemptContext = { attempts: [], maxNetworkAttempts: 8 }
-  ): Promise<DownloadResponsePayload> {
-    const primaryId = idVariants[0] || '';
-
-    try {
-      const activeToken = await this.resolveXsrfToken();
-
-      const baseHeaders: Record<string, string> = {
-        'Origin': 'https://dichvucong.gdt.gov.vn',
-        'Referer': PORTAL_CONFIG.TCHS_URL,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Content-Type': 'application/json;charset=UTF-8'
-      };
-      if (activeToken) {
-        baseHeaders['X-XSRF-TOKEN'] = activeToken;
-        baseHeaders['X-CSRF-TOKEN'] = activeToken;
-      }
-
-      const urlsToTry: string[] = [];
-      if (loaiTraCuu) {
-        urlsToTry.push(
-          `${PORTAL_CONFIG.DOWNLOAD_TDT_API}?loaiTraCuu=${encodeURIComponent(loaiTraCuu)}`
-        );
-      } else {
-        urlsToTry.push(PORTAL_CONFIG.DOWNLOAD_TDT_API);
-      }
-
-      let lastTdtError: any = null;
-
-      outer:
-      for (const tldUrl of urlsToTry) {
-        if (abortSignal?.aborted) break;
-
-        for (const variantId of idVariants) {
-          if (abortSignal?.aborted) break outer;
-
-          // Giãn cách nhẹ giữa các request tránh kích hoạt WAF Rate Limit
-          await new Promise(r => setTimeout(r, 750));
-
-          // CHIẾN LƯỢC TDT 1: JSON { maHoSo: <biến thể ID> }
-          try {
-            const response = await this.diagRequest(attemptContext, 'TDT-maHoSo', tldUrl, () => this.session.client.post(
-              tldUrl,
-              { maHoSo: variantId, ...(maTkhai ? { maTkhai } : {}) },
-              { signal: abortSignal, headers: baseHeaders, timeout: 7000, responseType: 'arraybuffer' }
-            ), abortSignal);
-            const payload = this.extractPayloadContent(response?.data, variantId);
-            if (payload) return payload;
-          } catch (e1: any) {
-            lastTdtError = e1;
-            this.stopDownloadFallbackIfNeeded(e1, `Lỗi khi tải hồ sơ TDT ID: ${primaryId}`);
-          }
-
-          if (abortSignal?.aborted) break outer;
-
-          // CHIẾN LƯỢC TDT 2: JSON { idTKhai: <biến thể ID> }
-          try {
-            const response2 = await this.diagRequest(attemptContext, 'TDT-idTKhai', tldUrl, () => this.session.client.post(
-              tldUrl,
-              { idTKhai: variantId, ...(maTkhai ? { maTkhai } : {}) },
-              { signal: abortSignal, headers: baseHeaders, timeout: 5000, responseType: 'arraybuffer' }
-            ), abortSignal);
-            const payload2 = this.extractPayloadContent(response2?.data, variantId);
-            if (payload2) return payload2;
-          } catch (e2: any) {
-            lastTdtError = e2;
-            this.stopDownloadFallbackIfNeeded(e2, `Lỗi khi tải hồ sơ TDT ID: ${primaryId}`);
-          }
-        }
-      }
-
-      if (lastTdtError) {
-        throw this.handleAxiosError(lastTdtError, `Lỗi khi tải hồ sơ TDT ID: ${primaryId}`);
-      }
-      throw new Error(`Nội dung file Base64 không tồn tại (downloadhoso-tdt) cho ID: ${primaryId}`);
-    } catch (err: any) {
-      if (abortSignal?.aborted) {
-        const cancelErr = new Error('Tác vụ tải đã bị dừng bởi người dùng');
-        (cancelErr as any).code = 'CANCELLED';
-        throw cancelErr;
-      }
-      throw this.handleAxiosError(err, `Lỗi khi tải hồ sơ TDT ID: ${primaryId}`);
-    }
-  }
-
-  /**
-   * Nhánh Hồ Sơ Thường: POST /tthc/tchs/downloadhoso { maHoSo }
-   * Tự động fallback qua các chiến lược payload khác nhau nếu cần.
-   */
-  private async downloadHoSoStandard(
-    idVariants: string[],
-    maTkhai?: string,
-    abortSignal?: AbortSignal,
-    attemptContext: DownloadAttemptContext = { attempts: [], maxNetworkAttempts: 8 }
-  ): Promise<DownloadResponsePayload> {
-    const primaryId = idVariants[0] || '';
-
-    try {
-      const activeToken = await this.resolveXsrfToken();
-
-      const baseHeaders: Record<string, string> = {
-        'Origin': 'https://dichvucong.gdt.gov.vn',
-        'Referer': PORTAL_CONFIG.TCHS_URL,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'X-Requested-With': 'XMLHttpRequest'
-      };
-
-      if (activeToken) {
-        baseHeaders['X-XSRF-TOKEN'] = activeToken;
-        baseHeaders['X-CSRF-TOKEN'] = activeToken;
-      }
-
-      let lastError: any = null;
-      let workingIdVariants = [...idVariants];
-      let preloadedDetailResponse: any = null;
-      let shortIdValidated = false;
-
-      // Mở trang chi tiết trước để lấy mã tham chiếu dài 000.xxx... hoặc link
-      // file thật từ API tài liệu đính kèm (/tthc/tchs/data-tai-lieu-dkem);
-      // đây là luồng chính xác nhất mà Cổng DVC sử dụng.
-      if (Boolean(primaryId)) {
-        const detailUrl = `${PORTAL_CONFIG.DETAIL_FILE_URL}/${encodeURIComponent(primaryId)}?loai=`;
-        try {
-          await new Promise(r => setTimeout(r, 750));
-          preloadedDetailResponse = await this.diagRequest(
-            attemptContext,
-            'STD-detail-preflight',
-            detailUrl,
-            () => this.session.client.get(detailUrl, {
-              signal: abortSignal,
-              headers: {
-                ...baseHeaders,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-              },
-              timeout: 8000
-            }),
-            abortSignal
-          );
-          const directPayload = this.extractPayloadContent(preloadedDetailResponse?.data, primaryId);
-          if (directPayload) return directPayload;
-
-          if (typeof preloadedDetailResponse?.data === 'string') {
-            const html = preloadedDetailResponse.data;
-            const freshCsrf = this.extractCsrfFromHtml(html);
-            if (freshCsrf) {
-              this.csrfToken = freshCsrf;
-              baseHeaders['X-XSRF-TOKEN'] = freshCsrf;
-              baseHeaders['X-CSRF-TOKEN'] = freshCsrf;
-            }
-            const discoveredIds: string[] = Array.from(
-              new Set<string>(
-                (html.match(/\b\d{3}\.\d{3}\.\d{2}\.[A-Z0-9]+-\d{6}-\d{6,14}\b/gi) || [])
-                  .map((value: string) => String(value))
-              )
-            );
-            workingIdVariants = Array.from(
-              new Set([...discoveredIds, ...workingIdVariants])
-            ).slice(0, 3);
-
-            try {
-              const attachmentPayload = await this.downloadFilingAttachment(
-                primaryId,
-                html,
-                detailUrl,
-                baseHeaders,
-                abortSignal,
-                attemptContext
-              );
-              if (attachmentPayload) return attachmentPayload;
-            } catch (attachmentError: any) {
-              lastError = attachmentError;
-              this.stopDownloadFallbackIfNeeded(
-                attachmentError,
-                `Lỗi khi tải tài liệu đính kèm hồ sơ ID: ${primaryId}`
-              );
-            }
-          }
-
-          // JavaScript production của portal gọi validateIdTkhai(idTKHai) rồi
-          // mới downloadHoSoCommon(). Hidden form /tthc/downloadhoso không
-          // thuộc đường click này và thực tế trả HTTP 500 "Download failed";
-          // gọi nó trước validate từng làm dừng toàn bộ hồ sơ hợp lệ.
-          await new Promise(r => setTimeout(r, 750));
-          const validateResponse = await this.diagRequest(
-            attemptContext,
-            'STD-validateIdTkhai',
-            PORTAL_CONFIG.VALIDATE_TKHAI_API,
-            () => this.session.client.get(PORTAL_CONFIG.VALIDATE_TKHAI_API, {
-              signal: abortSignal,
-              params: { idTKhai: primaryId },
-              headers: {
-                ...baseHeaders,
-                'Referer': detailUrl,
-                'Accept': 'text/plain, application/json, */*',
-                'X-Requested-With': 'XMLHttpRequest'
-              },
-              timeout: 7000
-            }),
-            abortSignal
-          );
-          const validateData = validateResponse?.data;
-          const validateText = Buffer.isBuffer(validateData)
-            ? validateData.toString('utf8').trim()
-            : typeof validateData === 'object' && validateData !== null
-              ? String(
-                  validateData.status ??
-                  validateData.code ??
-                  validateData.result ??
-                  validateData.data ??
-                  ''
-                ).trim()
-              : String(validateData ?? '').trim();
-          if (validateText !== '200') {
-            console.warn(`[TaxPortalClient] validateIdTkhai trả về "${validateText}" cho ID ${primaryId}, tiếp tục thử các chiến lược tải file.`);
-          } else {
-            shortIdValidated = true;
-          }
-        } catch (detailPreflightError: any) {
-          lastError = detailPreflightError;
-          this.stopDownloadFallbackIfNeeded(
-            detailPreflightError,
-            `Lỗi khi mở chi tiết hồ sơ ID: ${primaryId}`
-          );
-        }
-      }
-
-      // Chiến lược 1+2: JSON { maHoSo } / { idTKhai } với TẤT CẢ biến thể ID
-      for (const variantId of workingIdVariants) {
-        if (abortSignal?.aborted) break;
-
-        const detailReferer = `${PORTAL_CONFIG.DETAIL_FILE_URL}/${variantId}?loai=`;
-        const reqHeaders = {
-          ...baseHeaders,
-          'Referer': detailReferer,
-          'Content-Type': 'application/json;charset=UTF-8'
-        };
-
-        // Giãn cách nhẹ giữa các request
-        await new Promise(r => setTimeout(r, 750));
-
-        // 1. Gửi payload { maHoSo: variantId } chuẩn theo Cổng Dịch vụ công
-        try {
-          const res1 = await this.diagRequest(attemptContext, 'STD-maHoSo', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
-            PORTAL_CONFIG.DOWNLOAD_API,
-            { maHoSo: variantId },
-            {
-              signal: abortSignal,
-              timeout: 8000,
-              responseType: 'arraybuffer',
-              headers: reqHeaders
-            }
-          ), abortSignal);
-          const payload1 = this.extractPayloadContent(res1?.data, variantId);
-          if (payload1) return payload1;
-        } catch (err1: any) {
-          lastError = err1;
-          this.stopDownloadFallbackIfNeeded(err1, `Lỗi khi tải hồ sơ ID: ${primaryId}`);
-          // Sau detail + validate, portal chính thức chỉ gửi đúng một JSON
-          // {maHoSo}. Nếu request đó vẫn bị từ chối thì dừng hồ sơ này; không
-          // bắn tiếp idTKhai/maTkhai để request thứ tư chạm 429.
-          if (shortIdValidated && this.isRejectedDownloadVariant(err1)) {
-            throw this.handleAxiosError(err1, `Lỗi khi tải hồ sơ ID: ${primaryId}`);
-          }
-        }
-
-        if (abortSignal?.aborted) break;
-
-        // 2. Gửi payload { idTKhai: variantId } nếu backend dùng binding idTKhai
-        try {
-          const res2 = await this.diagRequest(attemptContext, 'STD-idTKhai', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
-            PORTAL_CONFIG.DOWNLOAD_API,
-            { idTKhai: variantId },
-            {
-              signal: abortSignal,
-              timeout: 7000,
-              responseType: 'arraybuffer',
-              headers: reqHeaders
-            }
-          ), abortSignal);
-          const payload2 = this.extractPayloadContent(res2?.data, variantId);
-          if (payload2) return payload2;
-        } catch (err2: any) {
-          lastError = err2;
-          this.stopDownloadFallbackIfNeeded(err2, `Lỗi khi tải hồ sơ ID: ${primaryId}`);
-        }
-
-        // 2b. Thử gửi kèm maTkhai nếu có (để tương thích với một số tờ khai đặc biệt)
-        if (maTkhai && maTkhai !== variantId) {
-          if (abortSignal?.aborted) break;
-          try {
-            const res2b = await this.diagRequest(attemptContext, 'STD-maHoSo-maTkhai', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
-              PORTAL_CONFIG.DOWNLOAD_API,
-              { maHoSo: variantId, maTkhai },
-              {
-                signal: abortSignal,
-                timeout: 7000,
-                responseType: 'arraybuffer',
-                headers: reqHeaders
-              }
-            ), abortSignal);
-            const payload2b = this.extractPayloadContent(res2b?.data, variantId);
-            if (payload2b) return payload2b;
-          } catch (err2b: any) {
-            lastError = err2b;
-            this.stopDownloadFallbackIfNeeded(err2b, `Lỗi khi tải hồ sơ ID: ${primaryId}`);
-          }
-        }
-      }
-
-      // CHIẾN LƯỢC 3: Form-urlencoded với maHoSo và _csrf nếu JSON bị 403/415
-      if (!abortSignal?.aborted) {
-        try {
-          const formParams = new URLSearchParams();
-          formParams.append('maHoSo', primaryId);
-          if (maTkhai) formParams.append('maTkhai', maTkhai);
-
-          const res3 = await this.diagRequest(attemptContext, 'STD-form', PORTAL_CONFIG.DOWNLOAD_API, () => this.session.client.post(
-            PORTAL_CONFIG.DOWNLOAD_API,
-            formParams.toString(),
-            {
-              signal: abortSignal,
-              headers: {
-                ...baseHeaders,
-                'Referer': `${PORTAL_CONFIG.DETAIL_FILE_URL}/${primaryId}?loai=`,
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-              },
-              timeout: 8000,
-              responseType: 'arraybuffer'
-            }
-          ), abortSignal);
-          const payload3 = this.extractPayloadContent(res3?.data, primaryId);
-          if (payload3) return payload3;
-        } catch (err3: any) {
-          lastError = err3;
-          this.stopDownloadFallbackIfNeeded(err3, `Lỗi khi tải hồ sơ ID: ${primaryId}`);
-        }
-      }
-
-      // CHIẾN LƯỢC 4: GET chi tiết hồ sơ trực tiếp từ Cổng Thuế & bóc tách
-      if (!abortSignal?.aborted) {
-        try {
-          const detailUrl = `${PORTAL_CONFIG.DETAIL_FILE_URL}/${primaryId}?loai=`;
-          const detailRes = preloadedDetailResponse || await this.diagRequest(
-            attemptContext,
-            'STD-detail',
-            detailUrl,
-            () => this.session.client.get(
-              detailUrl,
-              {
-                signal: abortSignal,
-                headers: {
-                  ...baseHeaders,
-                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-                },
-                timeout: 8000
-              }
-            ),
-            abortSignal
-          );
-          const payload4 = this.extractPayloadContent(detailRes?.data, primaryId);
-          if (payload4) return payload4;
-
-          if (detailRes.data && typeof detailRes.data === 'string') {
-            const html = detailRes.data;
-            const freshCsrf = this.extractCsrfFromHtml(html);
-            if (freshCsrf) {
-              this.csrfToken = freshCsrf;
-            }
-
-            // Quét các link tải trong trang chi tiết
-            const linkMatches = html.match(/(?:href|onclick)\s*=\s*["']([^"']*(?:download|taifile|tai\-file|dinhkem|attach|files\/)[^"']*)["']/gi) || [];
-            const seen = new Set<string>();
-            for (const raw of linkMatches) {
-              const mUrl = raw.match(/["']([^"']+)["']/);
-              if (!mUrl) continue;
-              const dlUrl = mUrl[1].replace(/&amp;/g, '&').trim();
-              if (!dlUrl || dlUrl === '#' || dlUrl.startsWith('javascript:') || dlUrl.includes('(') || dlUrl.includes(')') || dlUrl.includes(';') || seen.has(dlUrl)) continue;
-              seen.add(dlUrl);
-              const fullDlUrl = this.resolveTrustedPortalUrl(dlUrl, detailUrl);
-              if (!fullDlUrl) continue;
-              try {
-                await new Promise(r => setTimeout(r, 750));
-                const directFileRes = await this.diagRequest(attemptContext, 'STD-detail-file', fullDlUrl, () => this.session.client.get(fullDlUrl, {
-                  headers: {
-                    ...baseHeaders,
-                    'Referer': detailUrl,
-                    ...(this.csrfToken ? { 'X-XSRF-TOKEN': this.csrfToken, 'X-CSRF-TOKEN': this.csrfToken } : {})
-                  },
-                  timeout: 10000,
-                  responseType: 'arraybuffer'
-                }), abortSignal);
-                const payloadDirect = this.extractPayloadContent(Buffer.from(directFileRes.data), primaryId);
-                if (payloadDirect) return payloadDirect;
-              } catch (eLink: unknown) {
-                this.stopDownloadFallbackIfNeeded(eLink, `Lỗi khi tải file đính kèm hồ sơ ID: ${primaryId}`);
-              }
-            }
-          }
-        } catch (err4: any) {
-          lastError = err4;
-          this.stopDownloadFallbackIfNeeded(err4, `Lỗi khi tải chi tiết hồ sơ ID: ${primaryId}`);
-        }
-      }
-
-      if (lastError) {
-        throw this.handleAxiosError(lastError, `Lỗi khi tải hồ sơ ID: ${primaryId}`);
-      }
-      throw new Error(`Nội dung file Base64 không tồn tại trong phản hồi máy chủ cho ID: ${primaryId}`);
-    } catch (err: any) {
-      if (abortSignal?.aborted) {
-        const cancelErr = new Error('Tác vụ tải đã bị dừng bởi người dùng');
-        (cancelErr as any).code = 'CANCELLED';
-        throw cancelErr;
-      }
-      throw this.handleAxiosError(err, `Lỗi khi tải hồ sơ ID: ${primaryId}`);
-    }
-  }
 
   /**
    * Lấy dữ liệu xem nhanh hồ sơ trong bộ nhớ RAM (Không lưu xuống disk)
@@ -1981,7 +1624,9 @@ export class TaxPortalClient {
         isThueDienTu: filing.isThueDienTu,
         loaiTraCuu: filing.loaiTraCuu,
         maTkhai: filing.maTkhai,
-        altIds: filing.altIds
+        altIds: filing.altIds,
+        period: filing.period,
+        declarationCode: filing.declarationCode
       });
       zipBase64 = zipResult.content;
     } catch (downloadError: any) {
@@ -2029,7 +1674,9 @@ export class TaxPortalClient {
       err.code === 'DOWNLOAD_ACTION_NOT_FOUND' ||
       err.code === 'CSRF_CONTEXT_MISSING' ||
       err.code === 'DOWNLOAD_CONTRACT_CHANGED' ||
+      err.code === 'DOWNLOAD_EMPTY_PAYLOAD' ||
       err.code === 'DOWNLOAD_INVALID_RESPONSE' ||
+      err.code === 'DOWNLOAD_IDENTITY_MISMATCH' ||
       err.code === 'INVALID_FILING_ID'
     ) {
       return err;

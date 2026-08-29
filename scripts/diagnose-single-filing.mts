@@ -4,8 +4,8 @@ import { CaptchaSolver } from '../src/main/scanner/CaptchaSolver';
 import { PortalSession } from '../src/main/portal/PortalSession';
 import { TaxPortalClient } from '../src/main/portal/TaxPortalClient';
 
-const taxCode = '3801157216-ql';
-const password = 'Leoch@1234';
+const taxCode = process.env.TAXINSIGHT_TEST_TAX_CODE || '';
+const password = process.env.TAXINSIGHT_TEST_PASSWORD || '';
 
 async function main() {
   const session = new PortalSession();

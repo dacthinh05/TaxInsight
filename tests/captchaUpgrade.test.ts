@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CaptchaSolver } from '../src/main/scanner/CaptchaSolver';
 
 /**
@@ -204,5 +204,39 @@ describe('UPGRADE #4 — cổng an toàn auto-submit CAPTCHA', () => {
       reason: 'strong_consensus',
       candidates
     })).toBe(true);
+  });
+});
+describe('UPGRADE #5 — getCaptchaImage responseType arraybuffer & Data URL formatting', () => {
+  it('trả về chuỗi data:image/png;base64 hợp lệ khi nhận binary buffer', async () => {
+    const { PortalSession } = await import('../src/main/portal/PortalSession');
+    const { TaxPortalClient } = await import('../src/main/portal/TaxPortalClient');
+    const { globalPortalRequestScheduler } = await import('../src/main/portal/PortalRequestScheduler');
+    globalPortalRequestScheduler.reset();
+
+    const session = new PortalSession();
+    const client = new TaxPortalClient(session);
+
+    const mockPngBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+    session.client.get = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/getCaptcha')) {
+        return Promise.resolve({
+          status: 200,
+          data: mockPngBuffer,
+          headers: { 'content-type': 'image/png' }
+        });
+      }
+      return Promise.resolve({
+        status: 200,
+        data: '<html><head><meta name="_csrf" content="token"/></head><body>Login</body></html>',
+        headers: { 'content-type': 'text/html' }
+      });
+    });
+
+    const dataUrl = await client.getCaptchaImage('LOGIN');
+    expect(dataUrl).toBeDefined();
+    expect(dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+    const base64Data = dataUrl.replace('data:image/png;base64,', '');
+    expect(Buffer.from(base64Data, 'base64')).toEqual(mockPngBuffer);
+    expect(session.client.get).toHaveBeenCalledTimes(2);
   });
 });

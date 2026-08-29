@@ -188,16 +188,10 @@ export class AppUpdater {
    * Khởi động bộ đếm tự động kiểm tra bản cập nhật: check lần đầu sau delayMs
    * rồi lặp lại MỖI GIỜ (trước đây chỉ check đúng 1 lần duy nhất sau khi mở app)
    */
-  public startAutoCheckTimer(delayMs = 4000) {
+  public startAutoCheckTimer(_delayMs = 4000) {
     if (this.autoCheckTimer) clearTimeout(this.autoCheckTimer);
     if (this.autoCheckInterval) clearInterval(this.autoCheckInterval);
-
-    this.autoCheckTimer = setTimeout(() => {
-      this.checkForUpdates().catch(() => {});
-      this.autoCheckInterval = setInterval(() => {
-        this.checkForUpdates().catch(() => {});
-      }, 60 * 60 * 1000);
-    }, delayMs);
+    // Tự động kiểm tra đã tắt theo yêu cầu người dùng
   }
 
   private fetchLatestGithubRelease(): Promise<GithubLatestRelease> {

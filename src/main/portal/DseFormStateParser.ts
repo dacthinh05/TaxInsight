@@ -8,6 +8,8 @@ export interface DseFormState {
   errorPage?: string;
   nextEventName?: string;
   actionUrl?: string;
+  toOpName?: string;
+  hiddenFields?: Record<string, string>;
 }
 
 export class DseFormStateParser {
@@ -23,14 +25,16 @@ export class DseFormStateParser {
     if (!html || typeof html !== 'string') return result;
 
     const extractField = (name: string): string | undefined => {
-      // 1. Dạng <input ... name="dse_xxx" value="yyy" ...> hoặc đảo thứ tự
-      const regex1 = new RegExp(`name=["']${name}["'][^>]*?value=["']([^"']*)["']`, 'i');
-      const regex2 = new RegExp(`value=["']([^"']*)["'][^>]*?name=["']${name}["']`, 'i');
-      const m = html.match(regex1) || html.match(regex2);
-      if (m) return m[1];
+      // 1. Dạng <input ... name="dse_xxx" value="yyy" ...> hoặc đảo thứ tự (hỗ trợ cả có nháy và không nháy)
+      const regex1 = new RegExp(`name=["']?${name}["']?[^>]*?value=(?:["']([^"']*)["']|([^\\s>]+))`, 'i');
+      const regex2 = new RegExp(`value=(?:["']([^"']*)["']|([^\\s>]+))[^>]*?name=["']?${name}["']?`, 'i');
+      const m1 = html.match(regex1);
+      if (m1) return (m1[1] !== undefined ? m1[1] : m1[2]) ?? '';
+      const m2 = html.match(regex2);
+      if (m2) return (m2[1] !== undefined ? m2[1] : m2[2]) ?? '';
 
       // 2. Dạng gán trong JavaScript (ví dụ: goProcForm.dse_operationName.value = '...')
-      const regexJs = new RegExp(`(?:var\\s+|window\\.)?${name}\\s*=\\s*["']([^"']+)["']`, 'i');
+      const regexJs = new RegExp(`(?:var\\s+|window\\.|goProcForm\\.)?${name}\\s*(?:\\.value)?\\s*=\\s*["']([^"']+)["']`, 'i');
       const mJs = html.match(regexJs);
       if (mJs) return mJs[1];
 
@@ -55,6 +59,27 @@ export class DseFormStateParser {
     const actionMatch = html.match(/<form[^>]*?action=["']([^"']+)["']/i);
     if (actionMatch) {
       result.actionUrl = actionMatch[1];
+    }
+
+    result.toOpName = extractField('toOpName');
+
+    // Bóc tách toàn bộ hidden inputs
+    const hiddenFields: Record<string, string> = {};
+    const inputRe = /<input\b[^>]*>/gi;
+    let mInput: RegExpExecArray | null;
+    while ((mInput = inputRe.exec(html))) {
+      const tag = mInput[0];
+      const name = tag.match(/\bname=["']?([^"'\s>]+)["']?/i)?.[1];
+      if (!name) continue;
+      const type = tag.match(/\btype=["']?([^"'\s>]+)["']?/i)?.[1]?.toLowerCase();
+      if (type === 'hidden' || !type) {
+        const valMatch = tag.match(/\bvalue=(?:["']([^"']*)["']|([^"'\s>]+))/i);
+        const val = ((valMatch ? (valMatch[1] !== undefined ? valMatch[1] : valMatch[2]) : '') || '').replace(/&amp;/g, '&');
+        hiddenFields[name] = val;
+      }
+    }
+    if (Object.keys(hiddenFields).length > 0) {
+      result.hiddenFields = hiddenFields;
     }
 
     return result;

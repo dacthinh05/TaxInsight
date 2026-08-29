@@ -11,7 +11,6 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
     const client = new TaxPortalClient(session);
 
     client.checkSession = vi.fn().mockResolvedValue(options.isAlive);
-    client.validateIdTkhai = vi.fn().mockResolvedValue(true);
     client.downloadHoSo = vi.fn().mockImplementation(async (id: string) => {
       if (options.failOnIds?.includes(id)) {
         const err = new Error('Session Expired');

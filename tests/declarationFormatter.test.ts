@@ -53,6 +53,35 @@ describe('Declaration Formatter Presentation Layer', () => {
     });
     expect(idItem.formattedValue).toBe('000.701.18.G12-260314-2711000036943');
   });
+  it('3b. Không format nhầm Kỳ tính thuế, Mã thủ tục hoặc Ngày nộp thành tiền tệ', () => {
+    const period = formatDeclarationValue({
+      label: 'Kỳ tính thuế',
+      value: '06/2026'
+    });
+    expect(period.type).toBe('text');
+    expect(period.formattedValue).toBe('06/2026');
+
+    const filingId = formatDeclarationValue({
+      label: 'Mã số hồ sơ (ID)',
+      value: 'G12.18-260720-00116072'
+    });
+    expect(filingId.type).toBe('text');
+    expect(filingId.formattedValue).toBe('G12.18-260720-00116072');
+
+    const procCode = formatDeclarationValue({
+      label: 'Mã thủ tục hành chính',
+      value: '1.007014'
+    });
+    expect(procCode.type).toBe('text');
+    expect(procCode.formattedValue).toBe('1.007014');
+
+    const submitDate = formatDeclarationValue({
+      label: 'Thời điểm nộp',
+      value: '20/07/2026 10:35'
+    });
+    expect(submitDate.type).toBe('text');
+    expect(submitDate.formattedValue).toBe('20/07/2026 10:35');
+  });
 
   it('4. Correctly infers groups for VAT and PIT indicators', () => {
     const pit1 = formatDeclarationValue({

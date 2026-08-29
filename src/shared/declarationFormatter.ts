@@ -164,33 +164,60 @@ function isPersonnelCode(code?: string): boolean {
 }
 
 function inferMetricType(code: string, label: string, raw: string): 'money' | 'quantity' | 'percentage' | 'integer' | 'text' {
-  const l = label.toLowerCase();
-  const c = code.toLowerCase();
+  const l = label.toLowerCase().trim();
+  const c = code.toLowerCase().replace(/[\[\]]/g, '').trim();
 
+  // 1. Loại trừ các trường metadata / text phổ biến trước
+  if (
+    l.includes('kỳ') ||
+    l.includes('mã') ||
+    l.includes('id') ||
+    l.includes('thời điểm') ||
+    l.includes('ngày') ||
+    l.includes('loại tờ khai') ||
+    l.includes('trạng thái') ||
+    l.includes('tên tờ khai') ||
+    l.includes('hồ sơ') ||
+    l.includes('tiêu đề') ||
+    l.includes('cơ quan') ||
+    l.includes('địa chỉ')
+  ) {
+    return 'text';
+  }
+
+  // 2. Nhân sự & số lượng
   if (l.includes('người') || l.includes('lao động') || isPersonnelCode(code)) {
     return 'quantity';
   }
+
+  // 3. Tỷ lệ phần trăm
   if (l.includes('tỷ lệ') || l.includes('phần trăm') || raw.includes('%')) {
     return 'percentage';
   }
+
+  // 4. Chỉ tiêu tiền tệ tài chính
+  const isMoneyCode = ['22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '40', '41', '42', '43', 'a1', 'b1', 'b14', 'c4', 'g'].includes(c);
   if (
-    l.includes('thuế') ||
+    isMoneyCode ||
     l.includes('doanh thu') ||
     l.includes('thu nhập') ||
-    l.includes('tiền') ||
-    l.includes('khấu trừ') ||
-    l.includes('giá trị') ||
-    l.includes('lợi nhuận') ||
-    l.includes('chi phí') ||
-    c.includes('27') ||
-    c.includes('31') ||
-    c.includes('34') ||
-    c.includes('35') ||
-    c.includes('40') ||
-    c.includes('43')
+    l.includes('số tiền') ||
+    l.includes('thuế phải nộp') ||
+    l.includes('thuế còn phải nộp') ||
+    l.includes('thuế khấu trừ') ||
+    l.includes('thuế được khấu trừ') ||
+    l.includes('thuế phát sinh') ||
+    l.includes('thuế mua vào') ||
+    l.includes('thuế bán ra') ||
+    l.includes('thuế tncn') ||
+    l.includes('thuế tndn') ||
+    l.includes('thuế gtgt') ||
+    l.includes('giá trị hàng hóa') ||
+    l.includes('lợi nhuận')
   ) {
     return 'money';
   }
+
   if (/^-?\d+$/.test(raw.trim())) {
     return 'integer';
   }

@@ -9,8 +9,8 @@ import { PortalSession } from '../src/main/portal/PortalSession';
 import { TaxPortalClient } from '../src/main/portal/TaxPortalClient';
 import { TaxFiling } from '../src/shared/types';
 
-const taxCode = '3801157216-ql';
-const password = 'Leoch@1234';
+const taxCode = process.env.TAXINSIGHT_TEST_TAX_CODE || '';
+const password = process.env.TAXINSIGHT_TEST_PASSWORD || '';
 
 const session = new PortalSession();
 const client = new TaxPortalClient(session);

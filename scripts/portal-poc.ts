@@ -79,9 +79,8 @@ async function runLivePortalProbe() {
       console.log(`- Kỳ: ${sample.period}`);
       console.log(`- Lần nộp: ${sample.filingType} ${sample.supplementalNo ? `(BS ${sample.supplementalNo})` : ''}`);
 
-      // Thử nghiệm Validate + Download
-      console.log(`\n[6/7] Kiểm tra Validate ID và Tải hồ sơ mẫu...`);
-      await client.validateIdTkhai(sample.id);
+      // Thử nghiệm Download (downloadHoSo tự chạy detail -> validate -> POST inline)
+      console.log(`\n[6/7] Kiểm tra Tải hồ sơ mẫu (flow inline validate + POST downloadhoso)...`);
       const downloadPayload = await client.downloadHoSo(sample.id);
 
       console.log(`✓ Tải thành công file: ${downloadPayload.fileName} (${downloadPayload.fileType})`);
@@ -99,7 +98,7 @@ async function runLivePortalProbe() {
     console.log(`Year-range search: PASS`);
     console.log(`Session mechanism: Cookie-based (JSESSIONID / portal cookies)`);
     console.log(`Search format: ${yearSearch.rawResponse?.startsWith('{') ? 'JSON' : 'HTML Table'}`);
-    console.log(`Download flow: validateIdTkhai -> downloadhoso (Base64 ZIP) -> PASS`);
+    console.log(`Download flow: downloadHoSo (detail -> validate -> downloadhoso) (Base64 ZIP) -> PASS`);
     console.log(`Recommended architecture: Electron Shared Session + Two-Tier Manifest + Pagination-First`);
     console.log('=====================================================\n');
   } catch (err: any) {

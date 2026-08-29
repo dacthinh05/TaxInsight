@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { VatXmlParser } from '../src/main/scanner/VatXmlParser';
 import { PitXmlParser } from '../src/main/scanner/PitXmlParser';
 import { FilingPreviewParser } from '../src/main/scanner/FilingPreviewParser';
@@ -275,7 +275,7 @@ describe('VAT & PIT Audit & Download Bugfixes Regression Suite', () => {
   // ─── 4. PHẦN BẢO VỆ TẢI HỒ SƠ: GLOBAL RATE LIMIT & ANTI-AVALANCHE ─────────
   describe('Phần Bảo Vệ Tải Hồ Sơ: Global Rate Limit Cooloff & Exponential Backoff', () => {
     it('TaxPortalClient.triggerGlobalRateLimit đặt thời gian cooloff và waitForGlobalRateLimit hoãn luồng gọi', async () => {
-      TaxPortalClient.triggerGlobalRateLimit(50);
+      TaxPortalClient.triggerGlobalRateLimit(80);
       const t0 = Date.now();
       await TaxPortalClient.waitForGlobalRateLimit();
       const elapsed = Date.now() - t0;
@@ -289,6 +289,30 @@ describe('VAT & PIT Audit & Download Bugfixes Regression Suite', () => {
       await TaxPortalClient.waitForGlobalRateLimit();
       const elapsed = Date.now() - t0;
       expect(elapsed).toBeLessThan(50);
+    });
+    it('getCaptchaImage kích hoạt global rate limit cooloff khi nhận HTTP 429 từ endpoint CAPTCHA và fail-fast', async () => {
+      const session = new PortalSession();
+      const client = new TaxPortalClient(session);
+      const err429: any = new Error('Request failed with status code 429');
+      err429.response = { status: 429, data: 'Too Many Requests' };
+
+      session.client.get = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/login') && !url.includes('/getCaptcha')) {
+          return Promise.resolve({ status: 200, data: '<html><head><meta name="_csrf" content="token"/></head><body>Login</body></html>' });
+        }
+        if (url.includes('/getCaptcha')) {
+          return Promise.reject(err429);
+        }
+        return Promise.resolve({ status: 200, data: '' });
+      });
+
+      const triggerSpy = vi.spyOn(TaxPortalClient, 'triggerGlobalRateLimit');
+      await expect(client.getCaptchaImage('SEARCH')).rejects.toThrow();
+      expect(triggerSpy).toHaveBeenCalledWith(3000);
+      expect(session.client.get).toHaveBeenCalledTimes(2);
+
+      const { globalPortalRequestScheduler } = await import('../src/main/portal/PortalRequestScheduler');
+      globalPortalRequestScheduler.reset();
     });
   });
 });

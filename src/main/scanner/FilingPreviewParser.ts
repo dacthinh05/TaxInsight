@@ -184,16 +184,18 @@ export class FilingPreviewParser {
   }
 
   private static generateDefaultMetrics(filing: TaxFiling, metrics: FilingMetricItem[]) {
-    metrics.push({ label: 'Mã số hồ sơ (ID)', value: filing.id });
-    metrics.push({ label: 'Tên tờ khai / Hồ sơ', value: filing.title });
-    if (filing.procedureCode) metrics.push({ label: 'Mã thủ tục hành chính', value: filing.procedureCode });
-    if (filing.period) metrics.push({ label: 'Kỳ tính thuế', value: filing.period });
-    if (filing.submittedAt) metrics.push({ label: 'Thời điểm nộp', value: filing.submittedAt });
+    metrics.push({ label: 'Mã số hồ sơ (ID)', value: filing.id, type: 'text', unit: '' });
+    metrics.push({ label: 'Tên tờ khai / Hồ sơ', value: filing.title, type: 'text', unit: '' });
+    if (filing.procedureCode) metrics.push({ label: 'Mã thủ tục hành chính', value: filing.procedureCode, type: 'text', unit: '' });
+    if (filing.period) metrics.push({ label: 'Kỳ tính thuế', value: filing.period, type: 'text', unit: '' });
+    if (filing.submittedAt) metrics.push({ label: 'Thời điểm nộp', value: filing.submittedAt, type: 'text', unit: '' });
     metrics.push({
       label: 'Loại tờ khai',
-      value: filing.filingType === 'SUPPLEMENTAL' ? `Bổ sung lần ${filing.supplementalNo || 1}` : 'Chính thức (Lần đầu)'
+      value: filing.filingType === 'SUPPLEMENTAL' ? `Bổ sung lần ${filing.supplementalNo || 1}` : 'Chính thức (Lần đầu)',
+      type: 'text',
+      unit: ''
     });
-    metrics.push({ label: 'Trạng thái xử lý', value: filing.status || 'Đã tiếp nhận' });
+    metrics.push({ label: 'Trạng thái xử lý', value: filing.status || 'Đã tiếp nhận', type: 'text', unit: '' });
   }
 
   private static extractTagValue(xml: string, tags: string[]): string | undefined {

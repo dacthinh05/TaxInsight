@@ -1,6 +1,7 @@
 import { app, BrowserWindow, nativeImage } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { DownloadManager } from './downloader/DownloadManager';
 import { LegacyFilingDownloader } from './downloader/LegacyFilingDownloader';
 import { FileOrganizer } from './files/FileOrganizer';
@@ -18,6 +19,7 @@ import { TaxPortalClient } from './portal/TaxPortalClient';
 import { TaxScanEngine } from './scanner/TaxScanEngine';
 import { LegacyFilingLookupWorkflow } from './scanner/LegacyFilingLookupWorkflow';
 import { AppUpdater } from './updater/AppUpdater';
+import { isAllowedExternalUrl, isAllowedInternalUrl } from './security/navigationGuard';
 
 // Đảm bảo tên ứng dụng và thư mục userData luôn thống nhất trên mọi môi trường
 app.setName('TaxInsight');
@@ -83,7 +85,8 @@ function getOrCreateServices(initialDownloadDir: string): AppServices {
 }
 
 function createWindow() {
-  const initialDownloadDir = SettingsStore.getDownloadDir();
+  try {
+    const initialDownloadDir = SettingsStore.getDownloadDir();
   const {
     session, client, paymentSlipClient, legacyFilingClient, captchaManager, fileOrganizer,
     scanEngine, downloadManager, legacyFilingDownloader, legacyFilingWorkflow,
@@ -192,12 +195,6 @@ function createWindow() {
 
   const updater = AppUpdater.getInstance();
   updater.setMainWindow(mainWindow);
-  if (!updaterStarted) {
-    // Kiểm tra ngay khi ứng dụng mở; AppUpdater có single-flight nên lời gọi
-    // đồng thời từ renderer không tạo hai request kiểm tra release.
-    updater.startAutoCheckTimer(0);
-    updaterStarted = true;
-  }
 
   const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 
@@ -222,6 +219,12 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+  } catch (err: any) {
+    try {
+      fs.appendFileSync(path.join(process.cwd(), 'startup_error.log'), `[CREATE_WINDOW_ERROR] ${err?.stack || err}\n`);
+    } catch {}
+    console.error('[Create Window Error]:', err);
+  }
 }
 
 process.on('uncaughtException', err => {
@@ -236,46 +239,6 @@ process.on('unhandledRejection', reason => {
 // Áp dụng cho MỌI webContents (cửa sổ chính, auth popup, window in PDF ẩn...)
 // để renderer bị chiếm (CDN hỏng, update poisoned) không điều hướng app sang
 // nội dung tấn công và không spawn cửa sổ kế thừa webPreferences.
-const ALLOWED_DEV_SERVER_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
-const ALLOWED_EXTERNAL_HOSTS = new Set([
-  'github.com',
-  'www.github.com',
-  'img.vietqr.io',
-  'dichvucong.gdt.gov.vn',
-  'thuedientu.gdt.gov.vn'
-]);
-
-function isAllowedExternalUrl(rawUrl: string): boolean {
-  try {
-    const url = new URL(rawUrl);
-    return url.protocol === 'https:' && (
-      ALLOWED_EXTERNAL_HOSTS.has(url.hostname.toLowerCase()) ||
-      url.hostname.toLowerCase().endsWith('.gdt.gov.vn')
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isAllowedInternalUrl(rawUrl: string): boolean {
-  try {
-    const u = new URL(rawUrl);
-    if (u.protocol === 'file:') {
-      // Chỉ cho phép file trong thư mục dist của app
-      const resolved = path.resolve(decodeURIComponent(u.hostname ? `//${u.hostname}${u.pathname}` : u.pathname));
-      const distDir = path.resolve(__dirname, '../../dist');
-      return resolved.startsWith(distDir + path.sep) || resolved === distDir;
-    }
-    if (u.protocol === 'http:' || u.protocol === 'https:') {
-      // Dev server + host portal thuế (auth popup điều hướng trong dichvucong.gdt.gov.vn)
-      if (ALLOWED_DEV_SERVER_RE.test(rawUrl)) return true;
-      return u.hostname === 'dichvucong.gdt.gov.vn' || u.hostname.endsWith('.gdt.gov.vn');
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
 
 app.on('web-contents-created', (_event, contents) => {
   // Ứng dụng không cần camera/micro/vị trí/thông báo. Từ chối mặc định để nội

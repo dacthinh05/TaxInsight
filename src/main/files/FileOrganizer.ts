@@ -63,6 +63,16 @@ export class FileOrganizer {
     const destDir = this.getDestinationDir(taxCode, filing, year);
     const result = ZipExtractor.extractBase64Zip(base64Content, destDir, filing, taxCode);
 
+    // Xác nhận tệp thực sự tồn tại trên đĩa và có kích thước > 0 trước khi ghi manifest
+    if (!result.savedPaths || result.savedPaths.length === 0) {
+      throw new Error('Không có tệp nào được lưu sau giải nén');
+    }
+    for (const p of result.savedPaths) {
+      if (!fs.existsSync(p) || fs.statSync(p).size === 0) {
+        throw new Error(`Tệp "${path.basename(p)}" không tồn tại hoặc có kích thước 0 byte`);
+      }
+    }
+
     // Ghi nhận vào Manifest
     const manifest = this.getManifest(taxCode, year);
     manifest.recordDownload({

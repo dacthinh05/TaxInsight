@@ -355,9 +355,15 @@ export class LegacyFilingClient {
           if (scriptOp) {
             fields['dse_operationName'] = scriptOp[1];
           }
+          // Tìm sự kiện điều hướng tra cứu tờ khai từ link menu hoặc script
+          const menuMatch = currentHtml.match(/goProc\s*\(\s*['"](traCuuToKhaiProc|corpTKhaiProc)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/i) ||
+            currentHtml.match(/dse_operationName=(traCuuToKhaiProc|corpTKhaiProc)[^&"'\s]*&dse_nextEventName=([^&"'\s]+)/i);
           if (observedGoProc) {
             fields['dse_operationName'] = observedGoProc[1];
             fields['dse_nextEventName'] = observedGoProc[2];
+          } else if (menuMatch) {
+            fields['dse_operationName'] = menuMatch[1];
+            fields['dse_nextEventName'] = menuMatch[2];
           } else if (op === 'corpIndexProc' || op === 'corporateHomeProc' || op === 'corpJumpProc') {
             fields['dse_operationName'] = 'traCuuToKhaiProc';
             fields['dse_nextEventName'] = 'viewTraCuuTkhai';

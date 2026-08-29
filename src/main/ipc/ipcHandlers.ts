@@ -954,11 +954,8 @@ export function setupIpcHandlers(
                     f.method = 'POST';
                     f.action = '/tthc/sso/redirect-to-service?module=330410';
                     f.target = '_self';
-                    const csrf =
-                      (document.querySelector('input[name="_csrf"]') as HTMLInputElement | null)?.value ||
-                      (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement | null)?.content ||
-                      (document.querySelector('meta[name="_csrf"]') as HTMLMetaElement | null)?.content ||
-                      '';
+                    const csrfEl = document.querySelector('input[name="_csrf"]') || document.querySelector('meta[name="csrf-token"]') || document.querySelector('meta[name="_csrf"]');
+                    const csrf = (csrfEl && (csrfEl.value || csrfEl.content)) || '';
                     if (csrf) {
                       const csrfInput = document.createElement('input');
                       csrfInput.type = 'hidden';
@@ -1011,8 +1008,8 @@ export function setupIpcHandlers(
                     if (!window._taxinsight_search_triggered) {
                       window._taxinsight_search_triggered = true;
                       
-                      const fromDateInput = document.querySelector('input[name="ngay_lap_tu_ngay"], #ngay_lap_tu_ngay') as HTMLInputElement;
-                      const toDateInput = document.querySelector('input[name="ngay_lap_den_ngay"], #ngay_lap_den_ngay') as HTMLInputElement;
+                      const fromDateInput = document.querySelector('input[name="ngay_lap_tu_ngay"], #ngay_lap_tu_ngay');
+                      const toDateInput = document.querySelector('input[name="ngay_lap_den_ngay"], #ngay_lap_den_ngay');
                       if (fromDateInput && !fromDateInput.value) {
                         const currentYear = new Date().getFullYear();
                         fromDateInput.value = '01/01/' + (currentYear - 1);
@@ -1069,7 +1066,7 @@ export function setupIpcHandlers(
                   }
                 }
 
-                let sessVal = sessInput ? (sessInput as HTMLInputElement).value : '';
+                let sessVal = sessInput ? (sessInput.value || '') : '';
                 if (!sessVal) {
                   const match = document.documentElement.innerHTML.match(/dse_sessionId\\s*=\\s*["']([^"']+)["']/i) ||
                                 document.documentElement.innerHTML.match(/name=["']dse_sessionId["']\\s+value=["']([^"']+)["']/i);
@@ -1078,12 +1075,12 @@ export function setupIpcHandlers(
 
                 return {
                   sessionId: sessVal || '',
-                  applicationId: appInput ? (appInput as HTMLInputElement).value : '',
-                  pageId: pageInput ? (pageInput as HTMLInputElement).value : '',
-                  operationName: opInput ? (opInput as HTMLInputElement).value : '',
-                  processorState: stateInput ? (stateInput as HTMLInputElement).value : '',
-                  processorId: procInput ? (procInput as HTMLInputElement).value : '',
-                  errorPage: errorInput ? (errorInput as HTMLInputElement).value : '',
+                  applicationId: appInput ? (appInput.value || '') : '',
+                  pageId: pageInput ? (pageInput.value || '') : '',
+                  operationName: opInput ? (opInput.value || '') : '',
+                  processorState: stateInput ? (stateInput.value || '') : '',
+                  processorId: procInput ? (procInput.value || '') : '',
+                  errorPage: errorInput ? (errorInput.value || '') : '',
                   currentUrl,
                   isGntFormPresent: pageBody.includes('Tra cứu giấy nộp tiền'),
                   tableHtml,

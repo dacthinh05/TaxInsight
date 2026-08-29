@@ -344,17 +344,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           )}
         </div>
 
-        {hasNewUpdate && onCheckUpdate && (
-          <button
-            type="button"
-            onClick={onCheckUpdate}
-            className="h-8 px-2.5 rounded-md text-xs font-medium text-emerald-300 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
-            title="Đã có phiên bản mới! Nhấp để nâng cấp"
-          >
-            <ArrowUpCircle className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="inline">Có bản mới</span>
-          </button>
-        )}
 
         {onOpenInspector && (
           <button

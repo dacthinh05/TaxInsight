@@ -174,7 +174,9 @@ export class ZipExtractor {
       if (!resolved.isExisting) {
         fs.writeFileSync(resolved.targetPath, zipBuffer);
       }
-
+      if (fs.statSync(resolved.targetPath).size === 0) {
+        throw new Error(`Tệp XML đã lưu "${finalFileName}" có kích thước 0 byte`);
+      }
       return {
         isExisting: resolved.isExisting,
         savedPaths: [resolved.targetPath],
@@ -195,6 +197,9 @@ export class ZipExtractor {
       const resolved = this.resolveCollisionSafePath(destDir, finalFileName, zipBuffer);
       if (!resolved.isExisting) {
         fs.writeFileSync(resolved.targetPath, zipBuffer);
+      }
+      if (fs.statSync(resolved.targetPath).size === 0) {
+        throw new Error(`Tệp PDF đã lưu "${finalFileName}" có kích thước 0 byte`);
       }
 
       return {
@@ -220,6 +225,9 @@ export class ZipExtractor {
         const resolved = this.resolveCollisionSafePath(destDir, finalFileName, zipBuffer);
         if (!resolved.isExisting) {
           fs.writeFileSync(resolved.targetPath, zipBuffer);
+        }
+        if (fs.statSync(resolved.targetPath).size === 0) {
+          throw new Error(`Tệp XML đã lưu "${finalFileName}" có kích thước 0 byte (AdmZip fallback)`);
         }
         return {
           isExisting: resolved.isExisting,
@@ -260,6 +268,10 @@ export class ZipExtractor {
       // 🛡️ CHỐNG ZIP BOMB: giới hạn kích thước SAU GIẢI NÉN (DEFLATE nén được >1000:1,
       // ZIP 100MB hợp lệ về mặt nén có thể bung ra hàng chục GB và làm OOM main process)
       const uncompressedSize = entry.header.size || 0;
+      console.info(`[ZipExtractor] Entry diagnostic ${JSON.stringify({
+        name: String(entryName).replace(/[A-Za-z0-9]{8,}/g, value => `${value.slice(0, 3)}***${value.slice(-2)}`),
+        uncompressedSize
+      })}`);
       if (uncompressedSize > ZipExtractor.MAX_UNCOMPRESSED_ENTRY) {
         throw new Error(`Tệp "${entryName}" sau giải nén vượt giới hạn an toàn 50MB`);
       }
@@ -292,16 +304,26 @@ export class ZipExtractor {
       usedTargetNames.add(finalFileName.toLowerCase());
 
       const entryData = entry.getData();
+      if (entryData.length === 0) {
+        throw new Error(`Tệp "${entryName}" trong ZIP có kích thước 0 byte`);
+      }
       const resolved = this.resolveCollisionSafePath(destDir, finalFileName, entryData);
       if (!resolved.isExisting) {
         allIdentical = false;
         fs.writeFileSync(resolved.targetPath, entryData);
+      }
+      if (fs.statSync(resolved.targetPath).size === 0) {
+        throw new Error(`Tệp đã lưu "${path.basename(resolved.targetPath)}" có kích thước 0 byte`);
       }
       savedPaths.push(resolved.targetPath);
       fileHashes[resolved.targetPath] = resolved.hash;
 
       if (ext === '.xml') xmlPath = resolved.targetPath;
       if (ext === '.pdf') pdfPath = resolved.targetPath;
+    }
+
+    if (savedPaths.length === 0) {
+      throw new Error('Tệp ZIP không chứa bất kỳ tệp dữ liệu hợp lệ nào');
     }
 
     return {

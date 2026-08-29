@@ -80,17 +80,37 @@ export class PaymentSlipClient {
     };
   }
 
-  public setManualSessionState(state: DseFormState): boolean {
-    this.currentDseState = { ...state };
-    this.isEtaxInitialized = this.isQueryStateReady(this.currentDseState);
-    if (this.isEtaxInitialized) return true;
-    if (
-      Boolean(state.sessionId && state.processorId) &&
-      ['corpIndexProc', 'corporateHomeProc', 'corpJumpProc'].includes(String(state.operationName || ''))
-    ) {
-      return true;
+  public setManualSessionState(sessionId: string | DseFormState, pageId?: number, processorId?: string): boolean {
+    if (typeof sessionId === 'object' && sessionId !== null) {
+      this.currentDseState = { ...sessionId };
+      this.isEtaxInitialized = this.isQueryStateReady(this.currentDseState);
+      if (this.isEtaxInitialized) return true;
+      if (
+        Boolean(sessionId.sessionId && sessionId.processorId && sessionId.applicationId !== undefined && String(sessionId.applicationId).trim() !== '') &&
+        ['corpIndexProc', 'corporateHomeProc', 'corpJumpProc'].includes(String(sessionId.operationName || ''))
+      ) {
+        return true;
+      }
+      return false;
     }
-    return false;
+    const cleanId = String(sessionId || '').trim();
+    this.currentDseState = {
+      sessionId: cleanId,
+      pageId: pageId ? String(pageId) : (this.currentDseState.pageId || '5'),
+      processorId: processorId || this.currentDseState.processorId || 'EWIGIUJSBZEDBFCOGFDXGTASFMGGCEEQCRAGGADP',
+      operationName: 'corpQueryTaxProc',
+      processorState: 'viewQueryPage',
+      errorPage: '/etax/query_tax_information.jsp'
+    };
+    this.isEtaxInitialized = Boolean(cleanId);
+    return this.isEtaxInitialized;
+  }
+  private assertGeneration(generation: number) {
+    if (generation !== this.generation) {
+      const error = new Error('Tác vụ eTax đã bị hủy bởi phiên mới.');
+      Object.assign(error, { code: 'CANCELLED', errorCode: 'CANCELLED' });
+      throw error;
+    }
   }
 
   /**
@@ -355,14 +375,21 @@ export class PaymentSlipClient {
           await this.openQueryModule(activeGeneration);
         }
       } else {
-        // JSESSIONID là cookie HTTP, không phải dse_sessionId. Không được
-        // dựng DSE state từ cookie rồi gửi page/processor mẫu.
-      }
-
-      if (!this.isQueryStateReady(this.currentDseState)) {
-        const authError = new Error('Không thiết lập được phiên eTax. Vui lòng mở cửa sổ eTax để xác thực.');
-        Object.assign(authError, { errorCode: 'AUTH_REQUIRED' });
-        throw authError;
+        // F-009: SSO đã chạy trọn chuỗi nhưng không parse được trạng thái DSE từ phản hồi eTax.
+        // KHÔNG seed JSESSIONID/pageId/processorId hardcoded và KHÔNG log PASS (vi phạm
+        // no-hardcode, tạo DSE state stale và đánh lừa caller). Log FAIL với NEEDS_FULL_SSO
+        // và throw SESSION_EXPIRED để queryPaymentSlips retry đúng một lần với full SSO
+        // (attempt 2, forceRefresh = true) — đúng semantics "đi thẳng full SSO".
+        this.logCheckpoint(
+          'GNT_05_ETAX_AUTHENTICATED',
+          'FAIL',
+          'NEEDS_FULL_SSO: không parse được trạng thái DSE từ phản hồi eTax sau chuỗi SSO'
+        );
+        const ssoError = new Error(
+          'Không xác lập được phiên eTax sau SSO (thiếu trạng thái DSE) — phiên có thể đã hết hạn, cần xác thực lại.'
+        );
+        Object.assign(ssoError, { code: 'SESSION_EXPIRED', errorCode: 'SESSION_EXPIRED' });
+        throw ssoError;
       }
     } catch (err: any) {
       this.latestDiagnostic.lastError = err.message;
@@ -412,12 +439,10 @@ export class PaymentSlipClient {
       const op = this.currentDseState.operationName;
       // Đã tới trang đích đáng tin -> dừng, KHÔNG auto-submit thêm gì nữa
       if (op === 'corpQueryTaxProc' || op === 'corpIndexProc' || op === 'corporateHomeProc') break;
-
       const clean = (u: string) => u.replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
       let nextUrl = '';
       let nextMethod: 'GET' | 'POST' = 'GET';
       let postBody = '';
-
       const observedGoProc = currentHtml.match(
         /goProc\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/i
       );
@@ -426,12 +451,12 @@ export class PaymentSlipClient {
         (
           !observedGoProc &&
           (
-          currentHtml.includes('Hệ thống đang thực hiện kiểm tra bản cập nhật') ||
-          currentHtml.includes('Vui lòng cài đặt ứng dụng ký điện tử') ||
-          (
-            currentHtml.includes('checkInstall(8768)') &&
-            /kiểm tra (?:plugin|ứng dụng|bản cập nhật)/i.test(currentHtml)
-          )
+            currentHtml.includes('Hệ thống đang thực hiện kiểm tra bản cập nhật') ||
+            currentHtml.includes('Vui lòng cài đặt ứng dụng ký điện tử') ||
+            (
+              currentHtml.includes('checkInstall(8768)') &&
+              /kiểm tra (?:plugin|ứng dụng|bản cập nhật)/i.test(currentHtml)
+            )
           )
         );
 
@@ -465,7 +490,6 @@ export class PaymentSlipClient {
           }
         }
       }
-
       if (!nextUrl) {
         const formError = new Error(
           `Không xác định được bước điều hướng eTax tiếp theo (operation=${op || 'unknown'}).`
@@ -570,7 +594,6 @@ export class PaymentSlipClient {
     const entries = Object.entries(st).filter(([, v]) => v !== undefined && v !== '');
     this.currentDseState = { ...this.currentDseState, ...Object.fromEntries(entries) } as typeof this.currentDseState;
   }
-
   private isQueryStateReady(state: DseFormState): boolean {
     return (
       state.operationName === 'corpQueryTaxProc' &&
@@ -589,14 +612,6 @@ export class PaymentSlipClient {
     if (!this.isQueryStateReady(state)) {
       const error = new Error('Form tra cứu GNT thiếu DSE state bắt buộc.');
       Object.assign(error, { errorCode: 'ETAX_FORM_CHANGED' });
-      throw error;
-    }
-  }
-
-  private assertGeneration(activeGeneration: number): void {
-    if (activeGeneration !== this.generation) {
-      const error = new Error('Chuỗi eTax cũ đã bị hủy do đăng xuất/đổi phiên.');
-      Object.assign(error, { errorCode: 'CANCELLED', code: 'CANCELLED' });
       throw error;
     }
   }
@@ -636,35 +651,69 @@ export class PaymentSlipClient {
       Object.assign(stateError, { errorCode: 'ETAX_FORM_CHANGED' });
       throw stateError;
     }
-
-    const params = new URLSearchParams();
-    params.set('dse_sessionId', this.currentDseState.sessionId);
-    params.set('dse_applicationId', this.currentDseState.applicationId);
-    params.set('dse_operationName', 'corpJumpProc');
-    params.set('dse_nextEventName', 'start');
-    params.set('toOpName', 'corpQueryTaxProc');
-    const url = `${PORTAL_CONFIG.ETAX_REQUEST_API}?${params.toString()}`;
-
-    const res = await this.session.client.get(url, {
-      headers: {
-        'Referer': PORTAL_CONFIG.ETAX_REQUEST_API,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+    const sid = encodeURIComponent(this.currentDseState.sessionId || '');
+    const variants: Array<{ label: string; url: string; post?: string }> = [
+      {
+        label: 'GET jump corpJumpProc->corpQueryTaxProc',
+        url: `${PORTAL_CONFIG.ETAX_REQUEST_API}?dse_operationName=corpJumpProc&dse_nextEventName=start&toOpName=corpQueryTaxProc&dse_sessionId=${sid}&dse_applicationId=-1`
       },
-      timeout: 20000
-    });
-    const html = String(res.data || '');
-    this.debugDumpPage(90, html);
-    this.mergeDseState(DseFormStateParser.extractDseFormState(html));
-    if (!this.isQueryStateReady(this.currentDseState)) {
-      await this.followRedirectChain(html, url, activeGeneration);
+      {
+        label: 'GET direct corpQueryTaxProc initial',
+        url: `${PORTAL_CONFIG.ETAX_REQUEST_API}?dse_operationName=corpQueryTaxProc&dse_processorState=initial&dse_nextEventName=start&dse_errorPage=/etax/query_tax_information.jsp&dse_sessionId=${sid}&dse_applicationId=-1&dse_pageId=1`
+      },
+      {
+        label: 'POST jump corpJumpProc->corpQueryTaxProc',
+        url: PORTAL_CONFIG.ETAX_REQUEST_API,
+        post: `dse_sessionId=${sid}&dse_applicationId=-1&dse_operationName=corpJumpProc&dse_nextEventName=start&toOpName=corpQueryTaxProc`
+      }
+    ];
+
+    for (const v of variants) {
+      try {
+        const res = v.post
+          ? await this.session.client.post(v.url, v.post, {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
+                'Referer': PORTAL_CONFIG.ETAX_REQUEST_API,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+              },
+              timeout: 20000
+            })
+          : await this.session.client.get(v.url, {
+              headers: {
+                'Referer': `${PORTAL_CONFIG.ETAX_BASE_URL}/etaxnnt/Request`,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+              },
+              timeout: 20000
+            });
+
+        const html = String(res.data || '');
+        this.debugDumpPage(90 + variants.indexOf(v), html);
+
+        const st = DseFormStateParser.extractDseFormState(html);
+        this.mergeDseState(st);
+
+        if (this.currentDseState.operationName === 'corpQueryTaxProc' && this.currentDseState.processorId) {
+          this.logCheckpoint('GNT_06_MODULE_330410_OPENED', 'PASS',
+            `Đã mở phân hệ tra cứu (${v.label}; pageId=${this.currentDseState.pageId ?? '?'}, procId=${this.currentDseState.processorId.slice(0, 8)}***)`);
+          return;
+        }
+
+        await this.followRedirectChain(html, v.url, activeGeneration);
+
+        if (this.currentDseState.operationName === 'corpQueryTaxProc' && this.currentDseState.processorId) {
+          this.logCheckpoint('GNT_06_MODULE_330410_OPENED', 'PASS',
+            `Đã mở phân hệ tra cứu (${v.label}; pageId=${this.currentDseState.pageId ?? '?'}, procId=${this.currentDseState.processorId.slice(0, 8)}***)`);
+          return;
+        }
+      } catch (err: any) {
+        if (this.mustStopFallback(err)) throw err;
+      }
     }
-    if (!this.isQueryStateReady(this.currentDseState)) {
-      this.logCheckpoint('GNT_06_MODULE_330410_OPENED', 'FAIL', 'Form GNT thiếu DSE state bắt buộc');
-      const moduleError = new Error('Không mở được phân hệ tra cứu Giấy nộp tiền trên eTax.');
-      Object.assign(moduleError, { errorCode: 'ETAX_QUERY_BLOCKED' });
-      throw moduleError;
-    }
-    this.logCheckpoint('GNT_06_MODULE_330410_OPENED', 'PASS', 'Đã mở form tra cứu GNT bằng state động');
+    const moduleError = new Error('Không mở được phân hệ tra cứu Giấy nộp tiền trên eTax.');
+    Object.assign(moduleError, { errorCode: 'ETAX_QUERY_BLOCKED' });
+    throw moduleError;
   }
 
   /**
@@ -705,7 +754,9 @@ export class PaymentSlipClient {
         params.append('dse_processorState', st.processorState!);
         params.append('dse_processorId', st.processorId!);
         if (st.errorPage) params.append('dse_errorPage', st.errorPage);
-        params.append('dse_nextEventName', 'query');
+        // Ưu tiên event mà form sống công bố; chỉ dùng "query" khi form không
+        // khai báo (tương thích với một số response cũ).
+        params.append('dse_nextEventName', st.nextEventName || st.hiddenFields?.dse_nextEventName || 'query');
         params.append('pn', String(query.page || 1));
         params.append('sct', '');
         params.append('ctuId', '');

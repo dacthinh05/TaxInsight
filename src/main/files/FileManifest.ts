@@ -103,7 +103,13 @@ export class FileManifest {
 
     // Xác minh rằng các file đã ghi nhận trong manifest thực sự còn tồn tại trên đĩa
     if (entry.savedPaths && entry.savedPaths.length > 0) {
-      const allFilesExist = entry.savedPaths.every(p => fs.existsSync(p));
+      const allFilesExist = entry.savedPaths.every(p => {
+        try {
+          return fs.existsSync(p) && fs.statSync(p).size > 0;
+        } catch {
+          return false;
+        }
+      });
       const allHashesMatch = allFilesExist && entry.fileHashes
         ? entry.savedPaths.every(filePath => {
             const expectedHash = entry.fileHashes?.[filePath];
@@ -124,6 +130,21 @@ export class FileManifest {
   }
 
   public recordDownload(entry: ManifestEntry) {
+    // F-004: Không im lặng bỏ qua — caller truyền dữ liệu rỗng/0-byte là bug,
+    // phải throw để lộ ra thay vì nuốt im (trước đây `return;` che lỗi caller).
+    if (!entry.savedPaths || entry.savedPaths.length === 0) {
+      throw new Error(`recordDownload: entry "${entry.filingId}" không có savedPaths hợp lệ`);
+    }
+    const valid = entry.savedPaths.every(p => {
+      try {
+        return fs.existsSync(p) && fs.statSync(p).size > 0;
+      } catch {
+        return false;
+      }
+    });
+    if (!valid) {
+      throw new Error(`recordDownload: entry "${entry.filingId}" có file thiếu hoặc 0 byte trên đĩa`);
+    }
     this.entries.set(entry.filingId, entry);
     this.save();
   }

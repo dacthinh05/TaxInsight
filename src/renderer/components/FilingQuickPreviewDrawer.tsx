@@ -351,60 +351,63 @@ export const FilingQuickPreviewDrawer: React.FC<FilingQuickPreviewDrawerProps> =
                       </span>
                       <span className="text-[11px] text-slate-500 flex items-center space-x-1">
                         <Sparkles className="w-3 h-3 text-teal-600" />
-                        <span>Trích xuất từ XML</span>
+                        <span>{previewData.xmlAvailable ? 'Trích xuất từ XML' : 'Thông tin hồ sơ'}</span>
                       </span>
                     </div>
 
                     {Array.from(formattedMetricGroups.entries()).map(([groupName, items], gIdx) => (
                       <div key={gIdx} className="space-y-2">
-                        <div className="text-[11.5px] font-bold text-slate-600 tracking-wide uppercase px-1">
-                          {groupName}
-                        </div>
+                        {formattedMetricGroups.size > 1 && groupName !== 'CHỈ TIÊU KÊ KHAI CHÍNH' && (
+                          <div className="text-[11.5px] font-bold text-slate-600 tracking-wide uppercase px-1">
+                            {groupName}
+                          </div>
+                        )}
 
                         <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden bg-white shadow-2xs">
-                          {items.map((item, idx) => (
-                            <div
-                              key={idx}
-                              className={`px-4 py-3 min-h-[56px] flex items-center justify-between gap-4 transition-colors ${
-                                item.code === '[40]'
-                                  ? 'bg-emerald-50/50'
-                                  : item.code === '[43]'
-                                  ? 'bg-teal-50/50'
-                                  : item.isHighlight
-                                  ? 'bg-slate-50/60'
-                                  : 'hover:bg-slate-50/40'
-                              }`}
-                            >
-                              <div className="min-w-0 flex-1 pr-2">
-                                <div className={`text-[13.5px] leading-snug ${
-                                  item.code === '[40]' || item.code === '[43]' || item.isHighlight
-                                    ? 'font-semibold text-slate-900'
-                                    : 'font-medium text-slate-800'
-                                }`}>
-                                  {item.label}
-                                </div>
-                                {item.code && (
-                                  <div className="mt-0.5 flex items-center space-x-1.5">
-                                    <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200/80">
-                                      Chỉ tiêu {item.code}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-
-                              <div className="text-right shrink-0">
-                                <span className={`text-[15px] font-mono tabular-nums ${
+                          {items.map((item, idx) => {
+                            const isText = item.type === 'text' || item.type === 'identifier';
+                            return (
+                              <div
+                                key={idx}
+                                className={`px-4 py-3 min-h-[52px] flex items-start justify-between gap-4 transition-colors ${
                                   item.code === '[40]'
-                                    ? 'font-bold text-emerald-950'
+                                    ? 'bg-emerald-50/50'
                                     : item.code === '[43]'
-                                    ? 'font-bold text-teal-950'
-                                    : 'font-semibold text-slate-900'
-                                }`}>
-                                  {item.formattedValue} {item.unit || 'đ'}
-                                </span>
+                                    ? 'bg-teal-50/50'
+                                    : item.isHighlight
+                                    ? 'bg-slate-50/60'
+                                    : 'hover:bg-slate-50/40'
+                                }`}
+                              >
+                                <div className="min-w-[140px] max-w-[200px] shrink-0">
+                                  <div className="text-[13px] leading-snug font-medium text-slate-600">
+                                    {item.label}
+                                  </div>
+                                  {item.code && (
+                                    <div className="mt-0.5 flex items-center space-x-1.5">
+                                      <span className="text-[10.5px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200/80">
+                                        Chỉ tiêu {item.code}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className={`flex-1 text-right min-w-0 ${isText ? 'text-slate-900 font-medium text-[13px] break-words text-right' : 'font-mono tabular-nums text-[14.5px]'}`}>
+                                  <span className={
+                                    item.code === '[40]'
+                                      ? 'font-bold text-emerald-950'
+                                      : item.code === '[43]'
+                                      ? 'font-bold text-teal-950'
+                                      : item.isHighlight
+                                      ? 'font-bold text-slate-950'
+                                      : 'font-semibold text-slate-900'
+                                  }>
+                                    {item.formattedValue}
+                                  </span>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     ))}

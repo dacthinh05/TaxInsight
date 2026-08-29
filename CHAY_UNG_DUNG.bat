@@ -30,7 +30,7 @@ echo.
 echo [*] Dang khoi chay ung dung Desktop TaxRecord...
 echo.
 
-call npm start
+call npx electron .
 
 if errorlevel 1 (
     echo.
