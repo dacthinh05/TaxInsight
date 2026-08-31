@@ -210,7 +210,6 @@ export class EtaxFormStateParser {
       if (!result.actionUrl) result.actionUrl = '/etaxnnt/Request';
       if (!result.dseApplicationId) result.dseApplicationId = '-1';
       if (!result.dsePageId) result.dsePageId = '1';
-      if (!result.dseOperationName) result.dseOperationName = 'traCuuToKhaiProc';
       if (!result.dseProcessorState) result.dseProcessorState = 'initial';
     }
 

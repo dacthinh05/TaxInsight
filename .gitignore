@@ -7,6 +7,7 @@ dist-electron/
 dist-build/
 dist-release/
 build-dist/
+dist-out/
 release/
 release*/
 release-v*/

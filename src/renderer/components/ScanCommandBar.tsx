@@ -1,7 +1,7 @@
 import React from 'react';
 import { BarChart3, CreditCard, FileSpreadsheet, FileText, History, Loader2, Search } from 'lucide-react';
 import { AppViewMode, FilingSourceMode, TaxType } from '../../shared/types';
-
+import { YearSelector } from './YearSelector';
 export interface GntCommandStats {
   /** Số GNT đang hiển thị (sau khi lọc tìm kiếm) */
   count: number;
@@ -88,194 +88,91 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
 
   return (
     <div className="bg-white border border-slate-200/90 rounded-xl px-4 py-2 shadow-xs flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
-      {/* 1. Nguồn tra cứu (Chỉ hiện khi xem Tờ khai) */}
-      {viewMode === 'FILINGS' && onSourceModeChange && (
-        <div className="flex items-center space-x-1.5 shrink-0 bg-slate-100/90 p-0.5 rounded-lg border border-slate-200">
-          <button
-            type="button"
-            onClick={() => onSourceModeChange('CURRENT')}
-            disabled={isScanning}
-            className={`px-2.5 py-1 rounded-md font-medium text-xs transition-all cursor-pointer ${
-              sourceMode === 'CURRENT'
-                ? 'bg-white text-teal-800 shadow-2xs font-semibold'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
+      {/* 1. Năm */}
+      <div className="flex items-center space-x-1.5 shrink-0">
+        <label className="font-medium text-slate-600 text-xs">
+          {isGntMode ? 'Năm nộp:' : 'Năm:'}
+        </label>
+        <YearSelector
+          selectedYear={selectedYear}
+          onYearChange={onYearChange}
+          isMultiYearSupported={true}
+          scanRangeMode={scanRangeMode}
+          onRangeModeChange={onRangeModeChange}
+          disabled={isScanning}
+        />
+      </div>
+
+      {/* 2. Thời gian nộp */}
+      <div className="flex items-center space-x-1.5 shrink-0">
+        <label className="font-medium text-slate-600 text-xs">
+          Thời gian:
+        </label>
+        <select
+          value={scanRangeMode}
+          onChange={e => onRangeModeChange(e.target.value)}
+          disabled={isScanning}
+          className="h-8 max-w-[290px] px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus-ring focus:bg-white transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
+        >
+          <optgroup label="Quét Đa Năm (Soát xét toàn diện)">
+            <option value="MULTI_3_YEARS">3 năm gần nhất ({currentYear - 2} – {currentYear})</option>
+            <option value="MULTI_5_YEARS">5 năm quyết toán ({currentYear - 4} – {currentYear})</option>
+          </optgroup>
+          <optgroup label="Theo Năm">
+            {isCurrentYear ? (
+              <>
+                <option value="YEAR_TO_DATE">Từ 01/01 → hôm nay ({todayStr})</option>
+                <option value="FULL_YEAR">Cả năm {selectedYear} (01/01 → 31/12/{selectedYear})</option>
+              </>
+            ) : (
+              <option value="FULL_YEAR">Cả năm {selectedYear} (Bao gồm T01/{selectedYear + 1})</option>
+            )}
+          </optgroup>
+          <optgroup label="Theo Quý">
+            <option value="Q1">Quý 1 (01/01 → 31/03/{selectedYear})</option>
+            <option value="Q2">Quý 2 (01/04 → 30/06/{selectedYear})</option>
+            <option value="Q3">Quý 3 (01/07 → 30/09/{selectedYear})</option>
+            <option value="Q4">Quý 4 (01/10 → 31/12/{selectedYear})</option>
+          </optgroup>
+          <optgroup label="Theo Tháng">
+            <option value="M01">Tháng 01/{selectedYear}</option>
+            <option value="M02">Tháng 02/{selectedYear}</option>
+            <option value="M03">Tháng 03/{selectedYear}</option>
+            <option value="M04">Tháng 04/{selectedYear}</option>
+            <option value="M05">Tháng 05/{selectedYear}</option>
+            <option value="M06">Tháng 06/{selectedYear}</option>
+            <option value="M07">Tháng 07/{selectedYear}</option>
+            <option value="M08">Tháng 08/{selectedYear}</option>
+            <option value="M09">Tháng 09/{selectedYear}</option>
+            <option value="M10">Tháng 10/{selectedYear}</option>
+            <option value="M11">Tháng 11/{selectedYear}</option>
+            <option value="M12">Tháng 12/{selectedYear}</option>
+          </optgroup>
+        </select>
+      </div>
+
+      {/* 3. Loại hồ sơ */}
+      {viewMode === 'FILINGS' && (
+        <div className="flex items-center space-x-1.5 shrink-0">
+          <label className="font-medium text-slate-600 text-xs">
+            Loại hồ sơ:
+          </label>
+          <select
+            value={selectedTaxType}
+            onChange={e => onTaxTypeChange(e.target.value as TaxType)}
+            className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus-ring focus:bg-white transition-all cursor-pointer shadow-2xs"
           >
-            Hệ thống hiện tại
-          </button>
-          <button
-            type="button"
-            onClick={() => onSourceModeChange('DVC_ETAX_LEGACY')}
-            disabled={isScanning}
-            className={`px-2.5 py-1 rounded-md font-medium text-xs transition-all flex items-center space-x-1 cursor-pointer ${
-              sourceMode === 'DVC_ETAX_LEGACY'
-                ? 'bg-teal-700 text-white shadow-2xs font-semibold'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <History className="w-3 h-3 mr-1" />
-            <span>Năm cũ qua DVC</span>
-          </button>
+            <option value="ALL">Tất cả loại hồ sơ</option>
+            <option value="VAT">Thuế GTGT</option>
+            <option value="REFUND">Hoàn thuế</option>
+            <option value="PIT">Thuế TNCN</option>
+            <option value="CIT">Thuế TNDN</option>
+            <option value="FCT">Thuế Nhà Thầu (FCT)</option>
+            <option value="HOUSE_LAND">Thuế Nhà đất</option>
+            <option value="REPORT">Báo cáo / Hóa đơn</option>
+            <option value="OTHER">Thủ tục khác</option>
+          </select>
         </div>
-      )}
-
-      {/* 2. CHẾ ĐỘ NĂM CŨ QUA DVC */}
-      {isLegacyMode ? (
-        <>
-          {/* Từ năm */}
-          <div className="flex items-center space-x-1.5 shrink-0">
-            <label className="font-medium text-slate-600 text-xs">Từ năm:</label>
-            <select
-              value={legacyYearFrom}
-              onChange={e => onLegacyYearFromChange?.(parseInt(e.target.value, 10))}
-              disabled={isScanning}
-              className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800 text-xs focus:outline-none focus:ring-1 focus:ring-teal-600 focus:bg-white transition-colors cursor-pointer disabled:opacity-50"
-            >
-              {years.map(y => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Đến năm */}
-          <div className="flex items-center space-x-1.5 shrink-0">
-            <label className="font-medium text-slate-600 text-xs">Đến năm:</label>
-            <select
-              value={legacyYearTo}
-              onChange={e => onLegacyYearToChange?.(parseInt(e.target.value, 10))}
-              disabled={isScanning}
-              className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800 text-xs focus:outline-none focus:ring-1 focus:ring-teal-600 focus:bg-white transition-colors cursor-pointer disabled:opacity-50"
-            >
-              {years.map(y => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Mẫu tờ khai */}
-          <div className="flex items-center space-x-1.5 shrink-0">
-            <label className="font-medium text-slate-600 text-xs">Tờ khai:</label>
-            <select
-              value={legacyMaTKhai}
-              onChange={e => onLegacyMaTKhaiChange?.(e.target.value)}
-              disabled={isScanning}
-              className="h-8 max-w-[240px] px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:ring-1 focus:ring-teal-600 focus:bg-white transition-colors cursor-pointer disabled:opacity-50"
-            >
-              {mergedFormOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.text}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Tùy chọn chỉ tải còn thiếu */}
-          {onOnlyMissingChange && (
-            <label className="flex items-center space-x-1.5 shrink-0 cursor-pointer text-slate-700 font-medium select-none ml-1">
-              <input
-                type="checkbox"
-                checked={onlyMissing}
-                onChange={e => onOnlyMissingChange(e.target.checked)}
-                disabled={isScanning}
-                className="w-3.5 h-3.5 text-teal-600 rounded border-slate-300 focus:ring-teal-500 cursor-pointer"
-              />
-              <span>Chỉ tải còn thiếu</span>
-            </label>
-          )}
-        </>
-      ) : (
-        /* 3. CHẾ ĐỘ QUÉT HIỆN TẠI (DVC / GNT) */
-        <>
-          {/* Năm */}
-          <div className="flex items-center space-x-1.5 shrink-0">
-            <label className="font-medium text-slate-600 text-xs">
-              {isGntMode ? 'Năm nộp:' : 'Năm:'}
-            </label>
-            <select
-              value={selectedYear}
-              onChange={e => onYearChange(parseInt(e.target.value, 10))}
-              disabled={isScanning}
-              title={isScanning ? 'Không thể đổi năm khi đang quét' : undefined}
-              className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-mono font-bold text-slate-800 text-xs focus-ring focus:bg-white transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
-            >
-              {years.map(y => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Thời gian nộp */}
-          <div className="flex items-center space-x-1.5 shrink-0">
-            <label className="font-medium text-slate-600 text-xs">
-              Thời gian:
-            </label>
-            <select
-              value={scanRangeMode}
-              onChange={e => onRangeModeChange(e.target.value)}
-              disabled={isScanning}
-              className="h-8 max-w-[290px] px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus-ring focus:bg-white transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
-            >
-              <optgroup label="Quét Đa Năm (Soát xét toàn diện)">
-                <option value="MULTI_3_YEARS">3 năm gần nhất ({currentYear - 2} – {currentYear})</option>
-                <option value="MULTI_5_YEARS">5 năm quyết toán ({currentYear - 4} – {currentYear})</option>
-              </optgroup>
-              <optgroup label="Theo Năm">
-                {isCurrentYear ? (
-                  <>
-                    <option value="YEAR_TO_DATE">Từ 01/01 → hôm nay ({todayStr})</option>
-                    <option value="FULL_YEAR">Cả năm {selectedYear} (01/01 → 31/12/{selectedYear})</option>
-                  </>
-                ) : (
-                  <option value="FULL_YEAR">Cả năm {selectedYear} (Bao gồm T01/{selectedYear + 1})</option>
-                )}
-              </optgroup>
-              <optgroup label="Theo Quý">
-                <option value="Q1">Quý 1 (01/01 → 31/03/{selectedYear})</option>
-                <option value="Q2">Quý 2 (01/04 → 30/06/{selectedYear})</option>
-                <option value="Q3">Quý 3 (01/07 → 30/09/{selectedYear})</option>
-                <option value="Q4">Quý 4 (01/10 → 31/12/{selectedYear})</option>
-              </optgroup>
-              <optgroup label="Theo Tháng">
-                <option value="M01">Tháng 01/{selectedYear}</option>
-                <option value="M02">Tháng 02/{selectedYear}</option>
-                <option value="M03">Tháng 03/{selectedYear}</option>
-                <option value="M04">Tháng 04/{selectedYear}</option>
-                <option value="M05">Tháng 05/{selectedYear}</option>
-                <option value="M06">Tháng 06/{selectedYear}</option>
-                <option value="M07">Tháng 07/{selectedYear}</option>
-                <option value="M08">Tháng 08/{selectedYear}</option>
-                <option value="M09">Tháng 09/{selectedYear}</option>
-                <option value="M10">Tháng 10/{selectedYear}</option>
-                <option value="M11">Tháng 11/{selectedYear}</option>
-                <option value="M12">Tháng 12/{selectedYear}</option>
-              </optgroup>
-            </select>
-          </div>
-
-          {/* Loại hồ sơ (Chỉ hiện khi xem Tờ khai ở nguồn Hiện Tại) */}
-          {viewMode === 'FILINGS' && (
-            <div className="flex items-center space-x-1.5 shrink-0">
-              <label className="font-medium text-slate-600 text-xs">
-                Loại hồ sơ:
-              </label>
-              <select
-                value={selectedTaxType}
-                onChange={e => onTaxTypeChange(e.target.value as TaxType)}
-                className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus-ring focus:bg-white transition-all cursor-pointer shadow-2xs"
-              >
-                <option value="ALL">Tất cả loại hồ sơ</option>
-                <option value="VAT">Thuế GTGT</option>
-                <option value="REFUND">Hoàn thuế</option>
-                <option value="PIT">Thuế TNCN</option>
-                <option value="CIT">Thuế TNDN</option>
-                <option value="FCT">Thuế Nhà Thầu (FCT)</option>
-                <option value="HOUSE_LAND">Thuế Nhà đất</option>
-                <option value="REPORT">Báo cáo / Hóa đơn</option>
-                <option value="OTHER">Thủ tục khác</option>
-              </select>
-            </div>
-          )}
-        </>
       )}
 
       {/* Search (chế độ GNT — thay cho toolbar riêng của bảng) */}

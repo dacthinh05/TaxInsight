@@ -1080,16 +1080,6 @@ export class CaptchaSolver {
         };
         candidates.push(onnxCand);
 
-        // Fast-path: nếu ONNX đạt độ tự tin cao (>=85%), trả ngay kết quả auto-submit an toàn
-        if (onnxRes.accepted && onnxRes.confidence >= 85) {
-          return {
-            text: onnxRes.text,
-            confidence: onnxRes.confidence,
-            accepted: true,
-            reason: 'onnx_engine',
-            candidates: [onnxCand]
-          };
-        }
       }
     } catch (onnxErr: unknown) {
       const msg = onnxErr instanceof Error ? onnxErr.message : String(onnxErr);

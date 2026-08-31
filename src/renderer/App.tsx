@@ -514,11 +514,31 @@ export const App: React.FC = () => {
       if (scanId !== latestScanId.current) return;
 
       if (res.success && res.data) {
-        setFilings(res.data.filings);
-        
+        let combinedFilings = [...res.data.filings];
+
+        // Tự động quét thêm phân hệ eTax để hợp nhất trọn vẹn 100% tờ khai
+        if (window.taxPortalAPI?.scanLegacyFilings) {
+          try {
+            const legacyRes = await window.taxPortalAPI.scanLegacyFilings({
+              yearFrom: selectedYear,
+              yearTo: selectedYear,
+              maTKhai: '00'
+            });
+            if (legacyRes?.success && legacyRes.filings?.length) {
+              for (const lf of legacyRes.filings) {
+                if (!combinedFilings.some(item => item.id === lf.id || (lf.messageId && item.messageId === lf.messageId))) {
+                  combinedFilings.push(lf);
+                }
+              }
+            }
+          } catch {}
+        }
+
+        setFilings(combinedFilings);
+
         // Tự động phân bổ filings theo từng năm kê khai vào filingsByYear
-        const grouped: Record<number, TaxFiling[]> = { [selectedYear]: res.data.filings };
-        for (const f of res.data.filings) {
+        const grouped: Record<number, TaxFiling[]> = { [selectedYear]: combinedFilings };
+        for (const f of combinedFilings) {
           const y = f.periodNormalized?.year;
           if (y && y >= 2000 && y <= 2099) {
             if (!grouped[y]) grouped[y] = [];
@@ -528,9 +548,9 @@ export const App: React.FC = () => {
           }
         }
         setFilingsByYear(prev => ({ ...prev, ...grouped }));
-        setMissingVat(res.data.missingVatCheck);
-        setMissingPit(res.data.missingPitCheck);
-        setSelectedIds(new Set()); // Mặc định không auto-select toàn bộ
+        setMissingVat(checkMissingPeriods(combinedFilings, selectedYear, 'VAT', true));
+        setMissingPit(checkMissingPeriods(combinedFilings, selectedYear, 'PIT', true));
+        setSelectedIds(new Set());
       } else {
         alert(res.error || 'Có lỗi xảy ra trong quá trình quét hồ sơ');
       }
@@ -779,6 +799,45 @@ export const App: React.FC = () => {
       }
     } catch (err: any) {
       alert(`Lỗi xuất Excel: ${err.message}`);
+    }
+  };
+  // Danh sách các năm khả dụng để chuyển nhanh giữa các năm
+  const availableYears = useMemo(() => {
+    const yearsFromFilings = Object.keys(filingsByYear)
+      .map(Number)
+      .filter(y => !isNaN(y) && y >= 2000 && y <= 2099);
+    const currentYear = new Date().getFullYear();
+    const defaultYears = [currentYear, currentYear - 1, currentYear - 2, currentYear - 3, currentYear - 4];
+    const set = new Set<number>([selectedYear, ...yearsFromFilings, ...defaultYears]);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [filingsByYear, selectedYear]);
+
+  // Hàm chuyển năm tập trung dùng chung cho Toolbar và các Drawer phân tích
+  const handleYearChange = (y: number) => {
+    if (y === selectedYear) return;
+
+    // 1. Lưu lại filings của năm cũ trước khi đổi
+    setFilingsByYear(prev => ({ ...prev, [selectedYear]: filings }));
+
+    // 2. Chuyển sang năm mới — XÓA selection của năm cũ để tránh
+    // "Đã chọn N" ma với id không còn trong bảng (download câm lặng)
+    setSelectedYear(y);
+    setSelectedIds(new Set());
+    const currentYear = new Date().getFullYear();
+    if (y !== currentYear && scanRangeMode === 'YEAR_TO_DATE') {
+      setScanRangeMode('FULL_YEAR');
+    }
+
+    // 3. Nạp filings của năm mới nếu đã có sẵn trong state hoặc checkpoint
+    if (filingsByYear[y] && filingsByYear[y].length > 0) {
+      setFilings(filingsByYear[y]);
+      setMissingVat(checkMissingPeriods(filingsByYear[y], y, 'VAT', true));
+      setMissingPit(checkMissingPeriods(filingsByYear[y], y, 'PIT', true));
+    } else {
+      setFilings([]);
+      setMissingVat(undefined);
+      setMissingPit(undefined);
+      checkExistingCheckpoint(session.taxCode || '', y);
     }
   };
 
@@ -1364,33 +1423,7 @@ export const App: React.FC = () => {
         {/* Command Toolbar */}
         <ScanCommandBar
           selectedYear={selectedYear}
-          onYearChange={y => {
-            if (y === selectedYear) return;
-
-            // 1. Lưu lại filings của năm cũ trước khi đổi
-            setFilingsByYear(prev => ({ ...prev, [selectedYear]: filings }));
-
-            // 2. Chuyển sang năm mới — XÓA selection của năm cũ để tránh
-            // "Đã chọn N" ma với id không còn trong bảng (download câm lặng)
-            setSelectedYear(y);
-            setSelectedIds(new Set());
-            const currentYear = new Date().getFullYear();
-            if (y !== currentYear && scanRangeMode === 'YEAR_TO_DATE') {
-              setScanRangeMode('FULL_YEAR');
-            }
-
-            // 3. Nạp filings của năm mới nếu đã có sẵn trong state hoặc checkpoint
-            if (filingsByYear[y] && filingsByYear[y].length > 0) {
-              setFilings(filingsByYear[y]);
-              setMissingVat(checkMissingPeriods(filingsByYear[y], y, 'VAT', true));
-              setMissingPit(checkMissingPeriods(filingsByYear[y], y, 'PIT', true));
-            } else {
-              setFilings([]);
-              setMissingVat(undefined);
-              setMissingPit(undefined);
-              checkExistingCheckpoint(session.taxCode || '', y);
-            }
-          }}
+          onYearChange={handleYearChange}
           scanRangeMode={scanRangeMode}
           onRangeModeChange={setScanRangeMode}
           selectedTaxType={selectedTaxType}
@@ -1566,6 +1599,8 @@ export const App: React.FC = () => {
         onScanSupplementalYear={handleScanSupplementalYear}
         onOpenFilingPreview={handleOpenPreviewBySubmissionId}
         targetYear={selectedYear}
+        availableYears={availableYears}
+        onSelectYear={handleYearChange}
       />
 
       {/* PIT Reference Drawer (Bảng Tham Chiếu & Đối Chiếu Nghĩa Vụ Thuế TNCN) */}
@@ -1579,6 +1614,8 @@ export const App: React.FC = () => {
         onRefreshAnalytics={handleAnalyzePit}
         onOpenFilingPreview={handleOpenPreviewBySubmissionId}
         targetYear={selectedYear}
+        availableYears={availableYears}
+        onSelectYear={handleYearChange}
       />
 
       {isDownloadModalOpen && downloadSummary && (

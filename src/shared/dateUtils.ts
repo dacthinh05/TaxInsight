@@ -299,6 +299,20 @@ export function resolveScanDateRange(year: number, mode: string): DateRange {
     };
   }
 
+  const customRangeMatch = mode.match(/^MULTI_RANGE:(\d{4}):(\d{4})$/);
+  if (customRangeMatch) {
+    const fromY = parseInt(customRangeMatch[1], 10);
+    const toY = parseInt(customRangeMatch[2], 10);
+    const minYear = Math.min(fromY, toY);
+    const maxYear = Math.max(fromY, toY);
+    const toDate = maxYear < currentYear ? `31/03/${maxYear + 1}` : (maxYear === currentYear ? todayStr : `31/12/${maxYear}`);
+    return {
+      fromDate: `01/01/${minYear}`,
+      toDate,
+      label: `Khoảng năm ${minYear} – ${maxYear}`,
+      level: 'MULTI_YEAR'
+    };
+  }
   if (mode === 'YEAR_TO_DATE') {
     return {
       fromDate: `01/01/${year}`,

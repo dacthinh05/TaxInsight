@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ExternalLink,
   FileSpreadsheet,
@@ -11,9 +12,9 @@ import {
   TableProperties,
   X
 } from 'lucide-react';
+import { YearSelector } from './YearSelector';
 import { PitAnalyticsSummary } from '../../shared/pitAnalyticsTypes';
 import { PitFlowEngine } from '../../shared/PitFlowEngine';
-
 interface PitReferenceDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -24,8 +25,9 @@ interface PitReferenceDrawerProps {
   onRefreshAnalytics: () => void;
   onOpenFilingPreview?: (submissionId: string, isXml?: boolean) => void;
   targetYear: number;
+  availableYears?: number[];
+  onSelectYear?: (year: number) => void;
 }
-
 export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
   isOpen,
   onClose,
@@ -35,8 +37,11 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
   onExportExcel,
   onRefreshAnalytics,
   onOpenFilingPreview,
-  targetYear
+  targetYear = 2026,
+  availableYears,
+  onSelectYear
 }) => {
+  const [selectedYear, setSelectedYear] = useState<number>(targetYear);
   const [collapsedQuarters, setCollapsedQuarters] = useState<Set<number>>(new Set());
   const [activeInspectorItem, setActiveInspectorItem] = useState<{
     title: string;
@@ -49,10 +54,31 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
     formCode: string;
   } | null>(null);
 
-  const yearFlow = useMemo(() => {
-    return PitFlowEngine.normalizeYearFlow(summary, targetYear);
-  }, [summary, targetYear]);
+  useEffect(() => {
+    if (targetYear) setSelectedYear(targetYear);
+  }, [targetYear]);
 
+  const yearsList = useMemo(() => {
+    if (availableYears && availableYears.length > 0) {
+      const set = new Set<number>([selectedYear, ...availableYears]);
+      return Array.from(set).sort((a, b) => b - a);
+    }
+    const current = new Date().getFullYear();
+    const set = new Set<number>([selectedYear, current, current - 1, current - 2, current - 3, current - 4]);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [availableYears, selectedYear]);
+
+  const handleYearChange = (newYear: number) => {
+    setSelectedYear(newYear);
+    setActiveInspectorItem(null);
+    if (onSelectYear) {
+      onSelectYear(newYear);
+    }
+  };
+
+  const yearFlow = useMemo(() => {
+    return PitFlowEngine.normalizeYearFlow(summary, selectedYear);
+  }, [summary, selectedYear]);
   if (!isOpen) return null;
 
   const toggleQuarter = (q: number) => {
@@ -84,7 +110,7 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
       <div className="relative w-full h-full bg-white shadow-2xl flex flex-col z-50 animate-slideLeft">
         
         {/* ─── 1. TOPBAR ─────────────────────────────────────────── */}
-        <div className="px-6 py-3.5 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
+        <div className="px-6 py-3 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 flex items-center justify-center">
               <TableProperties className="w-4.5 h-4.5" />
@@ -97,14 +123,56 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
                 <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200">
                   Mẫu 05/KK-TNCN & 05/QTT
                 </span>
-                <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-teal-50 text-teal-800 border border-teal-200">
-                  Năm {targetYear}
-                </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 Bảng làm việc kiểm toán (Audit Working Paper) · Tự động đối chiếu Tháng, Quý và Quyết toán năm
               </p>
             </div>
+          </div>
+
+          {/* Quick Year Switcher ở giữa */}
+          <div className="flex items-center space-x-1.5 bg-slate-100/90 p-1 rounded-xl border border-slate-200 shadow-2xs">
+            <button
+              type="button"
+              onClick={() => handleYearChange(selectedYear - 1)}
+              className="p-1 hover:bg-white rounded-lg text-slate-600 hover:text-slate-900 transition-all cursor-pointer"
+              title={`Xem năm ${selectedYear - 1}`}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center space-x-1">
+              {yearsList.slice(0, 4).map(y => (
+                <button
+                  key={y}
+                  type="button"
+                  onClick={() => handleYearChange(y)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                    y === selectedYear
+                      ? 'bg-teal-700 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-white/80 hover:text-slate-900'
+                  }`}
+                >
+                  {y}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleYearChange(selectedYear + 1)}
+              className="p-1 hover:bg-white rounded-lg text-slate-600 hover:text-slate-900 transition-all cursor-pointer"
+              title={`Xem năm ${selectedYear + 1}`}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+
+            <YearSelector
+              selectedYear={selectedYear}
+              onYearChange={handleYearChange}
+              availableYears={availableYears}
+              size="sm"
+            />
           </div>
 
           {/* Action Buttons */}

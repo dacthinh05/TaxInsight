@@ -19,6 +19,7 @@ import {
   Table as TableIcon,
   RefreshCw
 } from 'lucide-react';
+import { YearSelector } from './YearSelector';
 import {
   VatAnalyticsSummary
 } from '../../shared/vatAnalyticsTypes';
@@ -39,8 +40,9 @@ interface VatReferenceDrawerProps {
   onScanSupplementalYear?: (year: number) => void;
   onOpenFilingPreview?: (submissionId: string, initialShowXml?: boolean) => void;
   targetYear?: number;
+  availableYears?: number[];
+  onSelectYear?: (year: number) => void;
 }
-
 type TabMode = 'RECONCILIATION' | 'TAX_FLOW' | 'SUPPLEMENTAL_HISTORY';
 
 // Helper format tiền tệ chuẩn kế toán: số dương "1.234.567", số âm "(250.000.000)", zero/null là "-"
@@ -72,12 +74,36 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
   onRefreshAnalytics,
   onScanSupplementalYear,
   onOpenFilingPreview,
-  targetYear = 2026
+  targetYear = 2026,
+  availableYears,
+  onSelectYear
 }) => {
   const [activeTab, setActiveTab] = useState<TabMode>('RECONCILIATION');
   const [selectedYear, setSelectedYear] = useState<number>(targetYear);
-  
-  // Row được chọn để bung INLINE AUDIT DETAIL
+
+  React.useEffect(() => {
+    if (targetYear) setSelectedYear(targetYear);
+  }, [targetYear]);
+
+  const yearsList = React.useMemo(() => {
+    if (availableYears && availableYears.length > 0) {
+      const set = new Set<number>([selectedYear, ...availableYears]);
+      return Array.from(set).sort((a, b) => b - a);
+    }
+    const current = new Date().getFullYear();
+    const set = new Set<number>([selectedYear, current, current - 1, current - 2, current - 3, current - 4]);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [availableYears, selectedYear]);
+
+  const handleYearChange = (newYear: number) => {
+    setSelectedYear(newYear);
+    setExpandedPeriodKey(null);
+    setActiveInspectorItem(null);
+    setShowCoveragePopover(false);
+    if (onSelectYear) {
+      onSelectYear(newYear);
+    }
+  };
   const [expandedPeriodKey, setExpandedPeriodKey] = useState<string | null>(null);
   
   // Single-target Evidence Inspector (Chỉ hiển thị chứng cứ cho chính con số hoặc dòng được click)
@@ -201,29 +227,50 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
             </span>
           </div>
 
-          {/* Bộ chọn năm ở giữa: < 2026 > */}
-          <div className="flex items-center space-x-2 bg-slate-50 px-3 py-1 rounded-lg border border-slate-200 shadow-2xs">
+          {/* Bộ chọn năm ở giữa: Quick Year Switcher + Type-in + Grid */}
+          <div className="flex items-center space-x-1.5 bg-slate-100/90 p-1 rounded-xl border border-slate-200 shadow-2xs">
             <button
               type="button"
-              onClick={handlePrevYear}
-              className="p-1 hover:bg-slate-200 rounded text-slate-600 transition-colors cursor-pointer"
+              onClick={() => handleYearChange(selectedYear - 1)}
+              className="p-1 hover:bg-white rounded-lg text-slate-600 hover:text-slate-900 transition-all cursor-pointer"
               title={`Xem năm ${selectedYear - 1}`}
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="text-sm font-bold text-slate-900 px-2 font-mono">
-              {selectedYear}
-            </span>
+
+            <div className="flex items-center space-x-1">
+              {yearsList.slice(0, 4).map(y => (
+                <button
+                  key={y}
+                  type="button"
+                  onClick={() => handleYearChange(y)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                    y === selectedYear
+                      ? 'bg-teal-700 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-white/80 hover:text-slate-900'
+                  }`}
+                >
+                  {y}
+                </button>
+              ))}
+            </div>
+
             <button
               type="button"
-              onClick={handleNextYear}
-              className="p-1 hover:bg-slate-200 rounded text-slate-600 transition-colors cursor-pointer"
+              onClick={() => handleYearChange(selectedYear + 1)}
+              className="p-1 hover:bg-white rounded-lg text-slate-600 hover:text-slate-900 transition-all cursor-pointer"
               title={`Xem năm ${selectedYear + 1}`}
             >
               <ChevronRight className="w-4 h-4" />
             </button>
-          </div>
 
+            <YearSelector
+              selectedYear={selectedYear}
+              onYearChange={handleYearChange}
+              availableYears={availableYears}
+              size="sm"
+            />
+          </div>
           {/* Actions bên phải */}
           <div className="flex items-center space-x-2">
             <button

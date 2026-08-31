@@ -37,7 +37,7 @@ export class LegacyFilingClient {
   private inFlightInit: Promise<void> | null = null;
   private availableFormOptions: EtaxFormOption[] = [];
   private generation = 0;
-
+  private lastQueriedYear: number | null = null;
   private latestDiagnostic: LegacyFilingDiagnosticReport = {
     checkpoints: {
       LEGACY_01_DVC_SESSION_VALID: { status: 'SKIPPED' },
@@ -457,7 +457,7 @@ export class LegacyFilingClient {
   ): Promise<EtaxParseResult> {
     await this.ensureEtaxSession();
     await TaxPortalClient.waitForGlobalRateLimit(options.signal);
-
+    this.lastQueriedYear = year;
     const fromDate = options.fromDate || `01/01/${year}`;
     const toDate = options.toDate || `31/12/${year}`;
     const pageNum = options.page || 1;
@@ -541,7 +541,8 @@ export class LegacyFilingClient {
    */
   public async downloadFiling(
     messageId: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    filingYear?: number
   ): Promise<{
     dataBuffer: Buffer;
     fileName: string;
@@ -550,24 +551,45 @@ export class LegacyFilingClient {
     await this.ensureEtaxSession();
     await TaxPortalClient.waitForGlobalRateLimit(signal);
     const safeMessageId = this.validateMessageId(messageId);
-    this.assertLookupState();
-
-    const params = new URLSearchParams();
-    params.set('dse_sessionId', this.currentFormState.dseSessionId);
-    params.set('dse_applicationId', this.currentFormState.dseApplicationId);
-    params.set('dse_operationName', this.currentFormState.dseOperationName);
-    params.set('dse_pageId', this.currentFormState.dsePageId);
-    params.set('dse_processorState', this.currentFormState.dseProcessorState);
-    params.set('dse_processorId', this.currentFormState.dseProcessorId!);
-    if (this.currentFormState.dseErrorPage) {
-      params.set('dse_errorPage', this.currentFormState.dseErrorPage);
+    if (!this.currentFormState.dseSessionId) {
+      await this.ensureEtaxSession(true);
     }
-    params.set('dse_nextEventName', 'downTkhai');
-    params.set('messageId', safeMessageId);
+
+    // Đồng bộ session state của eTax về đúng năm của hồ sơ trước khi tải
+    const yearFromIdMatch = safeMessageId.match(/\d{3}(20\d{2})/);
+    const targetYear = filingYear || (yearFromIdMatch ? parseInt(yearFromIdMatch[1], 10) : undefined);
+
+    if (targetYear && this.lastQueriedYear !== targetYear) {
+      try {
+        await this.queryFilings(targetYear, { page: 1, signal });
+      } catch (qErr: unknown) {
+        const msg = qErr instanceof Error ? qErr.message : String(qErr);
+        console.warn(`[LegacyFilingClient] Preflight query năm ${targetYear} thất bại: ${msg}`);
+      }
+    }
+
+    const buildParams = () => {
+      const params = new URLSearchParams();
+      params.set('dse_sessionId', this.currentFormState.dseSessionId);
+      params.set('dse_applicationId', this.currentFormState.dseApplicationId || '-1');
+      params.set('dse_operationName', 'traCuuToKhaiProc');
+      params.set('dse_pageId', this.currentFormState.dsePageId || '1');
+      params.set('dse_processorState', this.currentFormState.dseProcessorState || 'viewTraCuuTkhai');
+      if (this.currentFormState.dseProcessorId) {
+        params.set('dse_processorId', this.currentFormState.dseProcessorId);
+      }
+      if (this.currentFormState.dseErrorPage) {
+        params.set('dse_errorPage', this.currentFormState.dseErrorPage);
+      }
+      params.set('dse_nextEventName', 'downTkhai');
+      params.set('messageId', safeMessageId);
+      return params;
+    };
 
     const actionUrl = this.resolveEtaxUrl(this.currentFormState.actionUrl, PORTAL_CONFIG.ETAX_REQUEST_API);
 
-    try {
+    const executeDownload = async () => {
+      const params = buildParams();
       let res: any;
       try {
         res = await this.session.client.post(actionUrl, params.toString(), {
@@ -584,7 +606,6 @@ export class LegacyFilingClient {
         const testBuf = Buffer.from(res.data);
         const testHead = testBuf.subarray(0, 512).toString('utf-8').trimStart().toLowerCase();
         if (testHead.startsWith('<!doctype html') || testHead.startsWith('<html')) {
-          // Nếu POST trả về HTML, thử tiếp GET
           throw new Error('POST trả về HTML, fallback GET');
         }
       } catch {
@@ -599,7 +620,22 @@ export class LegacyFilingClient {
           timeout: 45000
         });
       }
+      return res;
+    };
 
+    try {
+      let res: any;
+      try {
+        res = await executeDownload();
+      } catch (firstErr: unknown) {
+        // Nếu bị lỗi 500 do lệch trạng thái session trên eTax, thực hiện query lại đúng năm rồi retry 1 lần
+        if (targetYear) {
+          await this.queryFilings(targetYear, { page: 1, signal });
+          res = await executeDownload();
+        } else {
+          throw firstErr;
+        }
+      }
       const buffer = Buffer.from(res.data);
       const contentType = String(res.headers?.['content-type'] || '');
       const disposition = String(res.headers?.['content-disposition'] || '');
@@ -793,20 +829,21 @@ export class LegacyFilingClient {
     await this.ensureEtaxSession();
     await TaxPortalClient.waitForGlobalRateLimit(signal);
     const safeMessageId = this.validateMessageId(messageId);
-    this.assertLookupState();
+    if (!this.currentFormState.dseSessionId) {
+      await this.ensureEtaxSession(true);
+    }
 
     const params = new URLSearchParams();
     params.set('dse_sessionId', this.currentFormState.dseSessionId);
-    params.set('dse_applicationId', this.currentFormState.dseApplicationId);
-    params.set('dse_operationName', this.currentFormState.dseOperationName);
-    params.set('dse_pageId', this.currentFormState.dsePageId);
-    params.set('dse_processorState', this.currentFormState.dseProcessorState);
-    params.set('dse_processorId', this.currentFormState.dseProcessorId!);
-    if (this.currentFormState.dseErrorPage) {
-      params.set('dse_errorPage', this.currentFormState.dseErrorPage);
+    params.set('dse_applicationId', this.currentFormState.dseApplicationId || '-1');
+    params.set('dse_operationName', 'traCuuToKhaiProc');
+    params.set('dse_pageId', this.currentFormState.dsePageId || '1');
+    params.set('dse_processorState', this.currentFormState.dseProcessorState || 'viewTraCuuTkhai');
+    if (this.currentFormState.dseProcessorId) {
+      params.set('dse_processorId', this.currentFormState.dseProcessorId);
     }
-    params.set('dse_nextEventName', 'viewTBao');
-    params.set('ctMaGDich', safeMessageId);
+    params.set('dse_nextEventName', 'downTbao');
+    params.set('idTbao', safeMessageId);
 
     const actionUrl = this.resolveEtaxUrl(this.currentFormState.actionUrl, PORTAL_CONFIG.ETAX_REQUEST_API);
     const res = await this.session.client.get(actionUrl, {
@@ -871,14 +908,18 @@ export class LegacyFilingClient {
   private isLookupReady(): boolean {
     return (
       this.currentFormState.dseOperationName === 'traCuuToKhaiProc' &&
-      Boolean(this.currentFormState.dseSessionId && this.currentFormState.actionUrl)
+      Boolean(
+        this.currentFormState.dseSessionId &&
+        this.currentFormState.dseProcessorId &&
+        this.currentFormState.actionUrl
+      )
     );
   }
 
   private assertLookupState(): void {
-    if (!this.isLookupReady()) {
-      const error = new Error('Trạng thái form tra cứu eTax chưa đầy đủ hoặc đã thay đổi.');
-      Object.assign(error, { code: 'FORM_CHANGED' });
+    if (!this.currentFormState.dseSessionId) {
+      const error = new Error('Phiên eTax chưa được xác thực hoặc đã hết hạn.');
+      Object.assign(error, { code: 'AUTH_EXPIRED' });
       throw error;
     }
   }
