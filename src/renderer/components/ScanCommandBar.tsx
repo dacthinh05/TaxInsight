@@ -246,22 +246,17 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
           type="button"
           onClick={onStartScan}
           disabled={isScanning}
-          className="h-8 px-4 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold rounded-lg flex items-center space-x-1.5 transition-all shadow-xs hover:shadow-sm disabled:opacity-50 cursor-pointer shrink-0"
+          className="h-8.5 px-4 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-bold rounded-lg flex items-center justify-center space-x-1.5 transition-all shadow-xs hover:shadow-sm disabled:opacity-50 cursor-pointer shrink-0 min-w-[135px]"
         >
           {isScanning ? (
             <>
               <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-200" />
-              <span>{isGntMode ? 'Đang tra cứu...' : (isLegacyMode ? 'Đang tra cứu năm cũ...' : 'Đang quét...')}</span>
+              <span>{isGntMode ? 'Đang tra cứu...' : 'Đang quét...'}</span>
             </>
           ) : isGntMode ? (
             <>
               <Search className="w-3.5 h-3.5 text-teal-200" />
-              <span>Tra cứu</span>
-            </>
-          ) : isLegacyMode ? (
-            <>
-              <History className="w-3.5 h-3.5 text-teal-200" />
-              <span>Tra cứu năm cũ</span>
+              <span>Tra cứu GNT</span>
             </>
           ) : (
             <>

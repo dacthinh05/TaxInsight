@@ -38,6 +38,8 @@ export class LegacyFilingClient {
   private availableFormOptions: EtaxFormOption[] = [];
   private generation = 0;
   private lastQueriedYear: number | null = null;
+  private lastQueriedPage: number | null = null;
+  private messageIdToPageMap = new Map<string, { year: number; page: number }>();
   private latestDiagnostic: LegacyFilingDiagnosticReport = {
     checkpoints: {
       LEGACY_01_DVC_SESSION_VALID: { status: 'SKIPPED' },
@@ -457,10 +459,11 @@ export class LegacyFilingClient {
   ): Promise<EtaxParseResult> {
     await this.ensureEtaxSession();
     await TaxPortalClient.waitForGlobalRateLimit(options.signal);
-    this.lastQueriedYear = year;
     const fromDate = options.fromDate || `01/01/${year}`;
     const toDate = options.toDate || `31/12/${year}`;
     const pageNum = options.page || 1;
+    this.lastQueriedYear = year;
+    this.lastQueriedPage = pageNum;
 
     // `kieuKy` phải đến từ form HTML hiện hành hoặc mapping arrTKhai của chính
     // response đó. Không mặc định Q vì từng mẫu/năm có chu kỳ khác nhau.
@@ -522,6 +525,11 @@ export class LegacyFilingClient {
       this.mergeFormState(parsedForm);
 
       const parsedResults = EtaxFilingResultParser.parse(html);
+      for (const filing of parsedResults.filings) {
+        if (filing.id) {
+          this.messageIdToPageMap.set(filing.id, { year, page: pageNum });
+        }
+      }
       if (parsedResults.isFormChanged && parsedForm.isFormChanged) {
         const err = new Error(parsedResults.errorMessage || parsedForm.errorMessage || 'Cấu trúc bảng kết quả eTax đã thay đổi.');
         Object.assign(err, { code: 'FORM_CHANGED' });
@@ -555,16 +563,20 @@ export class LegacyFilingClient {
       await this.ensureEtaxSession(true);
     }
 
-    // Đồng bộ session state của eTax về đúng năm của hồ sơ trước khi tải
+    // Đồng bộ session state của eTax về đúng năm & đúng trang của hồ sơ trước khi tải
     const yearFromIdMatch = safeMessageId.match(/\d{3}(20\d{2})/);
     const targetYear = filingYear || (yearFromIdMatch ? parseInt(yearFromIdMatch[1], 10) : undefined);
+    const pageInfo = this.messageIdToPageMap.get(safeMessageId);
 
-    if (targetYear && this.lastQueriedYear !== targetYear) {
+    const targetPage = pageInfo?.page || 1;
+    const effectiveYear = pageInfo?.year || targetYear;
+
+    if (effectiveYear && (this.lastQueriedYear !== effectiveYear || this.lastQueriedPage !== targetPage)) {
       try {
-        await this.queryFilings(targetYear, { page: 1, signal });
+        await this.queryFilings(effectiveYear, { page: targetPage, signal });
       } catch (qErr: unknown) {
         const msg = qErr instanceof Error ? qErr.message : String(qErr);
-        console.warn(`[LegacyFilingClient] Preflight query năm ${targetYear} thất bại: ${msg}`);
+        console.warn(`[LegacyFilingClient] Preflight query năm ${effectiveYear} trang ${targetPage} thất bại: ${msg}`);
       }
     }
 
@@ -588,37 +600,24 @@ export class LegacyFilingClient {
 
     const actionUrl = this.resolveEtaxUrl(this.currentFormState.actionUrl, PORTAL_CONFIG.ETAX_REQUEST_API);
 
-    const executeDownload = async () => {
+    const executeDownload = async (): Promise<any> => {
       const params = buildParams();
-      let res: any;
-      try {
-        res = await this.session.client.post(actionUrl, params.toString(), {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Referer': `${PORTAL_CONFIG.ETAX_BASE_URL}/etaxnnt/Request`,
-            'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
-          },
-          responseType: 'arraybuffer',
-          signal,
-          timeout: 45000
-        });
-        const testBuf = Buffer.from(res.data);
-        const testHead = testBuf.subarray(0, 512).toString('utf-8').trimStart().toLowerCase();
-        if (testHead.startsWith('<!doctype html') || testHead.startsWith('<html')) {
-          throw new Error('POST trả về HTML, fallback GET');
-        }
-      } catch {
-        res = await this.session.client.get(actionUrl, {
-          params: Object.fromEntries(params.entries()),
-          headers: {
-            'Referer': `${PORTAL_CONFIG.ETAX_BASE_URL}/etaxnnt/Request`,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
-          },
-          responseType: 'arraybuffer',
-          signal,
-          timeout: 45000
-        });
+      const res = await this.session.client.post(actionUrl, params.toString(), {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Referer': `${PORTAL_CONFIG.ETAX_BASE_URL}/etaxnnt/Request`,
+          'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+        },
+        responseType: 'arraybuffer',
+        signal,
+        timeout: 45000
+      });
+
+      const testBuf = Buffer.from(res.data);
+      const testHead = testBuf.subarray(0, 512).toString('utf-8').trimStart().toLowerCase();
+      if (testHead.startsWith('<!doctype html') || testHead.startsWith('<html')) {
+        throw new Error('eTax trả về trang HTML thay vì tệp hồ sơ');
       }
       return res;
     };
@@ -628,9 +627,22 @@ export class LegacyFilingClient {
       try {
         res = await executeDownload();
       } catch (firstErr: unknown) {
-        // Nếu bị lỗi 500 do lệch trạng thái session trên eTax, thực hiện query lại đúng năm rồi retry 1 lần
-        if (targetYear) {
-          await this.queryFilings(targetYear, { page: 1, signal });
+        // Nếu bị lỗi HTML hoặc 500 do lệch trạng thái phân trang trên eTax,
+        // tìm lại đúng trang chứa hồ sơ rồi tải lại
+        if (effectiveYear) {
+          let foundPage = targetPage;
+          if (!pageInfo) {
+            const q1 = await this.queryFilings(effectiveYear, { page: 1, signal });
+            const maxP = Math.min(q1.pagination.totalPages || 1, 10);
+            for (let p = 2; p <= maxP; p++) {
+              if (this.messageIdToPageMap.get(safeMessageId)) {
+                foundPage = this.messageIdToPageMap.get(safeMessageId)!.page;
+                break;
+              }
+              await this.queryFilings(effectiveYear, { page: p, signal });
+            }
+          }
+          await this.queryFilings(effectiveYear, { page: foundPage, signal });
           res = await executeDownload();
         } else {
           throw firstErr;

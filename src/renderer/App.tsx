@@ -471,8 +471,8 @@ export const App: React.FC = () => {
             level: 'YEAR'
           }
         });
-
         if (window.taxPortalAPI) {
+          let yearFilings: TaxFiling[] = [];
           const res = await window.taxPortalAPI.startScan({
             year: y,
             taxType: selectedTaxType,
@@ -481,15 +481,37 @@ export const App: React.FC = () => {
           });
 
           if (res.success && res.data) {
-            updatedByYear[y] = res.data.filings;
-            combinedFilings = [...combinedFilings, ...res.data.filings];
+            yearFilings = [...res.data.filings];
+          }
+
+          // Tự động quét thêm eTax cho năm đó
+          if (window.taxPortalAPI?.scanLegacyFilings) {
+            try {
+              const legacyRes = await window.taxPortalAPI.scanLegacyFilings({
+                yearFrom: y,
+                yearTo: y,
+                maTKhai: '00'
+              });
+              if (legacyRes?.success && legacyRes.filings?.length) {
+                for (const lf of legacyRes.filings) {
+                  if (!yearFilings.some(item => item.id === lf.id || (lf.messageId && item.messageId === lf.messageId))) {
+                    yearFilings.push(lf);
+                  }
+                }
+              }
+            } catch {}
+          }
+
+          if (scanId === latestScanId.current) {
+            updatedByYear[y] = yearFilings;
+            combinedFilings = [...combinedFilings, ...yearFilings];
+            setFilingsByYear(prev => ({ ...prev, [y]: yearFilings }));
+            setFilings([...combinedFilings]);
           }
         }
       }
 
       if (scanId === latestScanId.current) {
-        // Merge kiểu functional: không ghi đè các cập nhật filingsByYear xảy ra
-        // trong lúc quét (trước đây snapshot đầu phiên đè mất cache năm vừa đổi)
         setFilingsByYear(prev => ({ ...prev, ...updatedByYear }));
         const curYearFilings = updatedByYear[selectedYear] || combinedFilings;
         setFilings(curYearFilings);
@@ -503,6 +525,7 @@ export const App: React.FC = () => {
     // ─── CHẾ ĐỘ QUÉT 1 NĂM THÔNG THƯỜNG ─────────────────────────────────
     const customRange = resolveScanDateRange(selectedYear, scanRangeMode);
     if (window.taxPortalAPI) {
+      // 1. Quét Cổng DVC trước
       const res = await window.taxPortalAPI.startScan({
         year: selectedYear,
         taxType: selectedTaxType,
@@ -510,50 +533,51 @@ export const App: React.FC = () => {
         customRange
       });
 
-      // Nếu có request quét mới hơn đã gửi đi -> Bỏ qua kết quả cũ tránh race condition
       if (scanId !== latestScanId.current) return;
 
+      let combinedFilings: TaxFiling[] = [];
       if (res.success && res.data) {
-        let combinedFilings = [...res.data.filings];
+        combinedFilings = [...res.data.filings];
+        // Stream ngay kết quả DVC ra bảng để người dùng nhìn thấy ngay lập tức
+        setFilings(combinedFilings);
+        setFilingsByYear(prev => ({ ...prev, [selectedYear]: combinedFilings }));
+        setMissingVat(res.data.missingVatCheck);
+        setMissingPit(res.data.missingPitCheck);
+      }
 
-        // Tự động quét thêm phân hệ eTax để hợp nhất trọn vẹn 100% tờ khai
-        if (window.taxPortalAPI?.scanLegacyFilings) {
-          try {
-            const legacyRes = await window.taxPortalAPI.scanLegacyFilings({
-              yearFrom: selectedYear,
-              yearTo: selectedYear,
-              maTKhai: '00'
-            });
-            if (legacyRes?.success && legacyRes.filings?.length) {
-              for (const lf of legacyRes.filings) {
-                if (!combinedFilings.some(item => item.id === lf.id || (lf.messageId && item.messageId === lf.messageId))) {
-                  combinedFilings.push(lf);
+      // 2. Tiếp tục nạp phân hệ eTax và stream cập nhật ngay khi có kết quả
+      if (window.taxPortalAPI?.scanLegacyFilings) {
+        try {
+          const legacyRes = await window.taxPortalAPI.scanLegacyFilings({
+            yearFrom: selectedYear,
+            yearTo: selectedYear,
+            maTKhai: '00'
+          });
+          if (scanId === latestScanId.current && legacyRes?.success && legacyRes.filings?.length) {
+            for (const lf of legacyRes.filings) {
+              if (!combinedFilings.some(item => item.id === lf.id || (lf.messageId && item.messageId === lf.messageId))) {
+                combinedFilings.push(lf);
+              }
+            }
+            setFilings([...combinedFilings]);
+
+            const grouped: Record<number, TaxFiling[]> = { [selectedYear]: combinedFilings };
+            for (const f of combinedFilings) {
+              const y = f.periodNormalized?.year;
+              if (y && y >= 2000 && y <= 2099) {
+                if (!grouped[y]) grouped[y] = [];
+                if (!grouped[y].some(item => item.id === f.id)) {
+                  grouped[y].push(f);
                 }
               }
             }
-          } catch {}
-        }
-
-        setFilings(combinedFilings);
-
-        // Tự động phân bổ filings theo từng năm kê khai vào filingsByYear
-        const grouped: Record<number, TaxFiling[]> = { [selectedYear]: combinedFilings };
-        for (const f of combinedFilings) {
-          const y = f.periodNormalized?.year;
-          if (y && y >= 2000 && y <= 2099) {
-            if (!grouped[y]) grouped[y] = [];
-            if (!grouped[y].some(item => item.id === f.id)) {
-              grouped[y].push(f);
-            }
+            setFilingsByYear(prev => ({ ...prev, ...grouped }));
+            setMissingVat(checkMissingPeriods(combinedFilings, selectedYear, 'VAT', true));
+            setMissingPit(checkMissingPeriods(combinedFilings, selectedYear, 'PIT', true));
           }
-        }
-        setFilingsByYear(prev => ({ ...prev, ...grouped }));
-        setMissingVat(checkMissingPeriods(combinedFilings, selectedYear, 'VAT', true));
-        setMissingPit(checkMissingPeriods(combinedFilings, selectedYear, 'PIT', true));
-        setSelectedIds(new Set());
-      } else {
-        alert(res.error || 'Có lỗi xảy ra trong quá trình quét hồ sơ');
+        } catch {}
       }
+      setSelectedIds(new Set());
     } else {
       alert('Không kết nối được tiến trình chính. Không thể quét dữ liệu Cổng Thuế.');
       setIsScanning(false);
