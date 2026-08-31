@@ -248,7 +248,8 @@ export class EtaxFormStateParser {
   ): URLSearchParams {
     const missing = [
       ['actionUrl', state.actionUrl],
-      ['dse_sessionId', state.dseSessionId]
+      ['dse_sessionId', state.dseSessionId],
+      ['dse_processorId', state.dseProcessorId]
     ].filter(([, value]) => !value).map(([name]) => name);
     if (missing.length > 0 || state.isFormChanged) {
       throw this.formChanged(`Form tra cứu eTax thiếu trường bắt buộc: ${missing.join(', ') || 'unknown'}`);

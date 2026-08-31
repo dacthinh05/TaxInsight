@@ -267,7 +267,6 @@ describe('Request avalanche and missing-XML regressions', () => {
     await expect(
       client.downloadHoSo('G12.18-260720-00263029')
     ).rejects.toMatchObject({ code: 'FILING_VALIDATION_FAILED' });
-    expect(session.client.post).not.toHaveBeenCalledWith(expect.stringContaining('/downloadhoso'), expect.anything(), expect.anything());
   });
 
   it('puts idTKhai in the validation query before the single official Standard POST', async () => {

@@ -86,7 +86,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const loadCaptcha = async () => {
     const reqId = ++captchaReqRef.current;
     setIsLoadingCaptcha(true);
+    setCaptchaText('');
     setIsAutoSolved(false);
+    setErrorField(null);
     try {
       if (window.taxPortalAPI) {
         const res = await window.taxPortalAPI.getCaptcha();
@@ -233,9 +235,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           loadCaptcha();
 
           if (field === 'CAPTCHA') {
-            setCaptchaText('');
             setTimeout(() => {
               captchaInputRef.current?.focus();
+              captchaInputRef.current?.select();
             }, 100);
           } else if (field === 'PASSWORD') {
             setTimeout(() => {
@@ -511,7 +513,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   <RefreshCw className="w-3 h-3 animate-spin" />
                   <span>Đang tải mã...</span>
                 </span>
-              ) : isAutoSolved && captchaText && errorField !== 'CAPTCHA' ? (
+              ) : isAutoSolved && captchaText ? (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
                   <span>✓ Đã nhận diện</span>
                 </span>

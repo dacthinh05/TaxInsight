@@ -6,10 +6,11 @@ dist/
 dist-electron/
 dist-build/
 dist-release/
-artifacts-dist/
+build-dist/
 release/
 release*/
 release-v*/
+artifacts-dist/
 data/
 
 # Local secrets & credentials

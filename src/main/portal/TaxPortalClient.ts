@@ -1452,22 +1452,9 @@ export class TaxPortalClient {
         } catch (attErr: unknown) {
           if (this.mustStopDownloadFallback(attErr)) throw attErr;
         }
-
-        if (validationStatus !== 200) {
-          const err = this.createDownloadWorkflowError(
-            `validateIdTkhai trả HTTP ${validationStatus ?? 'không xác định'} (yêu cầu 200).`,
-            'FILING_VALIDATION_FAILED'
-          );
-          Object.assign(err, { validationResult: '', httpStatus: validationStatus });
-          throw err;
-        }
-        const err = this.createDownloadWorkflowError(
-          `Hồ sơ không vượt qua validateIdTkhai (kết quả nghiệp vụ: "${validationResult || 'rỗng'}" !== "200").`,
-          'FILING_VALIDATION_FAILED'
-        );
-        Object.assign(err, { validationResult });
-        throw err;
       }
+
+      // Vẫn tiếp tục thực hiện POST direct download (phòng trường hợp Cổng Thuế vẫn mở file qua /downloadhoso)
       let hasRetried = false;
       while (true) {
         let downloadResponse: any = null;
@@ -1544,9 +1531,9 @@ export class TaxPortalClient {
           }
         }
 
-        // Nếu POST /downloadhoso thất bại hoặc trả về body rỗng sau retry,
+        // Nếu POST thất bại hoặc rỗng và chưa thử tệp đính kèm (do validate ban đầu là 200),
         // tự động thử lấy từ danh sách tài liệu đính kèm (files/tai-lieu-dkem)
-        if (!payload) {
+        if (!payload && isDirectDownloadValid) {
           try {
             payload = await this.downloadFilingAttachment(
               context.action.maHoSo,
@@ -1568,9 +1555,7 @@ export class TaxPortalClient {
         }
 
         if (payload) {
-          // F-005: chốt xác minh định danh lần cuối trước khi trả về — payload đã
-          // qua verify ở cả main path lẫn attachment path, nhưng chặn thêm ở đây để
-          // không có nhánh nào bỏ sót (defense in depth).
+          // F-005: chốt xác minh định danh lần cuối trước khi trả về
           if (!this.verifyXmlPayloadIdentity(payload.content, expectedIdentity)) {
             throw this.createDownloadWorkflowError(
               'Nội dung tải về không khớp định danh filing (MST/kỳ/mã tờ khai) — từ chối lưu để tránh sai hồ sơ.',
@@ -1578,6 +1563,24 @@ export class TaxPortalClient {
             );
           }
           return payload;
+        }
+
+        // Nếu cả validate và direct POST đều không thành công
+        if (!isDirectDownloadValid) {
+          if (validationStatus !== 200) {
+            const err = this.createDownloadWorkflowError(
+              `validateIdTkhai trả HTTP ${validationStatus ?? 'không xác định'} (yêu cầu 200).`,
+              'FILING_VALIDATION_FAILED'
+            );
+            Object.assign(err, { validationResult: '', httpStatus: validationStatus });
+            throw err;
+          }
+          const err = this.createDownloadWorkflowError(
+            `Hồ sơ không vượt qua validateIdTkhai (kết quả nghiệp vụ: "${validationResult || 'rỗng'}" !== "200").`,
+            'FILING_VALIDATION_FAILED'
+          );
+          Object.assign(err, { validationResult });
+          throw err;
         }
 
         if (postError) {

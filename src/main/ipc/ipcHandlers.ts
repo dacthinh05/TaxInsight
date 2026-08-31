@@ -324,13 +324,13 @@ export function setupIpcHandlers(
         return { success: false, error: 'Ảnh captcha không hợp lệ hoặc quá lớn.' };
       }
       const result = await CaptchaSolver.solveDetailed(imageBase64);
+      const isAccepted = CaptchaSolver.isSafeForAutoSubmit(result);
+      const recognizedText = (result.text && /^[a-z0-9]{4,6}$/i.test(result.text)) ? result.text.toLowerCase() : '';
       return {
         success: true,
-        // Không tự điền kết quả OCR yếu. Người dùng vẫn nhìn thấy ảnh và nhập
-        // tay, tránh gửi sai CAPTCHA nhiều lần rồi kích hoạt WAF/rate limit.
-        text: CaptchaSolver.isSafeForAutoSubmit(result) ? result.text : '',
+        text: recognizedText,
         confidence: result.confidence,
-        accepted: CaptchaSolver.isSafeForAutoSubmit(result)
+        accepted: isAccepted
       };
     } catch (err: any) {
       return { success: false, error: err.message };
