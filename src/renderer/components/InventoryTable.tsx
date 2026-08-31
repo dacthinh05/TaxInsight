@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckSquare, Square } from 'lucide-react';
+import { AlertTriangle, CheckSquare, FileSearch, Inbox, RotateCcw, Square } from 'lucide-react';
 import {
   buildFilingSearchString,
   compareFilings,
@@ -70,8 +70,16 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
   const selectedTaxType = externalTaxType !== undefined ? externalTaxType : internalTaxType;
   const setSelectedTaxType = (t: TaxType) => {
     setInternalTaxType(t);
+    if (selectedIds.size > 0) onDeselectAll();
     if (externalOnTaxTypeChange) externalOnTaxTypeChange(t);
   };
+
+  // Tự động bỏ chọn các checkbox khi người dùng chuyển sang tab loại thuế khác
+  useEffect(() => {
+    if (selectedIds.size > 0) {
+      onDeselectAll();
+    }
+  }, [selectedTaxType]);
   const [viewMode, setViewMode] = useState<'LIST' | 'BY_PERIOD'>('BY_PERIOD');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
@@ -519,18 +527,35 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
               <tr>
                 <td colSpan={viewMode === 'BY_PERIOD' ? 7 : 8} className="p-12 text-center text-slate-400 text-[13px]">
                   {filings.length === 0 ? (
-                    <div className="space-y-1.5">
-                      <p className="font-medium text-slate-600">Chưa có dữ liệu hồ sơ</p>
+                    <div className="flex flex-col items-center justify-center space-y-3 max-w-sm mx-auto py-6">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 shadow-2xs border border-slate-200">
+                        <Inbox className="w-6 h-6 text-slate-400" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-semibold text-slate-700 text-sm">Chưa có dữ liệu hồ sơ tờ khai</p>
+                        <p className="text-slate-500 text-xs">
+                          Hãy chọn năm/kỳ thuế và nhấn nút <strong className="text-teal-700">"Quét tờ khai"</strong> ở thanh lệnh phía trên để đồng bộ từ Cổng Thuế.
+                        </p>
+                      </div>
                     </div>
                   ) : (
-                    <div className="space-y-1.5">
-                      <p className="font-medium text-slate-600">Không tìm thấy hồ sơ phù hợp</p>
+                    <div className="flex flex-col items-center justify-center space-y-3 max-w-sm mx-auto py-6">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 shadow-2xs border border-slate-200">
+                        <FileSearch className="w-6 h-6 text-slate-400" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-semibold text-slate-700 text-sm">Không tìm thấy tờ khai phù hợp</p>
+                        <p className="text-slate-500 text-xs">
+                          Bộ lọc hiện tại không khớp với {filings.length} tờ khai đã quét.
+                        </p>
+                      </div>
                       <button
                         type="button"
                         onClick={handleResetFilters}
-                        className="mt-2 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded text-xs transition-colors"
+                        className="mt-1 px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-300 shadow-2xs"
                       >
-                        Xóa tất cả bộ lọc
+                        <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Xóa tất cả bộ lọc</span>
                       </button>
                     </div>
                   )}

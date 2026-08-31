@@ -148,17 +148,21 @@ export const PaymentSlipTable: React.FC<PaymentSlipTableProps> = ({
               <tr>
                 <td colSpan={9} className="p-12 text-center text-slate-400 text-xs">
                   {totalCount === 0 ? (
-                    <div className="flex flex-col items-center justify-center space-y-2">
-                      <CreditCard className="w-8 h-8 text-slate-300" />
-                      <p className="font-medium text-slate-600">Chưa có Giấy Nộp Tiền nào được quét</p>
-                      <p className="text-[11px] text-slate-400">
-                        Bấm nút &quot;Tra cứu&quot; ở thanh trên để tải danh sách chứng từ nộp thuế từ eTax
-                      </p>
+                    <div className="flex flex-col items-center justify-center space-y-3 max-w-sm mx-auto py-6">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 shadow-2xs border border-slate-200">
+                        <CreditCard className="w-6 h-6 text-slate-400" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-semibold text-slate-700 text-sm">Chưa có Giấy Nộp Tiền (C1-02/NS)</p>
+                        <p className="text-slate-500 text-xs">
+                          Bấm nút <strong className="text-teal-700">"Quét Giấy Nộp Tiền"</strong> ở thanh trên để tra cứu chứng từ nộp thuế từ eTax.
+                        </p>
+                      </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center justify-center space-y-1">
-                      <p className="font-medium text-slate-500">Không có Giấy Nộp Tiền nào khớp từ khóa tìm kiếm</p>
-                      <p className="text-[11px] text-slate-400">{totalCount} GNT đang bị ẩn bởi bộ lọc</p>
+                    <div className="flex flex-col items-center justify-center space-y-2 max-w-sm mx-auto py-6">
+                      <p className="font-semibold text-slate-700 text-sm">Không tìm thấy Giấy Nộp Tiền phù hợp</p>
+                      <p className="text-slate-500 text-xs">{totalCount} GNT đang bị ẩn bởi từ khóa tìm kiếm</p>
                     </div>
                   )}
                 </td>

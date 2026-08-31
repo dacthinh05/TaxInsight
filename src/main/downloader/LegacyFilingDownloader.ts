@@ -405,7 +405,9 @@ export class LegacyFilingDownloader extends EventEmitter {
   private emitProgress(item?: DownloadQueueItem) {
     this.emit('progress', {
       summary: this.getSummary(),
-      currentItem: item
+      currentItem: item,
+      item,
+      queue: this.getQueue()
     });
   }
 

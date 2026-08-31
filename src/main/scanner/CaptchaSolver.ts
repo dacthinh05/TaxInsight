@@ -4,7 +4,7 @@ import { app } from 'electron';
 import { PNG } from 'pngjs';
 import jpeg from 'jpeg-js';
 import { createWorker, type Worker } from 'tesseract.js';
-
+import { OnnxCaptchaEngine } from './OnnxCaptchaEngine';
 /**
  * Ứng viên OCR: giữ nguyên thông tin theo vị trí để bỏ phiếu đồng thuận.
  * - text: chuỗi chỉ gồm ký tự hợp lệ [0-9a-z] (đã lọc rác)
@@ -46,9 +46,17 @@ export class CaptchaSolver {
   public static isSafeForAutoSubmit(result: CaptchaSolveResult): boolean {
     if (
       !result.accepted ||
-      result.confidence < 90 ||
       !/^[a-z0-9]{5}$/.test(result.text)
     ) {
+      return false;
+    }
+
+    // Với engine ONNX chuyên dụng: chỉ auto-submit khi confidence >= 85%
+    if (result.reason === 'onnx_engine') {
+      return result.confidence >= 85;
+    }
+
+    if (result.confidence < 90) {
       return false;
     }
 
@@ -1057,13 +1065,42 @@ export class CaptchaSolver {
       return { text: '', confidence: 0, accepted: false, reason: 'invalid_input', candidates: [] };
     }
 
+    const candidates: OcrCandidate[] = [];
+
+    // 1. Chạy OnnxCaptchaEngine (WASM Deep Learning Model)
+    try {
+      const onnxRes = await OnnxCaptchaEngine.solve(base64Image);
+      if (onnxRes.text && /^[a-z0-9]{5}$/.test(onnxRes.text)) {
+        const onnxCand: OcrCandidate = {
+          text: onnxRes.text,
+          confidence: onnxRes.confidence,
+          source: 'onnx_engine',
+          chars: onnxRes.text.split(''),
+          charConfs: onnxRes.charConfs
+        };
+        candidates.push(onnxCand);
+
+        // Fast-path: nếu ONNX đạt độ tự tin cao (>=85%), trả ngay kết quả auto-submit an toàn
+        if (onnxRes.accepted && onnxRes.confidence >= 85) {
+          return {
+            text: onnxRes.text,
+            confidence: onnxRes.confidence,
+            accepted: true,
+            reason: 'onnx_engine',
+            candidates: [onnxCand]
+          };
+        }
+      }
+    } catch (onnxErr: unknown) {
+      const msg = onnxErr instanceof Error ? onnxErr.message : String(onnxErr);
+      console.warn('[CaptchaSolver] Lỗi engine ONNX, chuyển fallback sang Tesseract:', msg);
+    }
     try {
       const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '').trim();
       const rawBuffer = Buffer.from(cleanBase64, 'base64');
-
       const decoded = this.decodeToGrayscale(rawBuffer);
       if (!decoded) {
-        return { text: '', confidence: 0, accepted: false, reason: 'decode_failed', candidates: [] };
+        return { text: '', confidence: 0, accepted: false, reason: 'decode_failed', candidates };
       }
       const { width, height, gray } = decoded;
       const cleanedGray = this.clearFrame(gray, width, height);
@@ -1080,13 +1117,13 @@ export class CaptchaSolver {
         { name: 'grayscale_stretched', plane: planes.grayscale_stretched }
       ];
 
-      const candidates: OcrCandidate[] = [];
       let worker: Worker;
       try {
         worker = await this.getWorker();
-      } catch (err: any) {
-        console.warn('[CaptchaSolver] Không khởi tạo được worker OCR:', err.message);
-        return { text: '', confidence: 0, accepted: false, reason: 'worker_failed', candidates: [] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn('[CaptchaSolver] Không khởi tạo được worker OCR:', msg);
+        return { text: '', confidence: 0, accepted: false, reason: 'worker_failed', candidates };
       }
 
       for (const target of wordTargets) {
@@ -1144,15 +1181,15 @@ export class CaptchaSolver {
         this.appendDebugLog(debugDir, `FINAL\t${finalResult.confidence}\t${finalResult.text || '(rejected)'}\t${finalResult.reason}`);
       }
       return finalResult;
-    } catch (err: any) {
-      console.warn('[CaptchaSolver] Lỗi khi nhận diện CAPTCHA tự động:', err.message);
-      // Hủy worker lỗi thay vì chỉ bỏ tham chiếu — tránh rò rỉ WASM worker
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[CaptchaSolver] Lỗi khi nhận diện CAPTCHA tự động:', msg);
       const stalePromise = this.workerPromise;
       this.workerPromise = null;
       if (stalePromise) {
         stalePromise.then(w => w.terminate()).catch(() => {});
       }
-      return { text: '', confidence: 0, accepted: false, reason: `error:${err.message}`, candidates: [] };
+      return { text: '', confidence: 0, accepted: false, reason: `error:${msg}`, candidates };
     }
   }
 
@@ -1186,6 +1223,9 @@ export class CaptchaSolver {
 
   /** Dọn dẹp worker khi tắt app */
   public static async terminate(): Promise<void> {
+    try {
+      await OnnxCaptchaEngine.terminate();
+    } catch {}
     if (this.workerPromise) {
       try {
         const worker = await this.workerPromise;

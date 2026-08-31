@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Calendar, Download, FileSpreadsheet, Filter, MoreHorizontal, Search, TableProperties } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Calendar, Download, FileSpreadsheet, Filter, MoreHorizontal, Search, TableProperties, X } from 'lucide-react';
 import { FilterPopover, FilterState } from './FilterPopover';
 
 interface SearchToolbarProps {
@@ -73,6 +73,23 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isExcelMenuOpen, setIsExcelMenuOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Lắng nghe Ctrl+K / Ctrl+F để focus nhanh vào ô tìm kiếm
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K' || e.key === 'f' || e.key === 'F')) {
+        const tag = (document.activeElement?.tagName || '').toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea') {
+          e.preventDefault();
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Tính số lượng bộ lọc phụ đang kích hoạt
   let activeFilterCount = 0;
@@ -87,14 +104,28 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
       <div className="relative flex-1 max-w-md">
         <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
         <input
+          ref={searchInputRef}
           type="text"
           value={searchQuery}
           onChange={e => onSearchChange(e.target.value)}
           placeholder="Tìm tên, mã, kỳ hoặc ID hồ sơ…"
-          className="w-full h-9 pl-9 pr-3 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1.5 focus:ring-teal-600 focus:border-teal-600 transition-colors shadow-2xs"
+          className="w-full h-9 pl-9 pr-14 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-600/40 focus:border-teal-600 transition-all shadow-2xs"
         />
+        {searchQuery ? (
+          <button
+            type="button"
+            onClick={() => onSearchChange('')}
+            className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+            title="Xóa tìm kiếm"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        ) : (
+          <kbd className="absolute right-2 top-2 px-1.5 py-0.5 bg-slate-100 text-slate-400 rounded text-[10px] font-mono border border-slate-200 pointer-events-none select-none">
+            Ctrl K
+          </kbd>
+        )}
       </div>
-
       {/* Action Controls */}
       <div className="flex items-center space-x-2 relative">
         {/* Chuyển đổi Chế độ Xem: Theo kỳ / Danh sách */}

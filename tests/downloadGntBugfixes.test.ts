@@ -130,7 +130,7 @@ describe('BUGFIX #6 — inline validateIdTkhai trong downloadHoSoSingle kiểm t
   const validXml = '<?xml version="1.0"?><HSoThue><TKhai>01/GTGT</TKhai></HSoThue>';
   const validBase64 = Buffer.from(validXml, 'utf8').toString('base64');
 
-  const buildClient = (validateResponse: { status: number; data: any }) => {
+  const buildClient = (validateResponse: { status: number; data: any }, hasAttachments = true) => {
     const session = new PortalSession();
     const client = new TaxPortalClient(session);
     session.client.get = vi.fn().mockImplementation((url: string) => {
@@ -149,6 +149,9 @@ describe('BUGFIX #6 — inline validateIdTkhai trong downloadHoSoSingle kiểm t
         return Promise.reject(err);
       }
       if (url.includes('/data-tai-lieu-dkem')) {
+        if (!hasAttachments) {
+          return Promise.resolve({ status: 200, data: [] });
+        }
         return Promise.resolve({
           status: 200,
           data: [{ maHso: 'G12.18-260720-00263029', maTep: 'FILE_01', fileName: 'to_khai.xml', dinhDangTep: 'xml' }]
@@ -169,13 +172,20 @@ describe('BUGFIX #6 — inline validateIdTkhai trong downloadHoSoSingle kiểm t
     expect(payload.content).toBe(validBase64);
   });
 
-  it.each([['400'], ['500'], [''], ['false']])('body "%s" bị từ chối với FILING_VALIDATION_FAILED', async (body) => {
-    const client = buildClient({ status: 200, data: body });
+  it('body "400" với attachment có sẵn → tự động fallback sang tệp đính kèm và tải thành công', async () => {
+    const client = buildClient({ status: 200, data: '400' }, true);
+    const payload = await client.downloadHoSo('G12.18-260720-00263029');
+    expect(payload).toBeDefined();
+    expect(payload.content).toBe(validBase64);
+  });
+
+  it.each([['400'], ['500'], [''], ['false']])('body "%s" không có tệp đính kèm bị từ chối với FILING_VALIDATION_FAILED', async (body) => {
+    const client = buildClient({ status: 200, data: body }, false);
     await expect(client.downloadHoSo('G12.18-260720-00263029')).rejects.toMatchObject({ code: 'FILING_VALIDATION_FAILED' });
   });
 
-  it('status 204 (2xx khác 200) dù body "200" vẫn bị từ chối — guard tường minh chặn', async () => {
-    const client = buildClient({ status: 204, data: '200' });
+  it('status 204 (2xx khác 200) không có tệp đính kèm vẫn bị từ chối — guard tường minh chặn', async () => {
+    const client = buildClient({ status: 204, data: '200' }, false);
     await expect(client.downloadHoSo('G12.18-260720-00263029')).rejects.toMatchObject({ code: 'FILING_VALIDATION_FAILED' });
   });
 });

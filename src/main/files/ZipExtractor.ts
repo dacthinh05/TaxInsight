@@ -25,11 +25,9 @@ export class ZipExtractor {
   }
 
   private static buildFilingIdentity(filing: TaxFiling, taxCode: string): string {
-    const rawIdentity = `${taxCode}|${filing.id || 'hoso'}`;
-    const identityHash = this.computeSha256(Buffer.from(rawIdentity, 'utf8')).slice(0, 10);
-    const cleanTaxCode = sanitizeFilename(taxCode || 'MST').replace(/\s+/g, '-').slice(0, 20);
-    const cleanId = sanitizeFilename(filing.id || 'hoso').replace(/\s+/g, '-').slice(0, 52);
-    return `${cleanTaxCode}_${cleanId}_${identityHash}`;
+    const cleanTaxCode = sanitizeFilename(taxCode || 'MST').replace(/\s+/g, '-').slice(0, 16);
+    const cleanId = sanitizeFilename(filing.id || 'hoso').replace(/\s+/g, '-').slice(0, 40);
+    return `${cleanTaxCode}_${cleanId}`;
   }
 
   /**
@@ -281,10 +279,29 @@ export class ZipExtractor {
       }
 
       const ext = path.extname(entryName).toLowerCase();
-      const originalBasename = path.basename(entryName, ext);
+      let originalBasename = path.basename(entryName, ext);
+      
+      // Khử lặp: nếu originalBasename chứa mã hồ sơ (ví dụ files_000.713..._0), làm sạch gọn
+      if (filing.id && originalBasename.includes(filing.id)) {
+        originalBasename = originalBasename.replace(new RegExp(`^files_${filing.id}_?`, 'i'), '')
+          .replace(new RegExp(`^${filing.id}_?`, 'i'), '')
+          .replace(/^_/, '');
+      } else if (/^files_\d+$/i.test(originalBasename) || /^files$/i.test(originalBasename)) {
+        originalBasename = '';
+      }
+
+      const nameParts = [
+        prefixCode.replace(/-+$/, ''),
+        cleanPeriod,
+        filingSuffix,
+        filingIdentity
+      ];
+      if (originalBasename) {
+        nameParts.push(originalBasename);
+      }
 
       let finalFileName = this.buildSafeFileName(
-        `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}_${originalBasename}`,
+        nameParts.filter(Boolean).join('_'),
         ext
       );
 
@@ -294,7 +311,7 @@ export class ZipExtractor {
         let candidate: string;
         do {
           candidate = this.buildSafeFileName(
-            `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}_${originalBasename}_${counter}`,
+            `${nameParts.filter(Boolean).join('_')}_${counter}`,
             ext
           );
           counter++;

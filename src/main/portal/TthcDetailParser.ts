@@ -121,10 +121,29 @@ export class TthcDetailParser {
           'data-hoso',
           'data-ma'
         ]);
+        if (!maHoSo) {
+          const $parent = $element.closest('[data-mahoso], [data-ma-hoso], [data-ma-hs], [data-id], [data-hoso], [data-ma]');
+          if ($parent.length) {
+            maHoSo = this.firstAttribute($parent, [
+              'data-mahoso',
+              'data-ma-hoso',
+              'data-ma-hs',
+              'data-id',
+              'data-hoso',
+              'data-ma'
+            ]);
+          }
+        }
         if (!maHoSo && onclick) {
-          const argMatch = onclick.match(/(?:downloadHoSo|downloadhoso|taiHoSo|downTkhai)\s*\(\s*(?:this\s*,\s*)?['"]?([A-Za-z0-9._-]+)['"]?/i);
+          const argMatch = onclick.match(/(?:downloadHoSo|downloadhoso|taiHoSo|taiToKhai|downTkhai|downTKhai)\s*\(\s*(?:this\s*,\s*)?['"]?([A-Za-z0-9._-]+)['"]?/i);
           if (argMatch && argMatch[1] !== 'this') {
             maHoSo = argMatch[1];
+          }
+        }
+        if (!maHoSo) {
+          const inputVal = $('input[name="maHoSo"], input#maHoSo, input[name="idTKhai"], input#idTKhai, input[name="maHso"], input#maHso').first().val();
+          if (typeof inputVal === 'string' && inputVal.trim()) {
+            maHoSo = inputVal.trim();
           }
         }
         if (!filingAction && maHoSo && this.isSafeIdentifier(maHoSo)) {

@@ -194,7 +194,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
               onChange={e => onYearChange(parseInt(e.target.value, 10))}
               disabled={isScanning}
               title={isScanning ? 'Không thể đổi năm khi đang quét' : undefined}
-              className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800 text-xs focus:outline-none focus:ring-1 focus:ring-teal-600 focus:bg-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-mono font-bold text-slate-800 text-xs focus-ring focus:bg-white transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
             >
               {years.map(y => (
                 <option key={y} value={y}>
@@ -211,9 +211,9 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
             </label>
             <select
               value={scanRangeMode}
-              onChange={e => onRangeModeChange(e.target.value as any)}
+              onChange={e => onRangeModeChange(e.target.value)}
               disabled={isScanning}
-              className="h-8 max-w-[290px] px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:ring-1 focus:ring-teal-600 focus:bg-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="h-8 max-w-[290px] px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus-ring focus:bg-white transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
             >
               <optgroup label="Quét Đa Năm (Soát xét toàn diện)">
                 <option value="MULTI_3_YEARS">3 năm gần nhất ({currentYear - 2} – {currentYear})</option>
@@ -261,7 +261,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
               <select
                 value={selectedTaxType}
                 onChange={e => onTaxTypeChange(e.target.value as TaxType)}
-                className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:ring-1 focus:ring-teal-600 focus:bg-white transition-colors cursor-pointer"
+                className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus-ring focus:bg-white transition-all cursor-pointer shadow-2xs"
               >
                 <option value="ALL">Tất cả loại hồ sơ</option>
                 <option value="VAT">Thuế GTGT</option>

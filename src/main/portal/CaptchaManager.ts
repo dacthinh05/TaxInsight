@@ -30,35 +30,38 @@ export class CaptchaManager extends EventEmitter {
     forceManual = false,
     context: Pick<CaptchaChallenge, 'requestReason' | 'page' | 'attempt' | 'maxAttempts'> = {}
   ): Promise<string> {
-    const imageBase64 = await this.client.getCaptchaImage(purpose);
     const challengeId = `chal_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    let latestImageBase64 = '';
 
-    // 1. Thử tự động giải nếu bật autoSolve và không bị ép buộc manual
-    // Engine mới tự kiểm soát chất lượng qua Acceptance Gate: kết quả rỗng
-    // nghĩa là bằng chứng nhận diện yếu -> chủ động chuyển nhập tay thay vì submit mò
-    if (this.autoSolveEnabled && !forceManual && imageBase64) {
+    // 1. Thử tự động lấy ảnh và giải qua ONNX / Ensemble (tối đa 2 lần thử nếu ảnh đầu không đủ tin cậy)
+    const maxAutoAttempts = this.autoSolveEnabled && !forceManual ? 2 : 1;
+    for (let autoAttempt = 1; autoAttempt <= maxAutoAttempts; autoAttempt++) {
       try {
-        const result = await CaptchaSolver.solveDetailed(imageBase64);
-        if (CaptchaSolver.isSafeForAutoSubmit(result)) {
+        latestImageBase64 = await this.client.getCaptchaImage(purpose);
+        if (this.autoSolveEnabled && !forceManual && latestImageBase64) {
+          const result = await CaptchaSolver.solveDetailed(latestImageBase64);
+          if (CaptchaSolver.isSafeForAutoSubmit(result)) {
+            console.log(
+              `[CaptchaManager] CAPTCHA đạt cổng tự động (lần ${autoAttempt}, ${result.reason}, conf=${result.confidence}%)`
+            );
+            return result.text;
+          }
           console.log(
-            `[CaptchaManager] CAPTCHA đạt cổng tự động (${result.reason}, conf=${result.confidence}%)`
+            `[CaptchaManager] Tự giải CAPTCHA lần ${autoAttempt} chưa đạt cổng an toàn (${result.reason}, conf=${result.confidence}%)`
           );
-          return result.text;
         }
-        console.log(
-          `[CaptchaManager] Tự giải CAPTCHA không đủ tin cậy (${result.reason}, conf=${result.confidence}%) -> chuyển nhập tay`
-        );
-      } catch (err: any) {
-        console.warn('[CaptchaManager] Tự giải CAPTCHA thất bại, chuyển sang nhập tay:', err.message);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[CaptchaManager] Tự giải CAPTCHA lần ${autoAttempt} thất bại:`, msg);
       }
     }
 
-    // 2. Fallback sang modal thủ công
+    // 2. Fallback sang modal thủ công nếu chưa giải được tự động
     const challenge: CaptchaChallenge = {
       challengeId,
       purpose,
       targetRange,
-      imageBase64,
+      imageBase64: latestImageBase64,
       ...context
     };
 

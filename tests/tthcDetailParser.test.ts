@@ -108,4 +108,40 @@ describe('TthcDetailParser — trace-derived download actions', () => {
     `, pageUrl);
     expect(parsed.filingAction?.isThueDienTu).toBeUndefined();
   });
+
+  it('parses data-mahoso from parent container when button itself has no data-mahoso', () => {
+    const parsed = TthcDetailParser.parse(`
+      <meta name="_csrf" content="fixture-token" />
+      <table>
+        <tr data-mahoso="G12.18-260509-00037623">
+          <td>
+            <button id="btnDownload" onclick="downloadHoSo(this)">Tải hồ sơ</button>
+          </td>
+        </tr>
+      </table>
+    `, pageUrl);
+    expect(parsed.filingAction).toEqual({
+      kind: 'filing',
+      maHoSo: 'G12.18-260509-00037623',
+      isThueDienTu: undefined,
+      loaiTraCuu: undefined
+    });
+  });
+
+  it('parses direct identifier argument in onclick handler', () => {
+    const parsed = TthcDetailParser.parse(`
+      <meta name="_csrf" content="fixture-token" />
+      <a href="javascript:void(0)" onclick="downloadHoSo('G12.18-260509-00037623')">Tải</a>
+    `, pageUrl);
+    expect(parsed.filingAction?.maHoSo).toBe('G12.18-260509-00037623');
+  });
+
+  it('parses identifier from hidden form input when download button has no direct attribute', () => {
+    const parsed = TthcDetailParser.parse(`
+      <meta name="_csrf" content="fixture-token" />
+      <input type="hidden" id="maHoSo" name="maHoSo" value="G12.18-260509-00037623" />
+      <button class="btn-download-hoso" onclick="downloadHoSo(this)">Tải về</button>
+    `, pageUrl);
+    expect(parsed.filingAction?.maHoSo).toBe('G12.18-260509-00037623');
+  });
 });

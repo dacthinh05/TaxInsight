@@ -160,7 +160,7 @@ export class VatAnalyticsEngine {
     const snapshots: VatDeclarationSnapshot[] = [];
     const failedXmlDetails: Array<{ submissionId: string; periodLabel: string; reason: string }> = [];
 
-    // Concurrency thấp (2 luồng) + nghỉ giữa các batch: Cổng Thuế GDT trả
+    // Concurrency 2 luồng + nghỉ giữa các batch: Cổng Thuế GDT trả
     // HTTP 429 / chặn tạm khi bị bấm tải song song dồn dập, khiến số liệu
     // các kỳ trước rơi vào fallback toàn số 0 một cách ÂM THẦM.
     const concurrency = 2;
@@ -170,7 +170,6 @@ export class VatAnalyticsEngine {
     for (let i = 0; i < total; i += concurrency) {
       if (this.isCancelled || stopForInfrastructure) break;
       const batch = vatFilings.slice(i, i + concurrency);
-
       const batchPromises = batch.map(async filing => {
         if (this.isCancelled) return null;
 
@@ -379,7 +378,9 @@ export class VatAnalyticsEngine {
             isThueDienTu: filing.isThueDienTu,
             loaiTraCuu: filing.loaiTraCuu,
             maTkhai: filing.maTkhai,
-            altIds: filing.altIds
+            altIds: filing.altIds,
+            period: filing.period,
+            declarationCode: filing.declarationCode
           });
         } catch (dvcErr: any) {
           // Hồ sơ hiện hành phải giữ nguyên nguồn DVC; eTax chỉ dành cho

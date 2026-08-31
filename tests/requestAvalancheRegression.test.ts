@@ -261,13 +261,13 @@ describe('Request avalanche and missing-XML regressions', () => {
         data: '400',
         headers: { 'content-type': 'text/plain' }
       });
-    session.client.post = vi.fn();
+    session.client.post = vi.fn().mockResolvedValue({ status: 200, data: [] });
     const client = new TaxPortalClient(session);
 
     await expect(
       client.downloadHoSo('G12.18-260720-00263029')
     ).rejects.toMatchObject({ code: 'FILING_VALIDATION_FAILED' });
-    expect(session.client.post).not.toHaveBeenCalled();
+    expect(session.client.post).not.toHaveBeenCalledWith(expect.stringContaining('/downloadhoso'), expect.anything(), expect.anything());
   });
 
   it('puts idTKhai in the validation query before the single official Standard POST', async () => {

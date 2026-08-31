@@ -416,25 +416,49 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* Ô Mật Khẩu */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Mật khẩu
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-slate-700">
+                Mật khẩu
+              </label>
+              {useSavedPassword && !password && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10.5px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-2xs">
+                  <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-600 shrink-0" />
+                  <span>Đã tự động điền</span>
+                </span>
+              )}
+            </div>
             <div className="relative">
-              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <Lock className={`w-4 h-4 absolute left-3 top-3 transition-colors ${
+                useSavedPassword && !password ? 'text-emerald-600' : 'text-slate-400'
+              }`} />
               <input
                 ref={passwordInputRef}
                 type={showPassword ? 'text' : 'password'}
-                value={password}
+                value={useSavedPassword && !password ? '••••••••••••' : password}
                 onChange={e => {
-                  setPassword(e.target.value);
-                  setUseSavedPassword(false);
+                  const val = e.target.value;
+                  if (useSavedPassword && !password) {
+                    const cleaned = val.replace(/^[•●]+/, '').replace(/[•●]+$/, '');
+                    setPassword(cleaned);
+                    setUseSavedPassword(false);
+                  } else {
+                    setPassword(val);
+                    setUseSavedPassword(false);
+                  }
                   if (errorField === 'PASSWORD') setErrorField(null);
                 }}
-                placeholder={useSavedPassword ? 'Mật khẩu đã lưu an toàn trên thiết bị' : '••••••••••••'}
-                className={`w-full pl-9 pr-10 py-2 rounded-lg text-sm text-slate-900 focus:outline-none transition-all ${
+                onFocus={e => {
+                  if (useSavedPassword && !password) {
+                    e.target.select();
+                  }
+                }}
+                placeholder="••••••••••••"
+                className={`w-full pl-9 pr-10 py-2 rounded-lg text-sm transition-all focus:outline-none ${
                   errorField === 'PASSWORD'
-                    ? 'bg-red-50/30 border-2 border-red-500 ring-2 ring-red-200'
-                    : 'bg-slate-50 border border-slate-300 focus:ring-2 focus:ring-teal-600 focus:bg-white'
+                    ? 'bg-red-50/30 border-2 border-red-500 ring-2 ring-red-200 text-slate-900'
+                    : useSavedPassword && !password
+                    ? 'bg-emerald-50/40 border-2 border-emerald-400/80 text-emerald-950 font-bold tracking-widest focus:ring-2 focus:ring-teal-600 focus:bg-white focus:font-normal focus:tracking-normal'
+                    : 'bg-slate-50 border border-slate-300 text-slate-900 focus:ring-2 focus:ring-teal-600 focus:bg-white'
                 }`}
               />
               <button
@@ -452,13 +476,27 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
             {errorField === 'PASSWORD' && (
               <p className="text-[11px] text-red-600 font-medium mt-1">
-                ⚠️ Mật khẩu không chính xác. Hãy kiểm tra lại phím CapsLock hoặc mật khẩu đã lưu.
+                ⚠️ Mật khẩu không chính xác. Hãy kiểm tra lại phím CapsLock hoặc nhập lại mật khẩu.
               </p>
             )}
             {useSavedPassword && !password && errorField !== 'PASSWORD' && (
-              <p className="text-[11px] text-emerald-700 font-medium mt-1">
-                ✓ Sẽ dùng mật khẩu đã mã hóa trong main process; renderer không đọc được mật khẩu.
-              </p>
+              <div className="mt-1.5 flex items-center justify-between text-[11px]">
+                <span className="text-emerald-700 font-medium flex items-center space-x-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>Mật khẩu đã được tự điền từ thiết bị</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUseSavedPassword(false);
+                    setPassword('');
+                    passwordInputRef.current?.focus();
+                  }}
+                  className="text-teal-700 hover:text-teal-900 font-semibold underline cursor-pointer ml-2 shrink-0"
+                >
+                  Đổi mật khẩu
+                </button>
+              </div>
             )}
           </div>
 

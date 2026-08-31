@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'path';
+import os from 'os';
+import { pathToFileURL } from 'url';
 import { isAllowedExternalUrl, isAllowedInternalUrl } from '../src/main/security/navigationGuard';
 
 describe('Navigation Guard Security Suite', () => {
@@ -21,10 +23,13 @@ describe('Navigation Guard Security Suite', () => {
   });
 
   describe('isAllowedInternalUrl (Windows & Cross-platform)', () => {
-    const mockDistDir = path.resolve('D:/Desktop/TaxRecord/dist');
+    // Dùng đường dẫn tuyệt đối theo OS đang chạy để test không phụ thuộc nền tảng:
+    // trên Windows là ổ đĩa thật, trên Linux/CI là thư mục tuyệt đối tương đương.
+    const appRoot = path.join(os.tmpdir(), 'TaxRecordNavGuard');
+    const mockDistDir = path.resolve(appRoot, 'dist');
 
-    it('chấp nhận file:/// URL trên ổ đĩa Windows (C:, D:)', () => {
-      const validUrl = 'file:///D:/Desktop/TaxRecord/dist/index.html';
+    it('chấp nhận file:// URL trỏ đúng vào dist của app', () => {
+      const validUrl = pathToFileURL(path.join(mockDistDir, 'index.html')).href;
       expect(isAllowedInternalUrl(validUrl, mockDistDir)).toBe(true);
     });
 
@@ -34,25 +39,33 @@ describe('Navigation Guard Security Suite', () => {
       expect(isAllowedInternalUrl('https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac')).toBe(true);
     });
 
-    it('từ chối file:/// nằm ngoài thư mục dist', () => {
-      const forbiddenUrl = 'file:///C:/Windows/System32/calc.exe';
+    it('từ chối file:// nằm ngoài thư mục dist', () => {
+      const forbiddenUrl = pathToFileURL(path.join(appRoot, 'secrets', 'calc.exe')).href;
       expect(isAllowedInternalUrl(forbiddenUrl, mockDistDir)).toBe(false);
     });
   });
 
   describe('F-001 — startsWith có path.sep, không bị bypass bằng thư mục cùng tiền tố', () => {
-    const mockDistDir = path.resolve('D:/Desktop/TaxRecord/dist');
+    const appRoot = path.join(os.tmpdir(), 'TaxRecordNavGuard');
+    const mockDistDir = path.resolve(appRoot, 'dist');
 
     it('từ chối thư mục cùng tiền tố dist (dist-evil) dù startsWith(distDir) cũ sẽ lọt', () => {
-      expect(isAllowedInternalUrl('file:///D:/Desktop/TaxRecord/dist-evil/index.html', mockDistDir)).toBe(false);
+      const evilUrl = pathToFileURL(path.join(appRoot, 'dist-evil', 'index.html')).href;
+      expect(isAllowedInternalUrl(evilUrl, mockDistDir)).toBe(false);
     });
 
     it('chấp nhận chính xác distDir (resolved === distDir)', () => {
-      expect(isAllowedInternalUrl('file:///D:/Desktop/TaxRecord/dist', mockDistDir)).toBe(true);
+      expect(isAllowedInternalUrl(pathToFileURL(mockDistDir).href, mockDistDir)).toBe(true);
     });
 
-    it('không truyền distDirOverride -> file:/// ngoài dist mặc định vẫn bị từ chối', () => {
-      expect(isAllowedInternalUrl('file:///C:/tmp/evil/index.html')).toBe(false);
+    it('không truyền distDirOverride -> file:// ngoài dist mặc định vẫn bị từ chối', () => {
+      const outsideUrl = pathToFileURL(path.join(os.tmpdir(), 'evil-outside', 'index.html')).href;
+      expect(isAllowedInternalUrl(outsideUrl)).toBe(false);
+    });
+
+    it('từ chối file index.html ngay ngoài dist (F-001: không còn ngoại lệ theo tên file)', () => {
+      const siblingIndex = pathToFileURL(path.join(appRoot, 'index.html')).href;
+      expect(isAllowedInternalUrl(siblingIndex, mockDistDir)).toBe(false);
     });
   });
 });

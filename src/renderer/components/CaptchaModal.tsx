@@ -45,6 +45,17 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({ challenge, onSubmit,
     onSubmit(captchaInput.trim().toLowerCase());
   };
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onCancel]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-fadeIn select-none">
       <div className="bg-white w-full max-w-[420px] rounded-2xl shadow-2xl border border-slate-200/90 overflow-hidden">
@@ -178,14 +189,15 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({ challenge, onSubmit,
               onClick={onCancel}
               className="flex-1 h-9.5 px-3 border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium rounded-xl text-xs transition-colors cursor-pointer"
             >
-              Hủy bỏ
+              Hủy bỏ (Esc)
             </button>
             <button
               type="submit"
               disabled={!captchaInput.trim()}
-              className="flex-1 h-9.5 px-4 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold rounded-xl text-xs shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+              className="flex-1 h-9.5 px-4 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold rounded-xl text-xs shadow-xs transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
             >
-              Tra cứu tiếp tục
+              <span>Xác nhận</span>
+              <kbd className="px-1.5 py-0.5 bg-teal-800 text-teal-200 rounded text-[10px] font-mono border border-teal-600">↵ Enter</kbd>
             </button>
           </div>
         </form>

@@ -127,9 +127,8 @@ export class DownloadManager extends EventEmitter {
    * nhưng modal hiện "Tổng số 10" và tải cả hồ sơ cũ không liên quan.
   */
   public enqueueFilings(filings: TaxFiling[], taxCode?: string, year?: number) {
-    if (filings.some(filing => filing.source === 'dvc-etax-html' || Boolean(filing.messageId))) {
-      throw new Error('DownloadManager hiện tại không nhận tờ khai eTax năm cũ.');
-    }
+    // DownloadManager tự động định tuyến: tờ khai hiện hành tải qua DVC,
+    // tờ khai eTax năm cũ tải qua legacyClient nếu có.
     if (taxCode) this.taxCode = taxCode;
     if (year) this.year = year;
 
@@ -650,7 +649,8 @@ export class DownloadManager extends EventEmitter {
   private emitProgress(item?: DownloadQueueItem) {
     this.emit('progress', {
       item,
-      summary: this.getSummary()
+      summary: this.getSummary(),
+      queue: this.getQueue()
     });
   }
 }

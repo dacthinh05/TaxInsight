@@ -17,6 +17,23 @@
   font-feature-settings: "tnum" 1;
 }
 
+/* Smooth UI transitions & focus states */
+@layer utilities {
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-teal-600/40 focus:border-teal-600 transition-shadow;
+  }
+  
+  .skeleton-shimmer {
+    @apply relative overflow-hidden bg-slate-200/80;
+  }
+  
+  .skeleton-shimmer::after {
+    @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent;
+    content: '';
+    animation: shimmer 1.6s infinite;
+  }
+}
+
 /* Tùy chỉnh thanh cuộn thanh lịch */
 ::-webkit-scrollbar {
   width: 6px;

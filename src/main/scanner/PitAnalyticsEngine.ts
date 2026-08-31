@@ -162,11 +162,9 @@ export class PitAnalyticsEngine {
     const concurrency = 2;
     let completedCount = 0;
     let stopForInfrastructure = false;
-
     for (let i = 0; i < total; i += concurrency) {
       if (this.isCancelled || stopForInfrastructure) break;
       const batch = pitFilings.slice(i, i + concurrency);
-
       const batchPromises = batch.map(async filing => {
         if (this.isCancelled) return null;
 
@@ -450,7 +448,9 @@ export class PitAnalyticsEngine {
           isThueDienTu: filing.isThueDienTu,
           loaiTraCuu: filing.loaiTraCuu,
           maTkhai: filing.maTkhai,
-          altIds: filing.altIds
+          altIds: filing.altIds,
+          period: filing.period,
+          declarationCode: filing.declarationCode
         });
       } catch (err: any) {
         lastErr = err;

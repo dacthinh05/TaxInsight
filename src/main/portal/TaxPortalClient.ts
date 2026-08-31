@@ -845,9 +845,9 @@ export class TaxPortalClient {
       return null;
     }
     if (buffer.length < 4) return null;
-
     const head4 = buffer.subarray(0, 4);
-    if (head4.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+    const isZip = (head4.length >= 2 && head4[0] === 0x50 && head4[1] === 0x4b);
+    if (isZip) {
       return {
         fileName: suggestedFileName || `files_${defaultId}.zip`,
         fileType: 'application/zip',
@@ -1025,7 +1025,7 @@ export class TaxPortalClient {
     return `${rawName}.${rawExtension}`;
   }
 
-  private parseAttachmentList(value: any): FilingAttachment[] {
+  private parseAttachmentList(value: any, fallbackMaHso?: string): FilingAttachment[] {
     let parsed = value;
     if (Buffer.isBuffer(parsed)) {
       try {
@@ -1051,13 +1051,13 @@ export class TaxPortalClient {
 
     return candidates
       .map((item: any) => ({
-        maHso: String(item?.maHso || item?.maHSO || item?.maHoSo || '').trim(),
-        maTep: String(item?.maTep || item?.idGiaoDichTthcFile || '').trim(),
+        maHso: String(item?.maHso || item?.maHSO || item?.maHoSo || item?.maHs || fallbackMaHso || '').trim(),
+        maTep: String(item?.maTep || item?.idGiaoDichTthcFile || item?.id || item?.fileId || '').trim(),
         maGdich: String(item?.maGdich || item?.maGiaoDich || '').trim() || undefined,
         tenTep: String(item?.tenTep || item?.fileName || '').trim() || undefined,
         dinhDangTep: String(item?.dinhDangTep || item?.fileType || '').trim() || undefined
       }))
-      .filter((item: FilingAttachment) => Boolean(item.maHso && item.maTep));
+      .filter((item: FilingAttachment) => Boolean(item.maTep));
   }
 
   /**
@@ -1142,44 +1142,73 @@ export class TaxPortalClient {
     expectedIdentity?: { period?: string; declarationCode?: string }
   ): Promise<DownloadResponsePayload | null> {
     const hasAttachmentMarker =
+      !detailHtml ||
       detailHtml.includes('data-tai-lieu-dkem') ||
       detailHtml.includes('tai-lieu-dkem') ||
       detailHtml.includes('taiLieuDinhKem') ||
       detailHtml.includes('idGiaoDichTthcFile') ||
       detailHtml.includes('download-tai-lieu-dkem') ||
-      /tai-lieu-dinh-kem/i.test(detailHtml);
+      detailHtml.includes('tai-lieu-dinh-kem') ||
+      /tai-lieu/i.test(detailHtml) ||
+      /dinh-kem/i.test(detailHtml) ||
+      /tep-dinh-kem/i.test(detailHtml) ||
+      /tchs/i.test(detailHtml) ||
+      /tthc/i.test(detailHtml);
 
     if (!hasAttachmentMarker) return null;
+    const detailMaHso =
+      detailHtml.match(/data-ma-hs=["']([^"']+)["']/i)?.[1]?.trim() ||
+      detailHtml.match(/data-mahs=["']([^"']+)["']/i)?.[1]?.trim() ||
+      detailHtml.match(/data-mahoso=["']([^"']+)["']/i)?.[1]?.trim() ||
+      '';
 
-    await new Promise(resolve => setTimeout(resolve, 750));
-    const listResponse = await this.diagRequest(
-      attemptContext,
-      'STD-attachment-list',
-      PORTAL_CONFIG.ATTACHMENT_LIST_API,
-      () => this.session.client.post(
+    const candidateListIds = Array.from(new Set([detailMaHso, primaryId].filter(Boolean)));
+    let attachments: FilingAttachment[] = [];
+
+    for (const listId of candidateListIds) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const listResponse = await this.diagRequest(
+        attemptContext,
+        'STD-attachment-list',
         PORTAL_CONFIG.ATTACHMENT_LIST_API,
-        { maHso: primaryId },
-        {
-          signal: abortSignal,
-          headers: {
-            ...baseHeaders,
-            'Referer': detailUrl,
-            'Content-Type': 'application/json;charset=UTF-8',
-            'Accept': 'application/json, text/plain, */*'
-          },
-          timeout: 8000
-        }
-      ),
-      abortSignal
-    );
+        () => this.session.client.post(
+          PORTAL_CONFIG.ATTACHMENT_LIST_API,
+          { maHso: listId },
+          {
+            signal: abortSignal,
+            headers: {
+              ...baseHeaders,
+              'Referer': detailUrl,
+              'Content-Type': 'application/json;charset=UTF-8',
+              'Accept': 'application/json, text/plain, */*'
+            },
+            timeout: 8000
+          }
+        ),
+        abortSignal
+      );
 
-    const attachments = this.parseAttachmentList(listResponse?.data);
+      const parsed = this.parseAttachmentList(listResponse?.data, listId);
+      if (parsed.length > 0) {
+        attachments = parsed;
+        break;
+      }
+    }
+
     if (attachments.length === 0) return null;
+    // Nhận các attachment khớp với ID đang tải (hỗ trợ cả định dạng ID dài 000.7xx... và ID ngắn G12.xx-...)
+    const normalizeIdForMatch = (id: string): string => {
+      const match = id.match(/(\d{6,8}-\d{6,12})/);
+      return match ? match[1] : id.replace(/[^A-Za-z0-9]/g, '');
+    };
+    const primarySuffix = normalizeIdForMatch(primaryId);
 
-    // Chỉ nhận các attachment có maHso khớp với ID đang tải
-    const matchingAttachments = attachments.filter(
-      item => !item.maHso || item.maHso === primaryId || item.maHso.includes(primaryId) || primaryId.includes(item.maHso)
-    );
+    const matchingAttachments = attachments.filter(item => {
+      if (!item.maHso) return true;
+      if (item.maHso === primaryId || item.maHso.includes(primaryId) || primaryId.includes(item.maHso)) return true;
+      const itemSuffix = normalizeIdForMatch(item.maHso);
+      return Boolean(primarySuffix && itemSuffix && (primarySuffix === itemSuffix || itemSuffix.includes(primarySuffix) || primarySuffix.includes(itemSuffix)));
+    });
     if (matchingAttachments.length === 0) return null;
 
     const extensionPriority = (item: FilingAttachment): number => {
@@ -1274,6 +1303,7 @@ export class TaxPortalClient {
     filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[]; period?: string; declarationCode?: string }
   ): Promise<{
     detailUrl: string;
+    detailHtml: string;
     action: Extract<DownloadAction, { kind: 'filing' }>;
     downloadUrl: string;
     csrfToken: string;
@@ -1310,6 +1340,7 @@ export class TaxPortalClient {
         'DOWNLOAD_ACTION_NOT_FOUND'
       );
     }
+    const action = parsed.filingAction;
     const csrfToken = parsed.csrf?.token || this.csrfToken;
     if (!csrfToken) {
       throw this.createDownloadWorkflowError(
@@ -1320,11 +1351,12 @@ export class TaxPortalClient {
     const csrfHeaderName = /^[A-Za-z0-9-]+$/.test(parsed.csrf?.headerName || '')
       ? parsed.csrf!.headerName!
       : 'X-XSRF-TOKEN';
-    const downloadUrl = this.resolveDeterministicDownloadUrl(parsed.filingAction, filingMeta);
+    const downloadUrl = this.resolveDeterministicDownloadUrl(action, filingMeta);
     this.csrfToken = csrfToken;
     return {
       detailUrl,
-      action: parsed.filingAction,
+      detailHtml: response.data,
+      action,
       downloadUrl,
       csrfToken,
       csrfHeaderName
@@ -1383,18 +1415,61 @@ export class TaxPortalClient {
         }),
         abortSignal
       );
-      if (validateResponse?.status !== 200) {
-        const err = this.createDownloadWorkflowError(
-          `validateIdTkhai trả HTTP ${validateResponse?.status ?? 'không xác định'} (yêu cầu 200).`,
-          'FILING_VALIDATION_FAILED'
-        );
-        Object.assign(err, { validationResult: '', httpStatus: validateResponse?.status });
-        throw err;
-      }
+      const expectedIdentity = {
+        taxCode: this.session.getSessionInfo().taxCode?.replace(/-ql$/i, ''),
+        period: filingMeta?.period,
+        declarationCode: filingMeta?.declarationCode
+      };
+
+      const validationStatus = validateResponse?.status;
       const validationResult = Buffer.isBuffer(validateResponse?.data)
         ? validateResponse.data.toString('utf8').trim()
         : String(validateResponse?.data ?? '').trim();
-      if (validationResult !== '200') {
+
+      const isDirectDownloadValid = validationStatus === 200 && validationResult === '200';
+
+      // F-010: Nếu validateIdTkhai không trả 200 (ví dụ "400" với tờ khai TNCN 05/KK-TNCN),
+      // Cổng Thuế có thể lưu file trong danh sách tệp đính kèm (data-tai-lieu-dkem).
+      // Thử ngay attachment fallback trước khi coi là lỗi không thể tải.
+      if (!isDirectDownloadValid) {
+        let attachmentPayload: DownloadResponsePayload | null = null;
+        try {
+          attachmentPayload = await this.downloadFilingAttachment(
+            context.action.maHoSo,
+            context.detailHtml,
+            context.detailUrl,
+            {
+              'Origin': 'https://dichvucong.gdt.gov.vn',
+              'Referer': context.detailUrl,
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+              [context.csrfHeaderName]: context.csrfToken
+            },
+            abortSignal,
+            attemptContext,
+            expectedIdentity
+          );
+        } catch (attErr: any) {
+          if (this.mustStopDownloadFallback(attErr)) throw attErr;
+        }
+
+        if (attachmentPayload) {
+          if (!this.verifyXmlPayloadIdentity(attachmentPayload.content, expectedIdentity)) {
+            throw this.createDownloadWorkflowError(
+              'Nội dung tải về từ tài liệu đính kèm không khớp định danh filing (MST/kỳ/mã tờ khai) — từ chối lưu để tránh sai hồ sơ.',
+              'DOWNLOAD_IDENTITY_MISMATCH'
+            );
+          }
+          return attachmentPayload;
+        }
+        // 3. Cả 2 nhánh đều không lấy được file -> throw lỗi validation rõ ràng
+        if (validationStatus !== 200) {
+          const err = this.createDownloadWorkflowError(
+            `validateIdTkhai trả HTTP ${validationStatus ?? 'không xác định'} (yêu cầu 200).`,
+            'FILING_VALIDATION_FAILED'
+          );
+          Object.assign(err, { validationResult: '', httpStatus: validationStatus });
+          throw err;
+        }
         const err = this.createDownloadWorkflowError(
           `Hồ sơ không vượt qua validateIdTkhai (kết quả nghiệp vụ: "${validationResult || 'rỗng'}" !== "200").`,
           'FILING_VALIDATION_FAILED'
@@ -1464,46 +1539,39 @@ export class TaxPortalClient {
           payload = null;
         }
 
-        // Nếu POST /downloadhoso thất bại (HTTP 500) hoặc trả về body rỗng (0 bytes),
+        if (postError) {
+          const status = Number(postError?.response?.status || postError?.httpStatus || 0);
+          if (!hasRetried && (status === 403 || status >= 500)) {
+            hasRetried = true;
+            if (status === 403) {
+              const refreshed = await this.loadDeterministicDownloadContext(cleanId, abortSignal, attemptContext, filingMeta);
+              context = refreshed;
+            } else {
+              await new Promise(resolve => setTimeout(resolve, 1200 + Math.random() * 400));
+            }
+            continue;
+          }
+        }
+
+        // Nếu POST /downloadhoso thất bại hoặc trả về body rỗng sau retry,
         // tự động thử lấy từ danh sách tài liệu đính kèm (files/tai-lieu-dkem)
         if (!payload) {
           try {
-            const detailHtmlResponse = await this.diagRequest(
-              attemptContext,
-              'STD-detail-attachment-sweep',
+            payload = await this.downloadFilingAttachment(
+              context.action.maHoSo,
+              context.detailHtml,
               context.detailUrl,
-              () => this.session.client.get(context.detailUrl, {
-                signal: abortSignal,
-                headers: {
-                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                  'Referer': PORTAL_CONFIG.TCHS_URL,
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
-                },
-                timeout: 8000
-              }),
-              abortSignal
+              {
+                'Origin': 'https://dichvucong.gdt.gov.vn',
+                'Referer': context.detailUrl,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+                [context.csrfHeaderName]: context.csrfToken
+              },
+              abortSignal,
+              attemptContext,
+              expectedIdentity
             );
-            // F-008: HTML re-GET cũng phải qua kiểm tra hết phiên như response chính
-            this.throwIfLoginHtmlResponse(detailHtmlResponse?.data);
-            if (typeof detailHtmlResponse?.data === 'string') {
-              payload = await this.downloadFilingAttachment(
-                context.action.maHoSo,
-                detailHtmlResponse.data,
-                context.detailUrl,
-                {
-                  'Origin': 'https://dichvucong.gdt.gov.vn',
-                  'Referer': context.detailUrl,
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-                  [context.csrfHeaderName]: context.csrfToken
-                },
-                abortSignal,
-                attemptContext,
-                expectedIdentity
-              );
-            }
           } catch (attErr: any) {
-            // F-007: chỉ nuốt lỗi transient của attachment path; luôn lan truyền
-            // hết phiên / rate-limit / vượt budget để downloadHoSo không thử ID khác
             if (this.mustStopDownloadFallback(attErr)) throw attErr;
           }
         }
@@ -1522,18 +1590,8 @@ export class TaxPortalClient {
         }
 
         if (postError) {
-          const status = Number(postError?.response?.status || postError?.httpStatus || 0);
-          if (hasRetried || (status !== 403 && status < 500)) throw postError;
-          hasRetried = true;
-          if (status === 403) {
-            const refreshed = await this.loadDeterministicDownloadContext(cleanId, abortSignal, attemptContext, filingMeta);
-            context = refreshed;
-          } else {
-            await new Promise(resolve => setTimeout(resolve, 1200 + Math.random() * 400));
-          }
-          continue;
+          throw postError;
         }
-
         const isZeroByte = rawDataLength === 0;
         throw this.createDownloadWorkflowError(
           isZeroByte

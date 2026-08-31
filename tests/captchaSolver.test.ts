@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { CaptchaSolver, type OcrCandidate } from '../src/main/scanner/CaptchaSolver';
 import { PNG } from 'pngjs';
+import { CaptchaSolver, type OcrCandidate, type CaptchaSolveResult } from '../src/main/scanner/CaptchaSolver';
+import { OnnxCaptchaEngine } from '../src/main/scanner/OnnxCaptchaEngine';
 
 /**
  * Vẽ một glyph "đậm" hình chữ nhật lên ảnh mock (mô phỏng nét chữ dày của GDT)
@@ -220,5 +221,58 @@ describe('CaptchaSolver & Image Preprocessing Pipeline', () => {
     const detail = await CaptchaSolver.solveDetailed('');
     expect(detail.accepted).toBe(false);
     expect(detail.reason).toBe('invalid_input');
+  });
+
+  it('isSafeForAutoSubmit: ONNX engine đạt >=85% conf được auto-submit an toàn, <85% bị chặn', () => {
+    const safeOnnx: CaptchaSolveResult = {
+      text: 'ab123',
+      confidence: 88.5,
+      accepted: true,
+      reason: 'onnx_engine',
+      candidates: []
+    };
+    expect(CaptchaSolver.isSafeForAutoSubmit(safeOnnx)).toBe(true);
+
+    const borderlineOnnx: CaptchaSolveResult = {
+      text: 'ab123',
+      confidence: 82.0,
+      accepted: true,
+      reason: 'onnx_engine',
+      candidates: []
+    };
+    expect(CaptchaSolver.isSafeForAutoSubmit(borderlineOnnx)).toBe(false);
+
+    const invalidLenOnnx: CaptchaSolveResult = {
+      text: 'ab12',
+      confidence: 95.0,
+      accepted: true,
+      reason: 'onnx_engine',
+      candidates: []
+    };
+    expect(CaptchaSolver.isSafeForAutoSubmit(invalidLenOnnx)).toBe(false);
+  });
+
+  it('OnnxCaptchaEngine.preprocessImage chuẩn hóa ảnh sang tensor [1, 1, 38, 150]', () => {
+    const png = makeCaptchaPng();
+    const buf = PNG.sync.write(png);
+    const tensor = OnnxCaptchaEngine.preprocessImage(buf);
+    expect(tensor).not.toBeNull();
+    expect(tensor?.length).toBe(150 * 38);
+
+    const invalidTensor = OnnxCaptchaEngine.preprocessImage(Buffer.from('corrupted data'));
+    expect(invalidTensor).toBeNull();
+  });
+
+  it('OnnxCaptchaEngine.solve thực thi inference WASM trả kết quả cấu trúc < 50ms sau khi warm-up', async () => {
+    const png = makeCaptchaPng();
+    const buf = PNG.sync.write(png);
+    // Warm up session
+    await OnnxCaptchaEngine.solve(buf);
+    // Measure steady-state latency
+    const res = await OnnxCaptchaEngine.solve(buf);
+    expect(typeof res.text).toBe('string');
+    expect(typeof res.confidence).toBe('number');
+    expect(Array.isArray(res.charConfs)).toBe(true);
+    expect(res.latencyMs).toBeLessThan(50);
   });
 });

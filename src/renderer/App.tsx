@@ -5,6 +5,7 @@ import {
   AuditLogEntry,
   CaptchaChallenge,
   CheckpointData,
+  DownloadQueueItem,
   DownloadSummary,
   FilingSourceMode,
   LegacyFilingScanProgress,
@@ -140,12 +141,21 @@ export const App: React.FC = () => {
     if (!window.taxPortalAPI || batch.length === 0) return;
 
     setDownloadSummary(buildInitialDownloadSummary(batch.length));
+    setDownloadQueue(
+      batch.map(f => ({
+        filingId: f.id,
+        filing: f,
+        status: f.downloadStatus === 'EXISTING' ? 'EXISTING' : 'PENDING',
+        retries: 0,
+        progressPercent: f.downloadStatus === 'EXISTING' ? 100 : 0
+      }))
+    );
     setIsDownloadModalOpen(true);
 
     try {
-      const isLegacy = sourceMode === 'DVC_ETAX_LEGACY' || batch.some(f => f.source === 'dvc-etax-html');
-      activeDownloadSource.current = isLegacy ? 'LEGACY' : 'CURRENT';
-      const res = isLegacy
+      const isLegacyOnly = sourceMode === 'DVC_ETAX_LEGACY' && batch.every(f => f.source === 'dvc-etax-html');
+      activeDownloadSource.current = isLegacyOnly ? 'LEGACY' : 'CURRENT';
+      const res = isLegacyOnly
         ? await window.taxPortalAPI.startLegacyFilingDownload({
             filings: batch,
             taxCode: session.taxCode,
@@ -173,9 +183,9 @@ export const App: React.FC = () => {
 
   // Download & Modals
   const [downloadSummary, setDownloadSummary] = useState<DownloadSummary | null>(null);
+  const [downloadQueue, setDownloadQueue] = useState<DownloadQueueItem[]>([]);
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
   const [isAuthRequiredModalOpen, setIsAuthRequiredModalOpen] = useState(false);
-
   // Logs & Checkpoint
   const [availableCheckpoint, setAvailableCheckpoint] = useState<CheckpointData | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -246,6 +256,15 @@ export const App: React.FC = () => {
 
       window.taxPortalAPI.onDownloadProgress(data => {
         setDownloadSummary(data.summary);
+        if (Array.isArray(data.queue)) {
+          setDownloadQueue(data.queue);
+        } else if (data.item?.filing) {
+          setDownloadQueue(prev => {
+            const exists = prev.some(q => q.filingId === data.item.filingId);
+            if (!exists) return [...prev, data.item];
+            return prev.map(q => (q.filingId === data.item.filingId ? { ...q, ...data.item } : q));
+          });
+        }
         if (data.item?.filing) {
           setFilings(prev =>
             prev.map(f => (f.id === data.item.filingId ? { ...f, ...data.item.filing } : f))
@@ -290,9 +309,14 @@ export const App: React.FC = () => {
 
       window.taxPortalAPI.onLegacyFilingDownloadProgress && window.taxPortalAPI.onLegacyFilingDownloadProgress((data: any) => {
         setDownloadSummary(data.summary);
-        if (data.currentItem?.filing) {
+        if (Array.isArray(data.queue)) {
+          setDownloadQueue(data.queue);
+        }
+        const filingItem = data.currentItem?.filing || data.item?.filing;
+        const filingId = data.currentItem?.filingId || data.item?.filingId;
+        if (filingItem && filingId) {
           setFilings(prev =>
-            prev.map(f => (f.id === data.currentItem.filingId ? { ...f, ...data.currentItem.filing } : f))
+            prev.map(f => (f.id === filingId ? { ...f, ...filingItem } : f))
           );
         }
       }),
@@ -1234,25 +1258,27 @@ export const App: React.FC = () => {
         selectedYear,
         scanRangeMode.startsWith('MULTI') ? 'FULL_YEAR' : scanRangeMode
       );
-      let res: any = await window.taxPortalAPI.scanPaymentSlips({ range });
+      let res: { success?: boolean; paymentSlips?: PaymentSlipRecord[]; error?: string; errorCode?: string } = await window.taxPortalAPI.scanPaymentSlips({ range });
 
-      // eTax đôi lúc chặn chuỗi SSO nền ở trang kiểm tra plugin dù người dùng
-      // đã đăng nhập DVC. Mở cửa sổ xác thực đúng một lần, đồng bộ cookie +
-      // DSE state rồi tự chạy lại truy vấn; người dùng không phải tự tìm nút
-      // "Mở eTax" và bấm "Thử lại" thêm một vòng.
-      if (
+      // Tự động nhận diện và kết nối lại qua cửa sổ ngầm (headless recovery) khi gặp bất kỳ
+      // trở ngại nào về xác thực, plugin gate, lệch DSE state hoặc hết phiên eTax
+      const isRecoverableError =
         !res?.success &&
-        res?.errorCode === 'AUTH_REQUIRED' &&
-        window.taxPortalAPI?.openPaymentSlipsAuthWindow
-      ) {
-        const authResult: any = await window.taxPortalAPI.openPaymentSlipsAuthWindow();
+        Boolean(window.taxPortalAPI?.openPaymentSlipsAuthWindow) &&
+        (
+          ['AUTH_REQUIRED', 'SESSION_EXPIRED', 'ETAX_QUERY_BLOCKED', 'ETAX_FORM_CHANGED', 'ETAX_ERROR'].includes(String(res?.errorCode || '')) ||
+          /plugin|xác thực|phiên|đăng nhập|hết hạn|không trả về bảng/i.test(String(res?.error || ''))
+        );
+
+      if (isRecoverableError && window.taxPortalAPI?.openPaymentSlipsAuthWindow) {
+        const authResult: { success?: boolean; error?: string; message?: string; errorCode?: string } = await window.taxPortalAPI.openPaymentSlipsAuthWindow();
         if (authResult?.success) {
           res = await window.taxPortalAPI.scanPaymentSlips({ range });
         } else if (authResult?.error || authResult?.message) {
           res = {
             ...res,
             error: authResult.error || authResult.message,
-            errorCode: 'AUTH_REQUIRED'
+            errorCode: authResult.errorCode || 'AUTH_REQUIRED'
           };
         }
       }
@@ -1368,7 +1394,10 @@ export const App: React.FC = () => {
           scanRangeMode={scanRangeMode}
           onRangeModeChange={setScanRangeMode}
           selectedTaxType={selectedTaxType}
-          onTaxTypeChange={setSelectedTaxType}
+          onTaxTypeChange={t => {
+            setSelectedTaxType(t);
+            setSelectedIds(new Set());
+          }}
           isScanning={isScanning || isScanningGnt}
           onStartScan={
             viewMode === 'PAYMENT_SLIPS'
@@ -1376,10 +1405,16 @@ export const App: React.FC = () => {
               : (sourceMode === 'DVC_ETAX_LEGACY' ? handleStartLegacyScan : handleStartScan)
           }
           viewMode={viewMode}
-          onViewModeChange={setViewMode}
+          onViewModeChange={m => {
+            setViewMode(m);
+            setSelectedIds(new Set());
+          }}
           // ── Chế độ Tra Cứu Tờ Khai Năm Cũ (Legacy Filing) ──
           sourceMode={sourceMode}
-          onSourceModeChange={setSourceMode}
+          onSourceModeChange={s => {
+            setSourceMode(s);
+            setSelectedIds(new Set());
+          }}
           legacyYearFrom={legacyYearFrom}
           onLegacyYearFromChange={setLegacyYearFrom}
           legacyYearTo={legacyYearTo}
@@ -1549,6 +1584,7 @@ export const App: React.FC = () => {
       {isDownloadModalOpen && downloadSummary && (
         <DownloadProgressModal
           summary={downloadSummary}
+          queue={downloadQueue}
           onPause={pauseActiveDownload}
           onResume={async () => {
             if (downloadSummary.state === 'AUTH_REQUIRED' || downloadSummary.state === 'PAUSED_AUTH_REQUIRED') {
@@ -1560,6 +1596,14 @@ export const App: React.FC = () => {
           onCancel={cancelActiveDownload}
           onOpenFolder={handleOpenFolder}
           onClose={() => setIsDownloadModalOpen(false)}
+          onRetryFailed={handleRetryFailed}
+          onRetrySingle={handleDownloadSingle}
+          onPreviewFiling={handleOpenPreview}
+          onOpenFilePath={async filePath => {
+            if (window.taxPortalAPI && filePath) {
+              await window.taxPortalAPI.openPath(filePath);
+            }
+          }}
         />
       )}
 
