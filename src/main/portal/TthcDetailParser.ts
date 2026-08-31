@@ -100,18 +100,26 @@ export class TthcDetailParser {
 
       if (!isFiling && !isNotice) return;
 
-      const isThueDienTu = this.parseBooleanAttribute(
+      let isThueDienTu = this.parseBooleanAttribute(
         this.firstAttribute($element, [
           'data-is-thue-dien-tu',
           'data-isthuedientu',
           'data-is-tdt'
         ])
       );
-      const loaiTraCuu = this.firstAttribute($element, [
+      let loaiTraCuu = this.firstAttribute($element, [
         'data-loaitracuu',
         'data-loai-tra-cuu'
       ]);
 
+      // Trích xuất tham số từ onclick="downloadHoSo(this, true, '1')" hoặc onclick="downloadHoSo('ID', true, '1')"
+      if (isThueDienTu === undefined && onclick) {
+        const tdtParamMatch = onclick.match(/(?:downloadHoSo|downloadhoso|taiHoSo|taiToKhai)\s*\(\s*(?:this|['"][^'"]*['"])\s*,\s*['"]?(true|1|false|0)['"]?(?:\s*,\s*['"]?([^'")\s]+)['"]?)?/i);
+        if (tdtParamMatch) {
+          isThueDienTu = tdtParamMatch[1].toLowerCase() === 'true' || tdtParamMatch[1] === '1';
+          if (tdtParamMatch[2]) loaiTraCuu = tdtParamMatch[2];
+        }
+      }
       if (isFiling) {
         let maHoSo = this.firstAttribute($element, [
           'data-mahoso',

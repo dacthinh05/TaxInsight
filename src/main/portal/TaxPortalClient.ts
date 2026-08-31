@@ -1379,7 +1379,7 @@ export class TaxPortalClient {
     const cleanId = String(maHoSo || '').trim();
     const attemptContext: DownloadAttemptContext = {
       attempts: [],
-      maxNetworkAttempts: 6
+      maxNetworkAttempts: 12
     };
     if (!cleanId || !/^[A-Za-z0-9._-]+$/.test(cleanId)) {
       throw this.createDownloadWorkflowError(
@@ -1530,9 +1530,82 @@ export class TaxPortalClient {
             continue;
           }
         }
+        // Nếu endpoint chính thất bại hoặc trả về rỗng, và loại endpoint chưa được khai báo tường minh trong HTML,
+        // thử endpoint đối ứng (Standard <-> TDT)
+        if (!payload && context.action.isThueDienTu === undefined) {
+          const alternateUrl = context.downloadUrl.includes('downloadhoso-tdt')
+            ? PORTAL_CONFIG.DOWNLOAD_API
+            : `${PORTAL_CONFIG.DOWNLOAD_TDT_API}?loaiTraCuu=1`;
 
-        // Nếu POST thất bại hoặc rỗng và chưa thử tệp đính kèm (do validate ban đầu là 200),
-        // tự động thử lấy từ danh sách tài liệu đính kèm (files/tai-lieu-dkem)
+          try {
+            const altResponse = await this.diagRequest(
+              attemptContext,
+              'DOWNLOAD-alternate-endpoint',
+              alternateUrl,
+              () => this.session.client.post(
+                alternateUrl,
+                { maHoSo: context.action.maHoSo },
+                {
+                  signal: abortSignal,
+                  timeout: 12000,
+                  responseType: 'arraybuffer',
+                  headers: {
+                    'Accept': 'application/json, text/plain, */*',
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': context.detailUrl,
+                    [context.csrfHeaderName]: context.csrfToken
+                  }
+                }
+              ),
+              abortSignal
+            );
+            const altPayload = altResponse ? this.extractPayloadContent(altResponse.data, context.action.maHoSo) : null;
+            if (altPayload && this.verifyXmlPayloadIdentity(altPayload.content, expectedIdentity)) {
+              return altPayload;
+            }
+          } catch (altErr: unknown) {
+            if (this.mustStopDownloadFallback(altErr)) throw altErr;
+          }
+
+          // Thử thêm mã ID thay thế (cleanId) nếu khác mã parse được từ detail
+          if (cleanId && cleanId !== context.action.maHoSo) {
+            for (const targetUrl of [context.downloadUrl, alternateUrl]) {
+              try {
+                const idResponse = await this.diagRequest(
+                  attemptContext,
+                  'DOWNLOAD-alternate-id',
+                  targetUrl,
+                  () => this.session.client.post(
+                    targetUrl,
+                    { maHoSo: cleanId },
+                    {
+                      signal: abortSignal,
+                      timeout: 12000,
+                      responseType: 'arraybuffer',
+                      headers: {
+                        'Accept': 'application/json, text/plain, */*',
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Referer': context.detailUrl,
+                        [context.csrfHeaderName]: context.csrfToken
+                      }
+                    }
+                  ),
+                  abortSignal
+                );
+                const idPayload = idResponse ? this.extractPayloadContent(idResponse.data, cleanId) : null;
+                if (idPayload && this.verifyXmlPayloadIdentity(idPayload.content, expectedIdentity)) {
+                  return idPayload;
+                }
+              } catch (idErr: unknown) {
+                if (this.mustStopDownloadFallback(idErr)) throw idErr;
+              }
+            }
+          }
+        }
+
+        // Nếu POST thất bại hoặc rỗng, tự động thử lấy từ danh sách tài liệu đính kèm (files/tai-lieu-dkem)
         if (!payload && isDirectDownloadValid) {
           try {
             payload = await this.downloadFilingAttachment(
