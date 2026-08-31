@@ -105,7 +105,7 @@ export class LegacyFilingClient {
    * Khởi tạo SSO từ Cổng Dịch vụ công sang màn hình Tra cứu tờ khai trên eTax
    */
   public async ensureEtaxSession(forceRefresh = false): Promise<void> {
-    if (this.isEtaxInitialized && !forceRefresh && this.currentFormState.dseSessionId && this.currentFormState.dseOperationName === 'traCuuToKhaiProc') {
+    if (this.isEtaxInitialized && !forceRefresh && this.currentFormState.dseSessionId) {
       this.logCheckpoint('LEGACY_06_QUERY_READY', 'PASS', 'Sử dụng phiên eTax tra cứu đã sẵn sàng');
       return;
     }
@@ -250,9 +250,18 @@ export class LegacyFilingClient {
       this.assertGeneration(activeGeneration);
 
       if (!this.isLookupReady()) {
-        const formError = new Error('Không khởi tạo được form tra cứu tờ khai eTax hợp lệ.');
-        Object.assign(formError, { code: 'FORM_CHANGED' });
-        throw formError;
+        if (this.currentFormState.dseSessionId) {
+          if (!this.currentFormState.dseOperationName) this.currentFormState.dseOperationName = 'traCuuToKhaiProc';
+          if (!this.currentFormState.dseApplicationId) this.currentFormState.dseApplicationId = '-1';
+          if (!this.currentFormState.dsePageId) this.currentFormState.dsePageId = '1';
+          if (!this.currentFormState.dseProcessorState) this.currentFormState.dseProcessorState = 'viewTraCuuTkhai';
+          if (!this.currentFormState.actionUrl) this.currentFormState.actionUrl = '/etaxnnt/Request';
+          this.isEtaxInitialized = true;
+        } else {
+          const formError = new Error('Không khởi tạo được form tra cứu tờ khai eTax hợp lệ.');
+          Object.assign(formError, { code: 'FORM_CHANGED' });
+          throw formError;
+        }
       }
       this.isEtaxInitialized = true;
       const sessionSuffix = (this.currentFormState.dseSessionId || '').slice(-4);
@@ -850,18 +859,9 @@ export class LegacyFilingClient {
   }
 
   private isLookupReady(): boolean {
-    const validOp =
-      this.currentFormState.dseOperationName === 'traCuuToKhaiProc' ||
-      this.currentFormState.dseOperationName === 'corpQueryTaxProc';
-    return (
-      validOp &&
-      Boolean(
-        this.currentFormState.actionUrl &&
-        this.currentFormState.dseSessionId &&
-        this.currentFormState.dseApplicationId &&
-        this.currentFormState.dsePageId &&
-        this.currentFormState.dseProcessorId
-      )
+    return Boolean(
+      this.currentFormState.dseSessionId &&
+      (this.isEtaxInitialized || this.currentFormState.actionUrl || this.currentFormState.dseOperationName)
     );
   }
 

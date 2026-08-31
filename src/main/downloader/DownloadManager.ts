@@ -415,10 +415,28 @@ export class DownloadManager extends EventEmitter {
                 declarationCode: item.filing.declarationCode
               }
             );
-          } catch (dvcErr: any) {
-            // Hồ sơ hiện hành không được rơi sang eTax cũ: tránh tạo lỗi giả,
-            // request dư thừa và làm chậm toàn bộ batch.
-            throw dvcErr;
+          } catch (dvcErr: unknown) {
+            // Khi Cổng DVC báo lỗi (ví dụ HTTP 500 hoặc validateIdTkhai "400" do hồ sơ nộp qua eTax),
+            // tự động fallback sang phân hệ eTax để lấy tệp XML/PDF gốc.
+            if (this.legacyClient && (item.filing.isThueDienTu || ['PIT', 'VAT', 'CIT', 'FCT', 'OTHER'].includes(item.filing.taxType))) {
+              try {
+                const legacyFile = await this.legacyClient.resolveAndDownloadFiling(
+                  this.taxCode,
+                  item.filing,
+                  itemController.signal
+                );
+                payload = {
+                  fileName: legacyFile.fileName,
+                  fileType: legacyFile.contentType,
+                  content: legacyFile.dataBuffer.toString('base64'),
+                  fileCount: 1
+                };
+              } catch {
+                throw dvcErr;
+              }
+            } else {
+              throw dvcErr;
+            }
           }
         }
       } finally {
