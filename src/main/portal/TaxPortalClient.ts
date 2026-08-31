@@ -883,7 +883,9 @@ export class TaxPortalClient {
 
   private extractPayloadContent(resData: any, defaultId: string): DownloadResponsePayload | null {
     if (!resData) return null;
-
+    if (resData instanceof ArrayBuffer || (resData && typeof resData === 'object' && resData.byteLength !== undefined && !Buffer.isBuffer(resData))) {
+      resData = Buffer.from(resData);
+    }
     // 0. Chặn sớm phản hồi trang đăng nhập (hết phiên) để phân loại đúng lỗi
     this.throwIfLoginHtmlResponse(resData);
 
@@ -1622,8 +1624,50 @@ export class TaxPortalClient {
               attemptContext,
               expectedIdentity
             );
-          } catch (attErr: any) {
+          } catch (attErr: unknown) {
             if (this.mustStopDownloadFallback(attErr)) throw attErr;
+          }
+        }
+        // Fallback: Với các hồ sơ hành chính (HĐĐT, thủ tục đăng ký...) không có tệp ZIP trên /downloadhoso,
+        // tải trực tiếp file Thông báo tiếp nhận / chấp nhận của Cơ quan Thuế (/tthc/tchs/downloadthongbao)
+        if (!payload) {
+          const thongBaoId = context.detailHtml.match(/data-id=["'](\d{10,24})["']/i)?.[1] ||
+            context.detailHtml.match(/idTbao["']?\s*[:=]\s*["']?(\d{10,24})["']?/i)?.[1] ||
+            context.detailHtml.match(/downloadThongBao\([^)]*['"](\d{10,24})['"]/i)?.[1];
+          if (thongBaoId) {
+            try {
+              const tbResponse = await this.diagRequest(
+                attemptContext,
+                'DOWNLOAD-thongbao-fallback',
+                'https://dichvucong.gdt.gov.vn/tthc/tchs/downloadthongbao',
+                () => this.session.client.post(
+                  'https://dichvucong.gdt.gov.vn/tthc/tchs/downloadthongbao',
+                  { idTbao: thongBaoId, loaiTBao: '' },
+                  {
+                    signal: abortSignal,
+                    timeout: 15000,
+                    headers: {
+                      'Accept': 'application/json, text/plain, */*',
+                      'Content-Type': 'application/json;charset=UTF-8',
+                      'X-Requested-With': 'XMLHttpRequest',
+                      'Referer': context.detailUrl,
+                      [context.csrfHeaderName]: context.csrfToken
+                    }
+                  }
+                ),
+                abortSignal
+              );
+              let tbData = tbResponse?.data;
+              if (typeof tbData === 'string') {
+                try { tbData = JSON.parse(tbData); } catch {}
+              }
+              const tbPayload = tbData ? this.extractPayloadContent(tbData, cleanId) : null;
+              if (tbPayload) {
+                return tbPayload;
+              }
+            } catch (tbErr: unknown) {
+              if (this.mustStopDownloadFallback(tbErr)) throw tbErr;
+            }
           }
         }
 
