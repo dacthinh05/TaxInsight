@@ -1428,13 +1428,11 @@ export class TaxPortalClient {
 
       const isDirectDownloadValid = validationStatus === 200 && validationResult === '200';
 
-      // F-010: Nếu validateIdTkhai không trả 200 (ví dụ "400" với tờ khai TNCN 05/KK-TNCN),
-      // Cổng Thuế có thể lưu file trong danh sách tệp đính kèm (data-tai-lieu-dkem).
-      // Thử ngay attachment fallback trước khi coi là lỗi không thể tải.
+      // Nếu validateIdTkhai không trả 200 (ví dụ "400" với tờ khai TNCN),
+      // thử trước danh sách tệp đính kèm (data-tai-lieu-dkem).
       if (!isDirectDownloadValid) {
-        let attachmentPayload: DownloadResponsePayload | null = null;
         try {
-          attachmentPayload = await this.downloadFilingAttachment(
+          const attachmentPayload = await this.downloadFilingAttachment(
             context.action.maHoSo,
             context.detailHtml,
             context.detailUrl,
@@ -1448,20 +1446,13 @@ export class TaxPortalClient {
             attemptContext,
             expectedIdentity
           );
-        } catch (attErr: any) {
+          if (attachmentPayload && this.verifyXmlPayloadIdentity(attachmentPayload.content, expectedIdentity)) {
+            return attachmentPayload;
+          }
+        } catch (attErr: unknown) {
           if (this.mustStopDownloadFallback(attErr)) throw attErr;
         }
 
-        if (attachmentPayload) {
-          if (!this.verifyXmlPayloadIdentity(attachmentPayload.content, expectedIdentity)) {
-            throw this.createDownloadWorkflowError(
-              'Nội dung tải về từ tài liệu đính kèm không khớp định danh filing (MST/kỳ/mã tờ khai) — từ chối lưu để tránh sai hồ sơ.',
-              'DOWNLOAD_IDENTITY_MISMATCH'
-            );
-          }
-          return attachmentPayload;
-        }
-        // 3. Cả 2 nhánh đều không lấy được file -> throw lỗi validation rõ ràng
         if (validationStatus !== 200) {
           const err = this.createDownloadWorkflowError(
             `validateIdTkhai trả HTTP ${validationStatus ?? 'không xác định'} (yêu cầu 200).`,

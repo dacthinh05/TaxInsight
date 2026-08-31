@@ -1493,7 +1493,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* 3. Single Unified Bottom Status / Action Bar (Chỉ hiện khi xem Tờ khai) */}
-        {viewMode === 'FILINGS' && (
+        {viewMode === 'FILINGS' && !isDownloadModalOpen && (
           <div className="shrink-0 z-20 pt-0.5">
             <BottomStatusBar
               selectedCount={selectedIds.size}

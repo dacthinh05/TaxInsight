@@ -248,19 +248,14 @@ export class EtaxFormStateParser {
   ): URLSearchParams {
     const missing = [
       ['actionUrl', state.actionUrl],
-      ['dse_sessionId', state.dseSessionId],
-      ['dse_applicationId', state.dseApplicationId],
-      ['dse_pageId', state.dsePageId],
-      ['dse_operationName', state.dseOperationName],
-      ['dse_processorState', state.dseProcessorState],
-      ['dse_processorId', state.dseProcessorId]
+      ['dse_sessionId', state.dseSessionId]
     ].filter(([, value]) => !value).map(([name]) => name);
     if (missing.length > 0 || state.isFormChanged) {
       throw this.formChanged(`Form tra cứu eTax thiếu trường bắt buộc: ${missing.join(', ') || 'unknown'}`);
     }
-    if (state.dseOperationName !== 'traCuuToKhaiProc') {
-      throw this.formChanged(`Sai operation màn hình tra cứu: ${state.dseOperationName}`);
-    }
+    const op = state.dseOperationName === 'traCuuToKhaiProc' || state.dseOperationName === 'corpQueryTaxProc'
+      ? state.dseOperationName
+      : 'traCuuToKhaiProc';
 
     const periodType = searchParams.kieuKy || state.formValues?.kieuKy || 'Q';
 
@@ -270,14 +265,16 @@ export class EtaxFormStateParser {
     }
 
     params.set('dse_sessionId', state.dseSessionId);
-    params.set('dse_applicationId', state.dseApplicationId);
-    params.set('dse_pageId', state.dsePageId);
-    params.set('dse_operationName', state.dseOperationName);
-    params.set('dse_processorState', state.dseProcessorState);
+    params.set('dse_applicationId', state.dseApplicationId || '-1');
+    params.set('dse_pageId', state.dsePageId || '1');
+    params.set('dse_operationName', op);
+    const processorState = state.dseProcessorState === 'initial' || state.dseProcessorState === 'viewTraCuuTkhai'
+      ? state.dseProcessorState
+      : 'viewTraCuuTkhai';
+    params.set('dse_processorState', processorState);
     if (state.dseProcessorId) params.set('dse_processorId', state.dseProcessorId);
     if (state.dseErrorPage) params.set('dse_errorPage', state.dseErrorPage);
     params.set('dse_nextEventName', searchParams.nextEventName || 'query');
-
     params.set('pn', String(searchParams.pn ?? state.pn ?? '1'));
     params.set('maTKhai', searchParams.maTKhai);
     params.set('tenTKhai', searchParams.tenTKhai || '');

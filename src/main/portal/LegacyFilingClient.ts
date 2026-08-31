@@ -677,11 +677,21 @@ export class LegacyFilingClient {
       let etaxFilings = this.etaxFilingsCache.get(filingYear);
       if (!etaxFilings) {
         try {
-          const queryResult = await this.queryFilings(filingYear, { signal });
-          etaxFilings = queryResult.filings;
+          const queryResult = await this.queryFilings(filingYear, { page: 1, signal });
+          const allFilings = [...queryResult.filings];
+          const totalPages = Math.min(queryResult.pagination.totalPages || 1, 10);
+          for (let p = 2; p <= totalPages; p++) {
+            try {
+              await new Promise(r => setTimeout(r, 150));
+              const nextPage = await this.queryFilings(filingYear, { page: p, signal });
+              allFilings.push(...nextPage.filings);
+            } catch {}
+          }
+          etaxFilings = allFilings;
           this.etaxFilingsCache.set(filingYear, etaxFilings);
-        } catch (queryErr: any) {
-          console.warn(`[LegacyFilingClient] Tra cứu eTax năm ${filingYear} thất bại: ${queryErr?.message}`);
+        } catch (queryErr: unknown) {
+          const msg = queryErr instanceof Error ? queryErr.message : String(queryErr);
+          console.warn(`[LegacyFilingClient] Tra cứu eTax năm ${filingYear} thất bại: ${msg}`);
           continue;
         }
       }
@@ -859,9 +869,9 @@ export class LegacyFilingClient {
   }
 
   private isLookupReady(): boolean {
-    return Boolean(
-      this.currentFormState.dseSessionId &&
-      (this.isEtaxInitialized || this.currentFormState.actionUrl || this.currentFormState.dseOperationName)
+    return (
+      this.currentFormState.dseOperationName === 'traCuuToKhaiProc' &&
+      Boolean(this.currentFormState.dseSessionId && this.currentFormState.actionUrl)
     );
   }
 
