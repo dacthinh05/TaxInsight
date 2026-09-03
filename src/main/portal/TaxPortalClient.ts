@@ -1069,6 +1069,21 @@ export class TaxPortalClient {
    * Không có trường nào kiểm được => pass (cảnh báo), để tầng extract quyết định.
    * Không log MST/mã hồ sơ đầy đủ.
    */
+  private isNoticeXml(xmlText: string): boolean {
+    const lower = xmlText.toLowerCase();
+    return (
+      lower.includes('<thongbao') ||
+      lower.includes('<tbao') ||
+      lower.includes('<mauso>01-1/tb-tdt') ||
+      lower.includes('<mauso>07-gd/t-van') ||
+      lower.includes('<mauso>01-2/tb-tdt') ||
+      lower.includes('thông báo tiếp nhận') ||
+      lower.includes('thông báo kết quả') ||
+      lower.includes('thông báo v/v:') ||
+      (lower.includes('<tentbao>') && lower.includes('thông báo'))
+    );
+  }
+
   private verifyXmlPayloadIdentity(
     base64Content: string,
     expected: { taxCode?: string; period?: string; declarationCode?: string }
@@ -1081,6 +1096,16 @@ export class TaxPortalClient {
     }
     const trimmed = xmlText.trim();
     if (!trimmed.startsWith('<')) return true; // không phải XML => bỏ qua identity check
+
+    // Chặn nghiêm ngặt: Tờ khai thuế không được nhầm lẫn với Thông báo tiếp nhận / kết quả nộp
+    const isDeclarationExpected = expected.declarationCode &&
+      !expected.declarationCode.toLowerCase().includes('tb') &&
+      !expected.declarationCode.toLowerCase().includes('thongbao');
+
+    if (isDeclarationExpected && this.isNoticeXml(xmlText)) {
+      console.warn('[verifyXmlIdentity] Tệp tải về là Thông báo (01-1/TB-TĐT, 07-GD/T-VAN...) chứ không phải Tờ khai thuế — từ chối.');
+      return false;
+    }
 
     const hasAnyExpected = Boolean(
       (expected.taxCode || '').trim() || (expected.period || '').trim() || (expected.declarationCode || '').trim()
@@ -1214,11 +1239,20 @@ export class TaxPortalClient {
     if (matchingAttachments.length === 0) return null;
 
     const extensionPriority = (item: FilingAttachment): number => {
+      const name = String(item.tenTep || item.dinhDangTep || '').toLowerCase();
+      const isNotice = name.includes('tb_') || name.includes('thongbao') || name.includes('thong_bao') || name.includes('tiep_nhan') || name.includes('chap_nhan') || name.includes('tvan') || name.includes('t-van');
       const ext = String(item.dinhDangTep || item.tenTep?.split('.').pop() || '').toLowerCase();
-      if (ext === 'xml') return 0;
-      if (ext === 'zip') return 1;
-      if (ext === 'pdf') return 2;
-      return 3;
+
+      // Tờ khai chính thức dạng XML: ƯU TIÊN SỐ 1
+      if (!isNotice && ext === 'xml') return 0;
+      // Tờ khai dạng ZIP: ƯU TIÊN SỐ 2
+      if (!isNotice && ext === 'zip') return 1;
+      // Tờ khai dạng PDF: ƯU TIÊN SỐ 3
+      if (!isNotice && ext === 'pdf') return 2;
+      // File thông báo tiếp nhận/chấp nhận dạng XML: xếp sau cùng
+      if (isNotice && ext === 'xml') return 10;
+      if (isNotice) return 11;
+      return 20;
     };
     matchingAttachments.sort((a, b) => extensionPriority(a) - extensionPriority(b));
     const mst =
@@ -1226,7 +1260,7 @@ export class TaxPortalClient {
       this.session.getSessionInfo().taxCode?.replace(/-ql$/i, '') ||
       '';
 
-    for (const attachment of matchingAttachments.slice(0, 4)) {
+    for (const attachment of matchingAttachments.slice(0, 10)) {
       await new Promise(resolve => setTimeout(resolve, 750));
       const fileResponse = await this.diagRequest(
         attemptContext,
@@ -1629,8 +1663,16 @@ export class TaxPortalClient {
           }
         }
         // Fallback: Với các hồ sơ hành chính (HĐĐT, thủ tục đăng ký...) không có tệp ZIP trên /downloadhoso,
-        // tải trực tiếp file Thông báo tiếp nhận / chấp nhận của Cơ quan Thuế (/tthc/tchs/downloadthongbao)
-        if (!payload) {
+        // tải trực tiếp file Thông báo tiếp nhận / chấp nhận của Cơ quan Thuế (/tthc/tchs/downloadthongbao).
+        // TUYỆT ĐỐI KHÔNG dùng để thay thế cho Tờ khai thuế chính thức (01/GTGT, 05/KK-TNCN...)
+        const isTaxDeclaration = filingMeta?.declarationCode &&
+          (filingMeta.declarationCode.includes('GTGT') ||
+           filingMeta.declarationCode.includes('TNCN') ||
+           filingMeta.declarationCode.includes('TNDN') ||
+           filingMeta.declarationCode.includes('NTNN') ||
+           filingMeta.declarationCode.includes('BCTC'));
+
+        if (!payload && !isTaxDeclaration) {
           const thongBaoId = context.detailHtml.match(/data-id=["'](\d{10,24})["']/i)?.[1] ||
             context.detailHtml.match(/idTbao["']?\s*[:=]\s*["']?(\d{10,24})["']?/i)?.[1] ||
             context.detailHtml.match(/downloadThongBao\([^)]*['"](\d{10,24})['"]/i)?.[1];

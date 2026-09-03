@@ -254,13 +254,20 @@ export class PitFlowEngine {
       }
     }
 
-    // ─── Quyết toán năm 05/QTT-TNCN ───────────────────────────
-    const qtt = summary?.finalizationSnapshot || null;
-    const finalizationTotalIncome24 = qtt?.ct24_tongThuNhapChiuThue ?? null;
-    const finalizationWithheldTax36 = qtt?.ct36_qtt_tongThueDaKhauTruTrongNam ?? null;
-    const finalizationPayableTax41 = qtt?.ct41_qtt_tongThuePhaiNopTrongNam ?? null;
-    const finalizationOverpaidTax44 = qtt?.ct44_qtt_tongThueNopThua ?? null;
+    // ─── Quyết toán năm 05/QTT-TNCN ĐÚNG THEO NĂM targetYear ───
+    const yearFinalizationGroup = allGroups.find(
+      g => (g.periodType === 'YEAR' || g.periodKey === `${targetYear}-YEAR`) && g.year === targetYear && g.finalSnapshot
+    );
+    const qtt =
+      yearFinalizationGroup?.finalSnapshot ||
+      (summary?.finalizationSnapshot?.year === targetYear ? summary.finalizationSnapshot : null);
 
+    const finalizationTotalIncome24 = qtt?.ct24_tongThuNhapChiuThue ?? null;
+    const finalizationWithheldTax36 =
+      qtt?.ct36_qtt_tongThueDaKhauTruTrongNam ?? qtt?.ct31_tongThueTncnDaKhauTru ?? qtt?.ct34_tongThueKhauTru ?? null;
+    const finalizationPayableTax41 =
+      qtt?.ct41_qtt_tongThuePhaiNopTrongNam ?? qtt?.ct35_tongThuePhaiNop ?? null;
+    const finalizationOverpaidTax44 = qtt?.ct44_qtt_tongThueNopThua ?? null;
     let mismatchDelta: bigint | null = null;
     let auditStatus: 'MATCHED' | 'MISMATCHED' | 'NO_FINALIZATION' = 'NO_FINALIZATION';
 

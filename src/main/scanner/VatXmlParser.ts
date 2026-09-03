@@ -83,27 +83,54 @@ export class VatXmlParser {
     normalizedKey = norm.key;
 
     // 3. Trích xuất các chỉ tiêu [22] -> [43] (Ưu tiên vùng CTietTKhaiChinh hoặc CTietKHBS chính thống, hỗ trợ namespace XML)
-    const mainSectionMatch = xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?CTietTKhaiChinh[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?CTietTKhaiChinh\s*>/i) ||
-                             xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?CTietKHBS[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?CTietKHBS\s*>/i) ||
-                             xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?BangChiTiet[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?BangChiTiet\s*>/i);
+    const mainSectionMatch =
+      xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?CTietTKhaiChinh[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?CTietTKhaiChinh\s*>/i) ||
+      xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?CTietKHBS[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?CTietKHBS\s*>/i) ||
+      xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?CTietTKhai[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?CTietTKhai\s*>/i) ||
+      xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?ChiTietToKhai[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?ChiTietToKhai\s*>/i) ||
+      xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?BangChiTiet[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?BangChiTiet\s*>/i) ||
+      xmlContent.match(/<(?:[a-zA-Z0-9_]+:)?TKhai[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?TKhai\s*>/i);
     const targetXml = mainSectionMatch ? mainSectionMatch[1] : xmlContent;
-    const extractedCt22 = this.findTag(targetXml, ['ct22', 'thueDauVaoKyTruoc', 'ct_22', 'ct22_thueDauVao']) || this.findTag(xmlContent, ['ct22']);
-    const extractedCt23 = this.findTag(targetXml, ['ct23', 'giaTriHHDVMuaVao', 'ct_23', 'ct23_giaTriHHDVMuaVao']) || this.findTag(xmlContent, ['ct23']);
-    const extractedCt24 = this.findTag(targetXml, ['ct24', 'thueHHDVMuaVao', 'ct_24', 'ct24_thueHHDVMuaVao']) || this.findTag(xmlContent, ['ct24']);
-    const extractedCt25 = this.findTag(targetXml, ['ct25', 'thueKhauTruKyNay', 'ct_25', 'ct25_thueKhauTruKyNay']) || this.findTag(xmlContent, ['ct25']);
-    const extractedCt26 = this.findTag(targetXml, ['ct26', 'hhdvBanKhongChiuThue', 'ct_26']) || this.findTag(xmlContent, ['ct26']);
-    const extractedCt27 = this.findTag(targetXml, ['ct27', 'hhdvBanChiuThue0', 'ct_27']) || this.findTag(xmlContent, ['ct27']);
-    const extractedCt28 = this.findTag(targetXml, ['ct28', 'hhdvBanChiuThue5', 'ct_28']) || this.findTag(xmlContent, ['ct28']);
-    const extractedCt29 = this.findTag(targetXml, ['ct29', 'hhdvBanChiuThue10', 'ct_29']) || this.findTag(xmlContent, ['ct29']);
-    const extractedCt34 = this.findTag(targetXml, ['ct34', 'tongDoanhThuBanRa', 'ct_34', 'ct34_tongDoanhThuBanRa']) || this.findTag(xmlContent, ['ct34']);
-    const extractedCt35 = this.findTag(targetXml, ['ct35', 'tongThueBanRa', 'ct_35', 'ct35_tongThueBanRa']) || this.findTag(xmlContent, ['ct35']);
-    const extractedCt36 = this.findTag(targetXml, ['ct36', 'thuePhatSinhKyNay', 'ct_36']) || this.findTag(xmlContent, ['ct36']);
-    const extractedCt37 = this.findTag(targetXml, ['ct37', 'dChinhGiamThueKTru', 'ct_37', 'ct37_dChinhGiamThueKTru', 'ct37_dChinhGiam']) || this.findTag(xmlContent, ['ct37']);
-    const extractedCt38 = this.findTag(targetXml, ['ct38', 'dChinhTangThueKTru', 'ct_38', 'ct38_dChinhTangThueKTru', 'ct38_dChinhTang']) || this.findTag(xmlContent, ['ct38']);
-    const extractedCt40 = this.findTag(targetXml, ['ct40', 'thuePhaiNopKyNay', 'ct_40', 'ct40_thuePhaiNopKyNay', 'ct40_thuePhaiNop']) || this.findTag(xmlContent, ['ct40']);
-    const extractedCt41 = this.findTag(targetXml, ['ct41', 'thueChuaKTruHetKyNay', 'ct_41', 'ct41_thueChuaKTruHetKyNay', 'ct41_thueChuaKTruHet']) || this.findTag(xmlContent, ['ct41']);
-    const extractedCt42 = this.findTag(targetXml, ['ct42', 'thueDeNghiHoanKyNay', 'ct_42', 'ct42_thueDeNghiHoanKyNay', 'ct42_thueDeNghiHoan']) || this.findTag(xmlContent, ['ct42']);
-    const extractedCt43 = this.findTag(targetXml, ['ct43', 'thueConDuocKhauTruChuyenKySau', 'ct_43', 'ct43_thueConDuocKhauTruChuyenKySau', 'ct43_thueKhauTruChuyenKySau', 'ct43_thueConDuocKT']) || this.findTag(xmlContent, ['ct43']);
+
+    const extractedCt22 = this.findTag(targetXml, ['ct22', 'thueDauVaoKyTruoc', 'thueGTGTDauVaoKyTruoc', 'ct_22', 'ct22_thueDauVao', 'chiTieu22', 'CT22', 'thueKhauTruKyTruoc']) || this.findTag(xmlContent, ['ct22']);
+    const extractedCt23 = this.findTag(targetXml, ['ct23', 'giaTriHHDVMuaVao', 'tongGiaTriHHDVMuaVao', 'ct_23', 'ct23_giaTriHHDVMuaVao', 'chiTieu23', 'CT23']) || this.findTag(xmlContent, ['ct23']);
+    const extractedCt24 = this.findTag(targetXml, ['ct24', 'thueHHDVMuaVao', 'tongThueHHDVMuaVao', 'ct_24', 'ct24_thueHHDVMuaVao', 'chiTieu24', 'CT24']) || this.findTag(xmlContent, ['ct24']);
+    const extractedCt25 = this.findTag(targetXml, ['ct25', 'thueKhauTruKyNay', 'tongThueKhauTruKyNay', 'ct_25', 'ct25_thueKhauTruKyNay', 'chiTieu25', 'CT25']) || this.findTag(xmlContent, ['ct25']);
+    const extractedCt26 = this.findTag(targetXml, ['ct26', 'hhdvBanKhongChiuThue', 'ct_26', 'chiTieu26', 'CT26']) || this.findTag(xmlContent, ['ct26']);
+    const extractedCt27 = this.findTag(targetXml, ['ct27', 'hhdvBanChiuThue0', 'ct_27', 'chiTieu27', 'CT27']) || this.findTag(xmlContent, ['ct27']);
+    const extractedCt28 = this.findTag(targetXml, ['ct28', 'hhdvBanChiuThue5', 'ct_28', 'chiTieu28', 'CT28']) || this.findTag(xmlContent, ['ct28']);
+    const extractedCt29 = this.findTag(targetXml, ['ct29', 'hhdvBanChiuThue10', 'ct_29', 'chiTieu29', 'CT29']) || this.findTag(xmlContent, ['ct29']);
+    const extractedCt30 = this.findTag(targetXml, ['ct30', 'hhdvBanChiuThueKhac', 'ct_30', 'chiTieu30', 'CT30']) || this.findTag(xmlContent, ['ct30']);
+    const extractedCt31 = this.findTag(targetXml, ['ct31', 'thueHHDVBanChiuThueKhac', 'ct_31', 'chiTieu31', 'CT31']) || this.findTag(xmlContent, ['ct31']);
+    const extractedCt32 = this.findTag(targetXml, ['ct32', 'thueHHDVBanChiuThue5', 'ct_32', 'chiTieu32', 'CT32']) || this.findTag(xmlContent, ['ct32']);
+    const extractedCt33 = this.findTag(targetXml, ['ct33', 'thueHHDVBanChiuThue10', 'ct_33', 'chiTieu33', 'CT33']) || this.findTag(xmlContent, ['ct33']);
+    let extractedCt34 = this.findTag(targetXml, ['ct34', 'tongDoanhThuBanRa', 'tongDThuBanRa', 'ct_34', 'ct34_tongDoanhThuBanRa', 'chiTieu34', 'CT34']) || this.findTag(xmlContent, ['ct34']);
+    let extractedCt35 = this.findTag(targetXml, ['ct35', 'tongThueBanRa', 'ct_35', 'ct35_tongThueBanRa', 'chiTieu35', 'CT35']) || this.findTag(xmlContent, ['ct35']);
+    const extractedCt36 = this.findTag(targetXml, ['ct36', 'thuePhatSinhKyNay', 'ct_36', 'chiTieu36', 'CT36']) || this.findTag(xmlContent, ['ct36']);
+    const extractedCt37 = this.findTag(targetXml, ['ct37', 'dChinhGiamThueKTru', 'ct_37', 'ct37_dChinhGiamThueKTru', 'ct37_dChinhGiam', 'chiTieu37', 'CT37']) || this.findTag(xmlContent, ['ct37']);
+    const extractedCt38 = this.findTag(targetXml, ['ct38', 'dChinhTangThueKTru', 'ct_38', 'ct38_dChinhTangThueKTru', 'ct38_dChinhTang', 'chiTieu38', 'CT38']) || this.findTag(xmlContent, ['ct38']);
+    const extractedCt40 = this.findTag(targetXml, ['ct40', 'thuePhaiNopKyNay', 'ct_40', 'ct40_thuePhaiNopKyNay', 'ct40_thuePhaiNop', 'chiTieu40', 'CT40']) || this.findTag(xmlContent, ['ct40']);
+    const extractedCt41 = this.findTag(targetXml, ['ct41', 'thueChuaKTruHetKyNay', 'ct_41', 'ct41_thueChuaKTruHetKyNay', 'ct41_thueChuaKTruHet', 'chiTieu41', 'CT41']) || this.findTag(xmlContent, ['ct41']);
+    const extractedCt42 = this.findTag(targetXml, ['ct42', 'thueDeNghiHoanKyNay', 'ct_42', 'ct42_thueDeNghiHoanKyNay', 'ct42_thueDeNghiHoan', 'chiTieu42', 'CT42']) || this.findTag(xmlContent, ['ct42']);
+    let extractedCt43 = this.findTag(targetXml, ['ct43', 'thueConDuocKhauTruChuyenKySau', 'ct_43', 'ct43_thueConDuocKhauTruChuyenKySau', 'ct43_thueKhauTruChuyenKySau', 'ct43_thueConDuocKT', 'chiTieu43', 'CT43']) || this.findTag(xmlContent, ['ct43']);
+
+    // Tự động suy luận doanh thu [34] nếu XML chỉ lưu chi tiết các nhóm thuế suất [26..29]
+    if (!extractedCt34 && (extractedCt26 || extractedCt27 || extractedCt28 || extractedCt29)) {
+      const b26 = parseMoneyToBigInt(extractedCt26);
+      const b27 = parseMoneyToBigInt(extractedCt27);
+      const b28 = parseMoneyToBigInt(extractedCt28);
+      const b29 = parseMoneyToBigInt(extractedCt29);
+      const sumRev = b26 + b27 + b28 + b29;
+      if (sumRev > 0n) extractedCt34 = sumRev.toString();
+    }
+
+    // Tự động suy luận thuế bán ra [35] nếu XML chỉ lưu [32] và [33]
+    if (!extractedCt35 && (extractedCt32 || extractedCt33)) {
+      const t32 = parseMoneyToBigInt(extractedCt32);
+      const t33 = parseMoneyToBigInt(extractedCt33);
+      const sumTax = t32 + t33;
+      if (sumTax > 0n) extractedCt35 = sumTax.toString();
+    }
 
     // Đăng ký vào allIndicators
     const rawMap: Record<string, string | undefined> = {
@@ -115,6 +142,10 @@ export class VatXmlParser {
       '27': extractedCt27,
       '28': extractedCt28,
       '29': extractedCt29,
+      '30': extractedCt30,
+      '31': extractedCt31,
+      '32': extractedCt32,
+      '33': extractedCt33,
       '34': extractedCt34,
       '35': extractedCt35,
       '36': extractedCt36,
@@ -141,15 +172,28 @@ export class VatXmlParser {
     const ct22Big = parseMoneyToBigInt(extractedCt22);
     const ct23Big = parseMoneyToBigInt(extractedCt23);
     const ct24Big = parseMoneyToBigInt(extractedCt24);
-    const ct25Big = parseMoneyToBigInt(extractedCt25);
+    let ct25Big = parseMoneyToBigInt(extractedCt25);
+    // Nếu [25] trống nhưng có [24] (doanh nghiệp khấu trừ toàn bộ):
+    if (ct25Big === 0n && ct24Big > 0n && extractedCt25 === undefined) {
+      ct25Big = ct24Big;
+    }
     const ct34Big = parseMoneyToBigInt(extractedCt34);
     const ct35Big = parseMoneyToBigInt(extractedCt35);
     const ct37Big = parseMoneyToBigInt(extractedCt37);
     const ct38Big = parseMoneyToBigInt(extractedCt38);
     const ct40Big = parseMoneyToBigInt(extractedCt40);
     const ct42Big = parseMoneyToBigInt(extractedCt42);
-    const ct43Big = parseMoneyToBigInt(extractedCt43);
+    let ct43Big = parseMoneyToBigInt(extractedCt43);
 
+    // Tự động kiểm tra tính toán [43] nếu XML thiếu hoặc bằng 0 mà có thuế khấu trừ chuyển kỳ
+    if (ct43Big === 0n && extractedCt43 === undefined && ct40Big === 0n) {
+      const netVat = ct35Big - ct25Big; // Thuế phát sinh [36]
+      if (netVat < 0n) {
+        const notDeducted = -netVat; // [41]
+        const computed43 = ct22Big + notDeducted - ct37Big + ct38Big - ct42Big;
+        if (computed43 > 0n) ct43Big = computed43;
+      }
+    }
     // Không khớp CHỈ TIÊU nào (schema lạ / fallback BangChiTiet bắt sai vùng):
     // các con số 0n bên dưới là FABRICATED, không phải dữ liệu thật. Trước đây
     // vẫn trả SUCCESS/xmlAvailable=true khiến analytics nhân bản mười sự im

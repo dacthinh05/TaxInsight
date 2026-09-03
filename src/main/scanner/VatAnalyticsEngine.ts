@@ -125,8 +125,28 @@ export class VatAnalyticsEngine {
             const isBS = cleanName.toLowerCase().includes('bosung') || cleanName.toLowerCase().includes('bs');
             const bsNum = cleanName.match(/(?:bosung|bs)[\-_]?l?(\d+)/i)?.[1] || (isBS ? '1' : '0');
             if (m) {
-              map.set(`M_${parseInt(m[1], 10)}_${m[2]}_${bsNum}`, fullDirPath);
-              if (bsNum === '0') map.set(`M_${parseInt(m[1], 10)}_${m[2]}`, fullDirPath);
+              const numVal = parseInt(m[1], 10);
+              const yr = m[2];
+              const isQuarter = /Quy|quý/i.test(m[0]);
+              const isYear = /Nam|năm/i.test(m[0]);
+
+              if (isQuarter) {
+                map.set(`${yr}-Q${numVal}`, fullDirPath);
+                map.set(`${yr}-Q${numVal}_${bsNum}`, fullDirPath);
+                map.set(`Q_${numVal}_${yr}`, fullDirPath);
+                map.set(`Q_${numVal}_${yr}_${bsNum}`, fullDirPath);
+              } else if (!isYear) {
+                const padM = numVal < 10 ? `0${numVal}` : `${numVal}`;
+                map.set(`${yr}-M${padM}`, fullDirPath);
+                map.set(`${yr}-M${padM}_${bsNum}`, fullDirPath);
+                map.set(`${yr}-M${numVal}`, fullDirPath);
+                map.set(`${yr}-M${numVal}_${bsNum}`, fullDirPath);
+                map.set(`M_${numVal}_${yr}`, fullDirPath);
+                map.set(`M_${numVal}_${yr}_${bsNum}`, fullDirPath);
+              } else {
+                map.set(`${yr}-YEAR`, fullDirPath);
+                map.set(`${yr}-YEAR_${bsNum}`, fullDirPath);
+              }
             }
           }
         }
@@ -168,7 +188,7 @@ export class VatAnalyticsEngine {
     let stopForInfrastructure = false;
 
     for (let i = 0; i < total; i += concurrency) {
-      if (this.isCancelled || stopForInfrastructure) break;
+      if (this.isCancelled) break;
       const batch = vatFilings.slice(i, i + concurrency);
       const batchPromises = batch.map(async filing => {
         if (this.isCancelled) return null;
@@ -221,7 +241,13 @@ export class VatAnalyticsEngine {
             const rawPeriod = filing.period || filing.periodNormalized?.raw || '';
             const norm = normalizeVatPeriod(rawPeriod, filing.submittedAt);
             const bsNum = filing.filingType === 'SUPPLEMENTAL' ? String(filing.supplementalNo || 1) : '0';
-            manifestXml = map.get(`${norm.key}_${bsNum}`) || map.get(norm.key);
+            manifestXml =
+              map.get(`${norm.key}_${bsNum}`) ||
+              map.get(norm.key) ||
+              map.get(`${norm.year}-M${norm.month ? (norm.month < 10 ? `0${norm.month}` : norm.month) : ''}`) ||
+              map.get(`${norm.year}-Q${norm.quarter}`) ||
+              map.get(`M_${norm.month}_${norm.year}`) ||
+              map.get(filing.id);
           }
           if (
             manifestXml &&
@@ -235,8 +261,8 @@ export class VatAnalyticsEngine {
           }
         }
 
-        // 4. Nếu chưa có XML, tải trực tuyến vào bộ nhớ RAM (có retry khi bị rate-limit/mạng)
-        if (!snapshot && filing.downloadAvailable !== false) {
+        // 4. Nếu chưa có XML, tải trực tuyến vào bộ nhớ RAM (bỏ qua nếu mạng Cổng Thuế đang bị 429)
+        if (!snapshot && filing.downloadAvailable !== false && !stopForInfrastructure) {
           try {
             const res = await this.downloadHoSoWithRetry(filing);
 
@@ -363,9 +389,10 @@ export class VatAnalyticsEngine {
         throw cancelErr;
       }
       try {
-        if (this.legacyClient && filing.source === 'dvc-etax-html') {
-          if (filing.messageId) {
-            const legacyFile = await this.legacyClient.downloadFiling(filing.messageId);
+        if (this.legacyClient && (filing.source === 'dvc-etax-html' || Boolean(filing.messageId))) {
+          const legacyId = filing.messageId || filing.id;
+          if (legacyId) {
+            const legacyFile = await this.legacyClient.downloadFiling(legacyId);
             return {
               fileName: legacyFile.fileName,
               fileType: legacyFile.contentType,

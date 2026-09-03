@@ -93,20 +93,16 @@ export class PitXmlParser {
       let ct44_qtt: bigint | undefined = undefined;
 
       // 1. Quét thẻ số lao động (người) - [21], [22]
-      const val21 = isTt80Schema
-        ? this.findTag(xmlContent, ['ct16'])
-        : this.findTag(xmlContent, ['ct21', 'soLaoDong', 'tongSoLaoDong', 'ct_21']);
-      const val22 = isTt80Schema
-        ? this.findTag(xmlContent, ['ct17'])
-        : this.findTag(xmlContent, ['ct22', 'caNhanCuTru', 'ct_22']);
+      const val21 = this.findTag(xmlContent, ['ct16', 'ct21', 'soLaoDong', 'tongSoLaoDong', 'ct_21', 'ct_16']);
+      const val22 = this.findTag(xmlContent, ['ct17', 'ct22', 'caNhanCuTru', 'ct_22', 'ct_17']);
 
       // 2. Quét thẻ Tổng thu nhập chịu thuế (TNCT) - [24], [27]
       const val24 = isTt80Schema
-        ? this.findTag(xmlContent, [isFinalization ? 'ct23' : 'ct21'])
-        : this.findTag(xmlContent, ['ct24', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24']);
+        ? this.findTag(xmlContent, [isFinalization ? 'ct23' : 'ct21', 'ct24', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24', 'ct_21', 'ct_23'])
+        : this.findTag(xmlContent, ['ct24', 'ct21', 'ct23', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24']);
       const val27 = isTt80Schema
-        ? this.findTag(xmlContent, [isFinalization ? 'ct28' : 'ct26'])
-        : this.findTag(xmlContent, ['ct27', 'tnctKhauTru', 'ct_27']);
+        ? this.findTag(xmlContent, [isFinalization ? 'ct28' : 'ct26', 'ct27', 'tnctKhauTru', 'ct_27', 'ct_26', 'ct_28'])
+        : this.findTag(xmlContent, ['ct27', 'ct26', 'ct28', 'tnctKhauTru', 'ct_27']);
 
       if (val21 !== undefined) ct21 = this.parseBigIntSafe(val21);
       if (val22 !== undefined) ct22 = this.parseBigIntSafe(val22);
@@ -119,9 +115,9 @@ export class PitXmlParser {
           // [16] tổng số NLĐ; [17] cá nhân cư trú có HĐLĐ;
           // [21] tổng TNCT; [26] tổng TNCT thuộc diện khấu trừ;
           // [29] tổng thuế đã khấu trừ = [30] cư trú + [31] không cư trú.
-          const totalWithheld = this.findTag(xmlContent, ['ct29']);
-          const residentWithheld = this.findTag(xmlContent, ['ct30']);
-          const nonResidentWithheld = this.findTag(xmlContent, ['ct31']);
+          const totalWithheld = this.findTag(xmlContent, ['ct29', 'ct30', 'ct34', 'tongThueDaKhauTru', 'tongThueKhauTru', 'ct_29', 'ct_34']);
+          const residentWithheld = this.findTag(xmlContent, ['ct30', 'ct31', 'ct32', 'thueCuTru', 'ct_30', 'ct_31']);
+          const nonResidentWithheld = this.findTag(xmlContent, ['ct31', 'ct32', 'ct33', 'thueKhongCuTru', 'ct_31', 'ct_32']);
           ct31 = this.parseBigIntSafe(residentWithheld);
           ct32 = this.parseBigIntSafe(nonResidentWithheld);
           ct34 = this.parseBigIntSafe(totalWithheld);
@@ -180,11 +176,11 @@ export class PitXmlParser {
           // Mẫu 05/QTT-TNCN TT80/2021 (maTKhai=953):
           // [31] tổng thuế đã khấu trừ = [32] cư trú + [33] không cư trú;
           // [40] số thuế còn phải nộp; [41] số thuế nộp thừa.
-          const totalWithheld = this.findTag(xmlContent, ['ct31']);
-          const residentWithheld = this.findTag(xmlContent, ['ct32']);
-          const nonResidentWithheld = this.findTag(xmlContent, ['ct33']);
-          const additionalPayable = this.findTag(xmlContent, ['ct40']);
-          const overpaid = this.findTag(xmlContent, ['ct41']);
+          const totalWithheld = this.findTag(xmlContent, ['ct31', 'ct30', 'ct36', 'tongThueDaKhauTru', 'ct_31', 'ct_36']);
+          const residentWithheld = this.findTag(xmlContent, ['ct32', 'ct31', 'thueCuTru', 'ct_32']);
+          const nonResidentWithheld = this.findTag(xmlContent, ['ct33', 'thueKhongCuTru', 'ct_33']);
+          const additionalPayable = this.findTag(xmlContent, ['ct40', 'ct41', 'ct35', 'thuePhaiNopQTT', 'ct_40', 'ct_41']);
+          const overpaid = this.findTag(xmlContent, ['ct41', 'ct44', 'thueNopThuaQTT', 'ct_41', 'ct_44']);
           ct31 = this.parseBigIntSafe(residentWithheld);
           ct32 = this.parseBigIntSafe(nonResidentWithheld);
           ct34 = this.parseBigIntSafe(totalWithheld);

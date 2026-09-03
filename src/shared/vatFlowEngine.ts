@@ -325,22 +325,32 @@ export class VatFlowEngine {
 
     // Lọc các kỳ thuộc năm đang chọn (dựa trên KỲ KÊ KHAI, không phải ngày nộp)
     const yearGroups = allGroups.filter(g => g.year === targetYear);
-
-    // Xác định tần suất kê khai (tháng hay quý)
-    const hasQuarterly = yearGroups.some(g => g.periodType === 'QUARTER');
-    const isQuarterMode = hasQuarterly && !yearGroups.some(g => g.periodType === 'MONTH');
+    // Xác định tần suất kê khai (tháng hay quý) dựa trên đa số kỳ có dữ liệu
+    let quarterCount = 0;
+    let monthCount = 0;
+    for (const g of yearGroups) {
+      if (g.periodType === 'QUARTER' || (g.quarter && g.quarter >= 1 && g.quarter <= 4)) quarterCount++;
+      else if (g.periodType === 'MONTH' || (g.month && g.month >= 1 && g.month <= 12)) monthCount++;
+    }
+    const isQuarterMode = quarterCount >= monthCount && quarterCount > 0;
 
     const totalSlots = isQuarterMode ? 4 : 12;
     const flows: TaxPeriodFlow[] = [];
 
     const groupMap = new Map<number, VatPeriodGroup>();
     for (const g of yearGroups) {
-      const idx = isQuarterMode ? (g.quarter || 0) : (g.month || 0);
+      let idx = 0;
+      if (isQuarterMode) {
+        idx = g.quarter || (g.month ? Math.ceil(g.month / 3) : 0);
+      } else {
+        idx = g.month || (g.quarter ? g.quarter * 3 : 0);
+      }
       if (idx >= 1 && idx <= totalSlots) {
-        groupMap.set(idx, g);
+        if (!groupMap.has(idx) || (g.finalSnapshot && !groupMap.get(idx)?.finalSnapshot)) {
+          groupMap.set(idx, g);
+        }
       }
     }
-
     let runningPrevCarryForward: bigint | null = null;
 
     let openingYearBalance = 0n;
