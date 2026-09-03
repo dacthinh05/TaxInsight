@@ -410,8 +410,22 @@ export class VatAnalyticsEngine {
             declarationCode: filing.declarationCode
           });
         } catch (dvcErr: any) {
-          // Hồ sơ hiện hành phải giữ nguyên nguồn DVC; eTax chỉ dành cho
-          // các filing legacy đã được đánh dấu source=dvc-etax-html.
+          // Khi Cổng DVC báo lỗi (HTTP 500 hoặc validateIdTkhai "400" do hồ sơ nộp qua eTax/TVAN),
+          // tự động fallback sang phân hệ eTax để lấy tệp XML/PDF gốc.
+          if (this.legacyClient && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
+            try {
+              const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
+              if (legacyFile?.dataBuffer && legacyFile.dataBuffer.length > 0) {
+                return {
+                  fileName: legacyFile.fileName,
+                  fileType: legacyFile.contentType,
+                  content: legacyFile.dataBuffer.toString('base64')
+                };
+              }
+            } catch (etaxErr: any) {
+              console.warn(`[VatAnalyticsEngine] eTax fallback thất bại cho ${filing.period}:`, etaxErr?.message);
+            }
+          }
           throw dvcErr;
         }
       } catch (err: any) {

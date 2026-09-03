@@ -472,14 +472,32 @@ export class PitAnalyticsEngine {
             }
           }
         }
-        return await this.client.downloadHoSo(filing.id, undefined, {
-          isThueDienTu: filing.isThueDienTu,
-          loaiTraCuu: filing.loaiTraCuu,
-          maTkhai: filing.maTkhai,
-          altIds: filing.altIds,
-          period: filing.period,
-          declarationCode: filing.declarationCode
-        });
+        try {
+          return await this.client.downloadHoSo(filing.id, undefined, {
+            isThueDienTu: filing.isThueDienTu,
+            loaiTraCuu: filing.loaiTraCuu,
+            maTkhai: filing.maTkhai,
+            altIds: filing.altIds,
+            period: filing.period,
+            declarationCode: filing.declarationCode
+          });
+        } catch (dvcErr: any) {
+          if (this.legacyClient && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
+            try {
+              const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
+              if (legacyFile?.dataBuffer && legacyFile.dataBuffer.length > 0) {
+                return {
+                  fileName: legacyFile.fileName,
+                  fileType: legacyFile.contentType,
+                  content: legacyFile.dataBuffer.toString('base64')
+                };
+              }
+            } catch (etaxErr: any) {
+              console.warn(`[PitAnalyticsEngine] eTax fallback thất bại cho ${filing.period}:`, etaxErr?.message);
+            }
+          }
+          throw dvcErr;
+        }
       } catch (err: any) {
         lastErr = err;
         if (err?.code === 'CANCELLED' || err?.code === 'SESSION_EXPIRED') throw err;
