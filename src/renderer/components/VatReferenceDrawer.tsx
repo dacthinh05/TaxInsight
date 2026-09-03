@@ -212,6 +212,21 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
   // Đếm tổng số phiên bản BS trong năm
   const totalBsVersionsCount = yearFlowSummary.flows.reduce((sum, f) => sum + f.supplementaryCount, 0);
 
+  // Lọc các tờ khai bị lỗi XML thuộc chính năm đang xem
+  const failedXmlForSelectedYear = useMemo(() => {
+    if (!summary?.failedXmlDetails) return [];
+    return summary.failedXmlDetails.filter(d => {
+      const p = String(d.periodLabel || '').trim();
+      return p.includes(String(selectedYear)) || p.endsWith(`/${selectedYear}`) || p.includes(`${selectedYear}`);
+    });
+  }, [summary, selectedYear]);
+
+  // Đếm số lượng tờ khai của năm đang chọn
+  const filingsForSelectedYearCount = useMemo(() => {
+    if (!summary?.periodGroups) return 0;
+    const groups = summary.periodGroups.filter(g => g.year === selectedYear || g.periodLabel?.includes(String(selectedYear)));
+    return groups.reduce((sum, g) => sum + (g.filings?.length || g.snapshots?.length || 1), 0);
+  }, [summary, selectedYear]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs select-none animate-fadeIn">
       <div className="w-[98vw] max-w-[1580px] h-[95vh] bg-white rounded-2xl flex flex-col shadow-2xl border border-slate-200 overflow-hidden relative font-sans text-slate-800">
@@ -468,17 +483,17 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
         </div>
 
         {/* ─── CẢNH BÁO XML THIẾU: số liệu trống do không tải được file từ Cổng Thuế ─── */}
-        {!isLoading && (summary?.failedXmlCount ?? 0) > 0 && (
+        {!isLoading && failedXmlForSelectedYear.length > 0 && (
           <div className="px-6 py-2 bg-rose-50 border-b border-rose-200 text-xs text-rose-800 flex items-center justify-between gap-3">
             <div className="flex items-start space-x-2 min-w-0">
               <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <div className="min-w-0">
                 <span className="font-bold">
-                  {summary!.failedXmlCount}/{summary!.totalFilingsCount} tờ khai GTGT chưa tải được file XML từ Cổng Thuế
+                  {failedXmlForSelectedYear.length}/{filingsForSelectedYearCount || failedXmlForSelectedYear.length} tờ khai GTGT năm {selectedYear} chưa tải được file XML từ Cổng Thuế
                 </span>
                 <span> — số liệu các kỳ liên quan đang hiển thị TRỐNG (chỉ có metadata), không phải số liệu thật. Ảnh hưởng tới: </span>
                 <span className="font-semibold">
-                  {[...new Set((summary!.failedXmlDetails || []).map(d => d.periodLabel).filter(Boolean))].join(', ')}
+                  {[...new Set(failedXmlForSelectedYear.map(d => d.periodLabel).filter(Boolean))].join(', ')}
                 </span>
               </div>
             </div>

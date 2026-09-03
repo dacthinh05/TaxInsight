@@ -74,7 +74,7 @@
       "repo": "TaxInsight"
     },
     "directories": {
-      "output": "build-release-v3",
+      "output": "build-release-v301",
       "buildResources": "build"
     },
     "files": [
