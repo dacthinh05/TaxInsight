@@ -1305,12 +1305,31 @@ export class TaxPortalClient {
 
     return null;
   }
+  private generateIdVariants(primaryId: string, altIds?: string[]): string[] {
+    const list = new Set<string>();
+    if (primaryId) list.add(primaryId.trim());
+    if (Array.isArray(altIds)) {
+      altIds.forEach(id => id && list.add(id.trim()));
+    }
 
-  /**
-   * Tải file hồ sơ thuế (Base64 ZIP / XML / PDF) hỗ trợ tự động Retry khi gặp HTTP 429 Rate Limit.
-   * Tự động chuyển đổi linh hoạt (Adaptive Dual Routing) giữa nhánh Standard và nhánh Thuế Điện Tử (TDT)
-   * kèm Auto-Fallback nếu 1 nhánh bị lỗi.
-   */
+    // Biến đổi linh hoạt giữa ID dài (000.7xx.18.G12-...) và ID ngắn (G12.18-...)
+    for (const id of Array.from(list)) {
+      // Dài -> Ngắn: 000.701.18.G12-260327-27110000205136 -> G12.18-260327-27110000205136
+      const longMatch = id.match(/^\d{3}\.\d{3}\.(\d{2})\.([A-Za-z0-9]+)-(.+)$/);
+      if (longMatch) {
+        list.add(`${longMatch[2]}.${longMatch[1]}-${longMatch[3]}`);
+        list.add(`${longMatch[2]}-${longMatch[3]}`);
+      }
+
+      // Ngắn -> Rút gọn TDT: G12.18-260327-27110000205136 -> G12-260327-27110000205136
+      const shortMatch = id.match(/^([A-Za-z0-9]+)\.(\d{2})-(.+)$/);
+      if (shortMatch) {
+        list.add(`${shortMatch[1]}-${shortMatch[3]}`);
+      }
+    }
+
+    return Array.from(list).filter(id => /^[A-Za-z0-9._-]+$/.test(id));
+  }
   private createDownloadWorkflowError(message: string, code: string, httpStatus?: number): Error {
     const err = new Error(message);
     Object.assign(err, {
@@ -1566,58 +1585,33 @@ export class TaxPortalClient {
             continue;
           }
         }
-        // Nếu endpoint chính thất bại hoặc trả về rỗng, và loại endpoint chưa được khai báo tường minh trong HTML,
-        // thử endpoint đối ứng (Standard <-> TDT)
-        if (!payload && context.action.isThueDienTu === undefined) {
-          const alternateUrl = context.downloadUrl.includes('downloadhoso-tdt')
-            ? PORTAL_CONFIG.DOWNLOAD_API
-            : `${PORTAL_CONFIG.DOWNLOAD_TDT_API}?loaiTraCuu=1`;
-
-          try {
-            const altResponse = await this.diagRequest(
-              attemptContext,
-              'DOWNLOAD-alternate-endpoint',
-              alternateUrl,
-              () => this.session.client.post(
-                alternateUrl,
-                { maHoSo: context.action.maHoSo },
-                {
-                  signal: abortSignal,
-                  timeout: 12000,
-                  responseType: 'arraybuffer',
-                  headers: {
-                    'Accept': 'application/json, text/plain, */*',
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Referer': context.detailUrl,
-                    [context.csrfHeaderName]: context.csrfToken
-                  }
-                }
-              ),
-              abortSignal
-            );
-            const altPayload = altResponse ? this.extractPayloadContent(altResponse.data, context.action.maHoSo) : null;
-            if (altPayload && this.verifyXmlPayloadIdentity(altPayload.content, expectedIdentity)) {
-              return altPayload;
-            }
-          } catch (altErr: unknown) {
-            if (this.mustStopDownloadFallback(altErr)) throw altErr;
+        // Thử các biến thể ID (ID ngắn G12.18-... thay cho 000.7xx...) và endpoint đối ứng (Standard <-> TDT)
+        if (!payload) {
+          const candidateIds = this.generateIdVariants(context.action.maHoSo, [cleanId, ...(filingMeta?.altIds || [])]);
+          const targetUrls = [context.downloadUrl];
+          if (context.action.isThueDienTu === undefined) {
+            const alternateUrl = context.downloadUrl.includes('downloadhoso-tdt')
+              ? PORTAL_CONFIG.DOWNLOAD_API
+              : `${PORTAL_CONFIG.DOWNLOAD_TDT_API}?loaiTraCuu=1`;
+            targetUrls.push(alternateUrl);
           }
 
-          // Thử thêm mã ID thay thế (cleanId) nếu khác mã parse được từ detail
-          if (cleanId && cleanId !== context.action.maHoSo) {
-            for (const targetUrl of [context.downloadUrl, alternateUrl]) {
+          for (const targetUrl of targetUrls) {
+            if (payload) break;
+            for (const candId of candidateIds) {
+              if (targetUrl === context.downloadUrl && candId === context.action.maHoSo) continue;
+
               try {
-                const idResponse = await this.diagRequest(
+                const altResponse = await this.diagRequest(
                   attemptContext,
-                  'DOWNLOAD-alternate-id',
+                  'DOWNLOAD-fallback-variant',
                   targetUrl,
                   () => this.session.client.post(
                     targetUrl,
-                    { maHoSo: cleanId },
+                    { maHoSo: candId },
                     {
                       signal: abortSignal,
-                      timeout: 12000,
+                      timeout: 10000,
                       responseType: 'arraybuffer',
                       headers: {
                         'Accept': 'application/json, text/plain, */*',
@@ -1630,12 +1624,13 @@ export class TaxPortalClient {
                   ),
                   abortSignal
                 );
-                const idPayload = idResponse ? this.extractPayloadContent(idResponse.data, cleanId) : null;
-                if (idPayload && this.verifyXmlPayloadIdentity(idPayload.content, expectedIdentity)) {
-                  return idPayload;
+                const altPayload = altResponse ? this.extractPayloadContent(altResponse.data, candId) : null;
+                if (altPayload && this.verifyXmlPayloadIdentity(altPayload.content, expectedIdentity)) {
+                  payload = altPayload;
+                  break;
                 }
-              } catch (idErr: unknown) {
-                if (this.mustStopDownloadFallback(idErr)) throw idErr;
+              } catch (altErr: unknown) {
+                if (this.mustStopDownloadFallback(altErr)) throw altErr;
               }
             }
           }
