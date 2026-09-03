@@ -70,10 +70,21 @@ const DEFAULT_INDEXES: AllocationColumnIndexes = {
  * để giảm rủi ro khớp nhầm; các cột còn lại dùng mặc định.
  */
 export function resolveAllocationColumns($: CheerioAPI): AllocationColumnIndexes {
-  const headers: string[] = [];
+  let headers: string[] = [];
   $('#chungtu_ctiet th').each((_, th) => {
     headers.push($(th).text().trim());
   });
+
+  // eTax có thể dùng td thay vì th cho dòng tiêu đề bảng
+  if (headers.length === 0) {
+    $('#chungtu_ctiet tr').each((_, tr) => {
+      const cells = $(tr).find('td').map((_, td) => $(td).text().trim()).get();
+      if (cells.some(c => /^stt$/i.test(c)) && cells.some(c => /tiểu\s*mục|ndkt/i.test(c))) {
+        headers = cells;
+        return false;
+      }
+    });
+  }
 
   // Cần ít nhất 8 cột header để tin rằng đây là bảng đúng layout mới
   if (headers.length < DEFAULT_INDEXES.ndkt + 1) return { ...DEFAULT_INDEXES };

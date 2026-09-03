@@ -829,9 +829,11 @@ export function setupIpcHandlers(
     const authPromise = new Promise<any>(async (resolve) => {
       try {
         const authWin = new BrowserWindow({
-          width: 1150,
-          height: 780,
-          show: false, // Chạy ngầm 100% trong nền, không bật cửa sổ làm gián đoạn người dùng
+          width: 1200,
+          height: 800,
+          show: true,
+          center: true,
+          autoHideMenuBar: true,
           title: 'Xác Thực Phiên Làm Việc eTax (Tra Cứu Giấy Nộp Tiền) - TaxInsight',
           webPreferences: {
             nodeIntegration: false,
@@ -925,6 +927,10 @@ export function setupIpcHandlers(
                 const isEtax = currentUrl.includes('thuedientu.gdt.gov.vn');
                 const isDvcLoginPage = /\/tthc\/(?:home)?login(?:[/?#]|$)/i.test(currentUrl);
                 const isDvcSsoEndpoint = currentUrl.includes('/tthc/sso/redirect-to-service');
+
+                // ─── 1. TỰ ĐỘNG CHUYỂN TIẾP SSO TỪ DVC SANG ETAX ────────────
+                if (isDvc && !isDvcLoginPage && !isDvcSsoEndpoint) {
+                  let banner = document.getElementById('taxinsight-sync-banner');
                   if (!banner) {
                     banner = document.createElement('div');
                     banner.id = 'taxinsight-sync-banner';
