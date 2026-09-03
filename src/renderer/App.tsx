@@ -1252,15 +1252,27 @@ export const App: React.FC = () => {
         });
 
         if (res.success && res.data && res.data.filings) {
-          // Merge & Dedupe theo id — tính danh sách gộp đồng bộ để phân tích ngay
-          // trên dữ liệu MỚI (setTimeout + closure cũ trước đây chạy trên data stale)
+          const newFilings = res.data.filings;
+          setFilingsByYear(prev => ({
+            ...prev,
+            [year]: newFilings
+          }));
+
           const existingIds = new Set(filings.map((f: TaxFiling) => f.id));
-          const newRecords = res.data.filings.filter((f: TaxFiling) => !existingIds.has(f.id));
+          const newRecords = newFilings.filter((f: TaxFiling) => !existingIds.has(f.id));
           const mergedFilings = [...filings, ...newRecords];
           setFilings(mergedFilings);
 
-          // Tự động phân tích lại chuỗi kê khai GTGT trên chính danh sách vừa merge
-          handleAnalyzeVat(mergedFilings);
+          // Gom TẤT CẢ các năm đang có trong state để phân tích VAT toàn diện
+          const allFilingsMap = new Map<string, TaxFiling>();
+          for (const yf of Object.values({ ...filingsByYear, [year]: newFilings })) {
+            for (const f of yf) allFilingsMap.set(f.id, f);
+          }
+          for (const f of mergedFilings) allFilingsMap.set(f.id, f);
+          const combinedForVat = [...allFilingsMap.values()];
+
+          // Tự động phân tích lại chuỗi kê khai GTGT trên toàn bộ dữ liệu đa năm
+          handleAnalyzeVat(combinedForVat);
         } else {
           alert(res.error || `Không thể quét bổ sung dữ liệu năm ${year}`);
         }
