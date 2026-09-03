@@ -51,9 +51,10 @@ async function getToken() {
 async function main() {
   const token = await getToken();
   process.env.GH_TOKEN = token;
+  const currentPkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+  const version = currentPkg.version;
 
-  console.log(`[*] Phien ban hien tai trong package.json: v${pkg.version}`);
-  console.log('[*] CHE DO: Bao mat ma nguon tuyet doi (Chi phat hanh file .exe len Releases)');
+  console.log(`[*] Phien ban hien tai trong package.json: v${version}`);
   console.log('\n[*] Dang build va phat hanh ban cai dat moi len GitHub Releases...');
   console.log('[*] Qua trinh nay mat khoang 1-2 phut, vui long doi...\n');
 
@@ -83,13 +84,13 @@ async function main() {
             res.on('end', () => {
               try {
                 const releases = JSON.parse(data);
-                const r = releases.find(rel => rel.tag_name === 'v' + pkg.version);
+                const r = releases.find(rel => rel.tag_name === 'v' + version);
                 if (r && r.draft) {
                   const doPatch = (onDone) => {
                     const updateData = JSON.stringify({
                       draft: false,
-                      name: 'TaxInsight v' + pkg.version,
-                      body: 'Bản phát hành cập nhật tự động TaxInsight v' + pkg.version
+                      name: 'TaxInsight v' + version,
+                      body: 'Bản phát hành cập nhật tự động TaxInsight v' + version
                     });
                     const patchReq = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/releases/${r.id}`, {
                       method: 'PATCH',
@@ -101,7 +102,7 @@ async function main() {
                     }, (patchRes) => {
                       if (patchRes.statusCode === 422) {
                         // Xóa tag xung đột trên remote rồi thử lại 1 lần
-                        const delTagReq = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/git/refs/tags/v${pkg.version}`, {
+                        const delTagReq = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/git/refs/tags/v${version}`, {
                           method: 'DELETE',
                           headers: { 'User-Agent': 'NodeJS-Publisher', 'Authorization': `token ${token}` }
                         }, () => {
@@ -148,7 +149,7 @@ function printSuccess() {
   console.log('\n====================================================================');
   console.log('  [THANH CONG] DA PHAT HANH BAN CAP NHAT MOI LEN GITHUB!');
   console.log('  - Ma nguon da duoc dong bo len nhanh main tren Git.');
-  console.log(`  - Ban cai dat v${pkg.version} da LIVE tren GitHub Releases.`);
+  console.log('  - Ban cai dat da LIVE tren GitHub Releases.');
   console.log('  - Tat ca may khach hang dang mo app se nhan thong bao cap nhat ngay.');
   console.log('====================================================================\n');
 }

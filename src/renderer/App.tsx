@@ -432,8 +432,11 @@ export const App: React.FC = () => {
     setSession(info);
     checkExistingCheckpoint(taxCode, selectedYear);
     checkExistingGntCheckpoint(taxCode, selectedYear);
+    // Tự động xác thực ngầm phân hệ eTax / GNT trong nền (show: false, không mở cửa sổ riêng)
+    if (window.taxPortalAPI?.openPaymentSlipsAuthWindow) {
+      window.taxPortalAPI.openPaymentSlipsAuthWindow().catch(() => {});
+    }
   };
-
   // Quét hồ sơ thuế (Hỗ trợ Quét Đa Năm & Chống Race Condition)
   const handleStartScan = async () => {
     if (!session.taxCode) return;

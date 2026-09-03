@@ -364,6 +364,8 @@ export function setupIpcHandlers(
       }
       if (res.success) {
         auditLogger.log('SUCCESS', 'Đăng nhập Cổng Thuế thành công', `MST: ${(res as any).adjustedTaxCode || safeTaxCode}`);
+        // Tự động kích hoạt đồng bộ ngầm phiên eTax trong nền (show: false)
+        triggerPaymentAuthWindow().catch(() => {});
       } else {
         auditLogger.log('WARNING', 'Đăng nhập không thành công', res.message);
       }
@@ -402,6 +404,8 @@ export function setupIpcHandlers(
           companyName: credentials.companyName
         });
         auditLogger.log('SUCCESS', 'Đăng nhập bằng thông tin đã lưu thành công', `MST: ${safeTaxCode}`);
+        // Tự động kích hoạt đồng bộ ngầm phiên eTax trong nền (show: false)
+        triggerPaymentAuthWindow().catch(() => {});
       } else {
         auditLogger.log('WARNING', 'Đăng nhập bằng thông tin đã lưu không thành công', result.message);
       }
@@ -817,11 +821,8 @@ export function setupIpcHandlers(
   let paymentAuthWindow: BrowserWindow | null = null;
   let paymentAuthPromise: Promise<any> | null = null;
 
-  ipcMain.handle('paymentSlips:openAuthWindow', async () => {
+  const triggerPaymentAuthWindow = async (): Promise<any> => {
     if (paymentAuthPromise) {
-      if (paymentAuthWindow && !paymentAuthWindow.isDestroyed()) {
-        paymentAuthWindow.focus();
-      }
       return paymentAuthPromise;
     }
 
@@ -1236,6 +1237,10 @@ export function setupIpcHandlers(
       if (paymentAuthPromise === authPromise) paymentAuthPromise = null;
       if (paymentAuthWindow?.isDestroyed()) paymentAuthWindow = null;
     }
+  };
+
+  ipcMain.handle('paymentSlips:openAuthWindow', async () => {
+    return triggerPaymentAuthWindow();
   });
 
   ipcMain.handle('paymentSlips:scan', async (_event, { range, options }) => {
@@ -1246,6 +1251,27 @@ export function setupIpcHandlers(
       auditLogger.log('SUCCESS', `Tìm thấy ${results.length} Giấy Nộp Tiền trên eTax`);
       return { success: true, paymentSlips: results };
     } catch (err: any) {
+      // Tự động xác thực ngầm và retry nếu eTax yêu cầu phiên duyệt
+      if (
+        err?.errorCode === 'AUTH_REQUIRED' ||
+        err?.code === 'SSO_INTERACTIVE_REQUIRED' ||
+        err?.errorCode === 'ETAX_SESSION_EXPIRED' ||
+        (err?.message && err.message.includes('xác thực tương tác'))
+      ) {
+        try {
+          auditLogger.log('INFO', 'Tự động xác thực phiên eTax ngầm và thử lại tra cứu GNT...');
+          const authRes = await triggerPaymentAuthWindow();
+          if (authRes?.success) {
+            const safeRange = normalizeDateRange(range);
+            const retryResults = await paymentSlipClient.searchPaymentSlips(safeRange, options || {});
+            auditLogger.log('SUCCESS', `Tìm thấy ${retryResults.length} Giấy Nộp Tiền sau khi tự động xác thực`);
+            return { success: true, paymentSlips: retryResults };
+          }
+        } catch (autoErr: any) {
+          console.warn('[paymentSlips:scan] Tự động xác thực ngầm thất bại:', autoErr?.message);
+        }
+      }
+
       const sessionInfo = session.getSessionInfo();
       auditLogger.log(
         'ERROR',

@@ -12,6 +12,7 @@ bin-release/
 release/
 release*/
 release-v*/
+build-release*/
 artifacts-dist/
 data/
 
