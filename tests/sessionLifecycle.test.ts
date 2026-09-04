@@ -31,6 +31,7 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
     const org = new FileOrganizer('./test_out');
     org.checkPreDownloadStatus = vi.fn().mockReturnValue({ isAlreadyDownloaded: false });
     org.saveExtractedFiling = vi.fn().mockReturnValue({ isExisting: false, savedPaths: ['a.xml'] });
+    org.saveDownloadedFiling = vi.fn().mockReturnValue({ isExisting: false, savedPaths: ['a.xml'] });
     return org;
   };
 
@@ -335,7 +336,7 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
       content: 'UEsDBBQAAAAIAA=='
     });
     await new Promise(resolve => setTimeout(resolve, 50));
-    expect(organizer.saveExtractedFiling).not.toHaveBeenCalled();
+    expect(organizer.saveDownloadedFiling).not.toHaveBeenCalled();
 
     releases[1]({
       fileName: 'fresh.zip',
@@ -344,7 +345,7 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
     });
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    expect(organizer.saveExtractedFiling).toHaveBeenCalledTimes(1);
+    expect(organizer.saveDownloadedFiling).toHaveBeenCalledTimes(1);
     expect(manager.getSummary().completed).toBe(1);
   });
 });

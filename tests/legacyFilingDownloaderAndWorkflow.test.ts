@@ -275,4 +275,237 @@ describe('Legacy Filing: Downloader, Checkpoint & Workflow Suite', () => {
     expect(downloader.getSummary().failed).toBe(1);
     expect(downloader.getSummary().pending).toBe(2);
   });
+
+  it('7. saveDownloadedFiling lưu trữ thành công XML thô và PDF thô mà không báo lỗi định dạng ZIP', () => {
+    const fileOrganizer = new FileOrganizer(tempDir);
+    const xmlContent = '<?xml version="1.0" encoding="UTF-8"?><HSoThueDTu><data>Test</data></HSoThueDTu>';
+    const pdfContent = '%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\nxref\n0 1\ntrailer<</Size 1>>\nstartxref\n9\n%%EOF';
+
+    const filingXml: TaxFiling = {
+      id: '11320220168134306',
+      declarationCode: '01/GTGT',
+      title: 'Tờ khai GTGT',
+      taxType: 'VAT',
+      period: 'Q1/2022',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    const saveXmlResult = fileOrganizer.saveDownloadedFiling({
+      content: Buffer.from(xmlContent, 'utf-8'),
+      fileName: 'ToKhai_GTGT_Q1_2022.xml',
+      contentType: 'application/xml',
+      filing: filingXml,
+      taxCode: '3702735709',
+      year: 2022
+    });
+
+    expect(saveXmlResult.xmlPath).toBeDefined();
+    expect(fs.existsSync(saveXmlResult.xmlPath!)).toBe(true);
+    expect(saveXmlResult.savedPaths).toHaveLength(1);
+
+    const filingPdf: TaxFiling = {
+      id: '11320220168134307',
+      declarationCode: '01/GTGT',
+      title: 'Tờ khai GTGT PDF',
+      taxType: 'VAT',
+      period: 'Q1/2022',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    const savePdfResult = fileOrganizer.saveDownloadedFiling({
+      content: Buffer.from(pdfContent, 'binary'),
+      fileName: 'ToKhai_GTGT_Q1_2022.pdf',
+      contentType: 'application/pdf',
+      filing: filingPdf,
+      taxCode: '3702735709',
+      year: 2022
+    });
+
+    expect(savePdfResult.pdfPath).toBeDefined();
+    expect(fs.existsSync(savePdfResult.pdfPath!)).toBe(true);
+    expect(savePdfResult.savedPaths).toHaveLength(1);
+  });
+
+  it('8. checkPreDownloadStatus phân loại chính xác đường dẫn XML và PDF theo phần mở rộng', () => {
+    const fileOrganizer = new FileOrganizer(tempDir);
+    const filing: TaxFiling = {
+      id: '11320220168134308',
+      declarationCode: '02/GTGT',
+      title: 'Tờ khai dự án đầu tư',
+      taxType: 'VAT',
+      period: 'Q2/2022',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    // Lưu file PDF
+    fileOrganizer.saveDownloadedFiling({
+      content: Buffer.from('%PDF-1.4 mock pdf', 'binary'),
+      fileName: 'ToKhai.pdf',
+      contentType: 'application/pdf',
+      filing,
+      taxCode: '3702735709',
+      year: 2022
+    });
+
+    const preCheck = fileOrganizer.checkPreDownloadStatus('3702735709', filing, 2022);
+    expect(preCheck.isAlreadyDownloaded).toBe(true);
+    expect(preCheck.pdfPath).toBeDefined();
+    expect(preCheck.pdfPath?.endsWith('.pdf')).toBe(true);
+    expect(preCheck.xmlPath).toBeUndefined();
+  });
+
+  it('9. LegacyFilingDownloader tự động tra cứu qua resolveAndDownloadFiling khi thiếu messageId', async () => {
+    const session = new PortalSession();
+    const client = new LegacyFilingClient(session);
+    const fileOrganizer = new FileOrganizer(tempDir);
+    const downloader = new LegacyFilingDownloader(client, fileOrganizer);
+
+    vi.spyOn(client, 'ensureEtaxSession').mockResolvedValue();
+    const resolveSpy = vi.spyOn(client, 'resolveAndDownloadFiling').mockResolvedValue({
+      dataBuffer: Buffer.from('<?xml version="1.0"?><HSoThueDTu/>', 'utf-8'),
+      fileName: 'ToKhai_Resolved.xml',
+      contentType: 'application/xml'
+    });
+
+    const filingWithoutMsgId: TaxFiling = {
+      id: 'G12.18-260720-00263029', // Mã DVC, không phải 17 số eTax
+      title: 'Tờ khai GTGT',
+      declarationCode: '01/GTGT',
+      taxType: 'VAT',
+      period: 'Q2/2020',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    downloader.setContext('3702735709', 2020);
+    downloader.enqueueFilings([filingWithoutMsgId]);
+
+    const completed = new Promise<void>(resolve => downloader.once('completed', () => resolve()));
+    await downloader.start();
+    await completed;
+
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(downloader.getState()).toBe('COMPLETED');
+    expect(downloader.getSummary().completed).toBe(1);
+  });
+
+  it('10. Preflight phát hiện hết phiên làm việc chuyển trạng thái thành AUTH_REQUIRED', async () => {
+    const session = new PortalSession();
+    const client = new LegacyFilingClient(session);
+    const fileOrganizer = new FileOrganizer(tempDir);
+    const downloader = new LegacyFilingDownloader(client, fileOrganizer);
+
+    vi.spyOn(client, 'ensureEtaxSession').mockRejectedValue(
+      Object.assign(new Error('Phiên làm việc eTax đã hết hạn.'), { code: 'AUTH_EXPIRED' })
+    );
+
+    const filing: TaxFiling = {
+      id: '11320220168134309',
+      messageId: '11320220168134309',
+      title: 'Tờ khai',
+      taxType: 'VAT',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    downloader.setContext('3702735709', 2022);
+    downloader.enqueueFilings([filing]);
+
+    let authExpiredEmitted = false;
+    downloader.once('auth_expired', () => {
+      authExpiredEmitted = true;
+    });
+
+    await expect(downloader.start()).rejects.toThrow();
+    expect(downloader.getState()).toBe('AUTH_REQUIRED');
+    expect(authExpiredEmitted).toBe(true);
+  });
+
+  it('11. cancel() cập nhật downloadStatus của filing và getSummary() tính toán chính xác', async () => {
+    const session = new PortalSession();
+    const client = new LegacyFilingClient(session);
+    const fileOrganizer = new FileOrganizer(tempDir);
+    const downloader = new LegacyFilingDownloader(client, fileOrganizer);
+
+    const filings: TaxFiling[] = ['11320220168134310', '11320220168134311', '11320220168134312'].map(id => ({
+      id,
+      messageId: id,
+      title: `Tờ khai ${id}`,
+      taxType: 'VAT',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    }));
+
+    downloader.setContext('3702735709', 2022);
+    downloader.enqueueFilings(filings);
+    downloader.cancel();
+
+    expect(downloader.getState()).toBe('CANCELLED');
+    const summary = downloader.getSummary();
+    expect(summary.cancelled).toBe(3);
+    expect(summary.remaining).toBe(0);
+    expect(summary.total).toBe(3);
+
+    const queue = downloader.getQueue();
+    for (const item of queue) {
+      expect(item.status).toBe('CANCELLED');
+      expect(item.filing.downloadStatus).toBe('CANCELLED');
+      expect(item.filing.downloadError).toBe('Đã hủy tiến trình tải hồ sơ');
+    }
+  });
+
+  it('12. Downloader tự động resume sau khi hết thời gian chờ HTTP 429', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = new PortalSession();
+      const client = new LegacyFilingClient(session);
+      const fileOrganizer = new FileOrganizer(tempDir);
+      const downloader = new LegacyFilingDownloader(client, fileOrganizer);
+
+      vi.spyOn(client, 'ensureEtaxSession').mockResolvedValue();
+      let callCount = 0;
+      vi.spyOn(client, 'downloadFiling').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          throw Object.assign(new Error('Rate limit'), { code: 'RATE_LIMIT', response: { status: 429 } });
+        }
+        return {
+          dataBuffer: Buffer.from('<?xml version="1.0"?><HSoThueDTu/>', 'utf-8'),
+          fileName: 'ToKhai.xml',
+          contentType: 'application/xml'
+        };
+      });
+
+      const filing: TaxFiling = {
+        id: '11320220168134313',
+        messageId: '11320220168134313',
+        title: 'Tờ khai 429',
+        taxType: 'VAT',
+        filingType: 'ORIGINAL',
+        downloadAvailable: true
+      };
+
+      downloader.setContext('3702735709', 2022);
+      downloader.enqueueFilings([filing]);
+
+      const rateLimitPromise = new Promise<void>(resolve => downloader.once('rate_limited', () => resolve()));
+      const completedPromise = new Promise<void>(resolve => downloader.once('completed', () => resolve()));
+      void downloader.start();
+      // Chờ request đầu tiên thực thi qua delay jitter (10ms) và gặp lỗi 429
+      await vi.advanceTimersByTimeAsync(50);
+      await rateLimitPromise;
+      expect(downloader.getState()).toBe('PAUSED');
+
+      // Tua tiếp hết thời gian cooldown (500ms trong môi trường test) và lượt retry kế tiếp
+      await vi.advanceTimersByTimeAsync(550);
+      await completedPromise;
+      expect(callCount).toBeGreaterThanOrEqual(2);
+      expect(downloader.getState()).toBe('COMPLETED');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

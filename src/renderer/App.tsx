@@ -280,6 +280,10 @@ export const App: React.FC = () => {
         setIsAuthRequiredModalOpen(true);
       }),
 
+      window.taxPortalAPI.onDownloadRateLimited && window.taxPortalAPI.onDownloadRateLimited(() => {
+        setDownloadSummary(prev => prev ? { ...prev, state: 'PAUSED_RATE_LIMIT', isPaused: true } : prev);
+      }),
+
       // Legacy Filing listeners
       window.taxPortalAPI.onLegacyFilingProgress && window.taxPortalAPI.onLegacyFilingProgress((data: LegacyFilingScanProgress) => {
         setLegacyScanProgress(data);

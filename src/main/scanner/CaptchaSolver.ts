@@ -1076,7 +1076,7 @@ export class CaptchaSolver {
         };
         candidates.push(onnxCand);
 
-        if (onnxRes.confidence >= 75) {
+        if (onnxRes.confidence >= 65) {
           return {
             text: onnxRes.text,
             confidence: onnxRes.confidence,

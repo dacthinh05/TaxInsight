@@ -479,33 +479,35 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
           />
         </div>
 
-        {/* Summary status line thanh lịch phía trên table */}
-        <div className="px-4 py-2 bg-slate-50/80 border-t border-slate-200/80 flex items-center justify-between text-xs text-slate-600 font-sans">
-          <div className="flex items-center space-x-2">
-            <span className="font-bold text-slate-800">{filteredFilings.length} tờ khai</span>
-            <span className="text-slate-300">·</span>
-            <span className="text-emerald-700 font-semibold">
-              {filteredFilings.filter(f => (f.status || '').toLowerCase().includes('chấp nhận')).length} đã chấp nhận
-            </span>
-            <span className="text-slate-300">·</span>
-            <span className="text-slate-600">
-              {filteredFilings.filter(f => f.downloadStatus === 'COMPLETED' || f.downloadStatus === 'EXISTING').length} đã tải về máy
-            </span>
-          </div>
-
-          {selectedTaxType !== 'ALL' && (
-            <div className="text-xs text-teal-800 font-semibold bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200 shadow-2xs">
-              Đang xem {filteredFilings.length} / {counts.ALL} tờ khai
+        {/* Summary status line thanh lịch phía trên table (chỉ hiển thị khi có dữ liệu) */}
+        {filteredFilings.length > 0 && (
+          <div className="px-4 py-2 bg-slate-50/80 border-t border-slate-200/80 flex items-center justify-between text-xs text-slate-600 font-sans">
+            <div className="flex items-center space-x-2">
+              <span className="font-bold text-slate-800">{filteredFilings.length} tờ khai</span>
+              <span className="text-slate-300">·</span>
+              <span className="text-emerald-700 font-semibold">
+                {filteredFilings.filter(f => (f.status || '').toLowerCase().includes('chấp nhận')).length} đã chấp nhận
+              </span>
+              <span className="text-slate-300">·</span>
+              <span className="text-slate-600">
+                {filteredFilings.filter(f => f.downloadStatus === 'COMPLETED' || f.downloadStatus === 'EXISTING').length} đã tải về máy
+              </span>
             </div>
-          )}
-        </div>
+
+            {selectedTaxType !== 'ALL' && (
+              <div className="text-xs text-teal-800 font-semibold bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200 shadow-xs">
+                Đang xem {filteredFilings.length} / {counts.ALL} tờ khai
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto rounded-b-xl">
         <table className="w-full text-left border-collapse text-[14px]">
-          <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider select-none">
+          <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200 text-slate-600 font-bold text-[11px] uppercase tracking-wider select-none">
             <tr>
-              <th className="w-10 px-3 py-2.5 text-center">
+              <th className="w-11 px-3 py-2.5 text-center">
                 <button
                   type="button"
                   onClick={handleToggleSelectAll}
@@ -519,14 +521,14 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                 </button>
               </th>
               {viewMode === 'LIST' && (
-                <th className="w-32 px-3 py-2.5">KỲ KÊ KHAI</th>
+                <th className="w-32 px-3 py-2.5 text-center">KỲ KÊ KHAI</th>
               )}
-              <th className="px-3.5 py-2.5 min-w-[380px] lg:min-w-[420px]">HỒ SƠ / TỜ KHAI</th>
-              <th className="w-[100px] px-3 py-2.5">MẪU BIỂU</th>
-              <th className="w-[140px] px-3 py-2.5">LOẠI HỒ SƠ</th>
-              <th className="w-[160px] px-3 py-2.5">NGÀY NỘP</th>
-              <th className="w-[150px] px-3 py-2.5">TRẠNG THÁI</th>
-              <th className="w-[68px] px-2 py-2.5 text-center sticky right-0 bg-slate-50/95">XEM</th>
+              <th className="px-4 py-2.5 min-w-[320px] text-left">HỒ SƠ / TỜ KHAI</th>
+              <th className="w-28 px-3 py-2.5 text-center">MẪU BIỂU</th>
+              <th className="w-36 px-3 py-2.5 text-center">LOẠI HỒ SƠ</th>
+              <th className="w-44 px-3 py-2.5 text-center">NGÀY NỘP</th>
+              <th className="w-44 px-3 py-2.5 text-center">TRẠNG THÁI</th>
+              <th className="w-16 px-2 py-2.5 text-center sticky right-0 bg-slate-50/95">XEM</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">

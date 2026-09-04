@@ -1,8 +1,9 @@
 import { EventEmitter } from 'events';
 import { PORTAL_CONFIG } from '../../shared/constants';
+import { isFilingRejected } from '../../shared/dateUtils';
 import { DownloadQueueItem, DownloadState, DownloadSummary, TaxFiling } from '../../shared/types';
-import { FileOrganizer } from '../files/FileOrganizer';
 import { ExtractedZipResult } from '../files/ZipExtractor';
+import { FileOrganizer } from '../files/FileOrganizer';
 import { LegacyFilingClient } from '../portal/LegacyFilingClient';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
 
@@ -63,6 +64,7 @@ export class DownloadManager extends EventEmitter {
     let failed = 0;
     let downloading = 0;
     let pending = 0;
+    let cancelled = 0;
 
     for (const item of this.queue) {
       if (item.status === 'COMPLETED') completed++;
@@ -70,11 +72,11 @@ export class DownloadManager extends EventEmitter {
       else if (item.status === 'FAILED') failed++;
       else if (item.status === 'DOWNLOADING') downloading++;
       else if (item.status === 'PENDING') pending++;
+      else if (item.status === 'CANCELLED') cancelled++;
     }
 
     const total = this.queue.length;
     const remaining = total - completed - existing - failed;
-
     return {
       total,
       completed,
@@ -82,6 +84,7 @@ export class DownloadManager extends EventEmitter {
       failed,
       downloading,
       pending,
+      cancelled,
       remaining: Math.max(0, remaining),
       isPaused: this.isPaused,
       isCancelled: this.isCancelled,
@@ -164,6 +167,11 @@ export class DownloadManager extends EventEmitter {
 
       if (preCheck.isAlreadyDownloaded) {
         filing.downloadStatus = 'EXISTING';
+        filing.downloadedFiles = {
+          xml: preCheck.xmlPath,
+          pdf: preCheck.pdfPath,
+          other: preCheck.otherPaths
+        };
         this.queue.push({
           filingId: filing.id,
           filing,
@@ -319,7 +327,9 @@ export class DownloadManager extends EventEmitter {
     for (const item of this.queue) {
       if (item.status === 'PENDING' || item.status === 'DOWNLOADING') {
         item.status = 'CANCELLED';
-        item.filing.downloadStatus = 'FAILED';
+        item.filing.downloadStatus = 'CANCELLED';
+        item.error = 'Đã hủy tiến trình tải hồ sơ';
+        item.filing.downloadError = item.error;
       }
     }
 
@@ -370,9 +380,9 @@ export class DownloadManager extends EventEmitter {
       item.savedPaths = preCheck.savedPaths;
       item.filing.downloadStatus = 'EXISTING';
       item.filing.downloadedFiles = {
-        xml: preCheck.savedPaths?.find(p => p.toLowerCase().endsWith('.xml')),
-        pdf: preCheck.savedPaths?.find(p => p.toLowerCase().endsWith('.pdf')),
-        other: (preCheck.savedPaths || []).filter(p => !p.toLowerCase().endsWith('.xml') && !p.toLowerCase().endsWith('.pdf'))
+        xml: preCheck.savedPaths?.find((p: string) => p.toLowerCase().endsWith('.xml')),
+        pdf: preCheck.savedPaths?.find((p: string) => p.toLowerCase().endsWith('.pdf')),
+        other: (preCheck.savedPaths || []).filter((p: string) => !p.toLowerCase().endsWith('.xml') && !p.toLowerCase().endsWith('.pdf'))
       };
       this.emit('item_completed', {
         item,
@@ -386,15 +396,24 @@ export class DownloadManager extends EventEmitter {
       this.emitProgress(item);
       return;
     }
+    if (isFilingRejected(item.filing)) {
+      item.status = 'FAILED';
+      item.error = `Hồ sơ bị Cơ quan Thuế từ chối tiếp nhận (${item.filing.status || 'Không chấp nhận'}) — Cổng DVC không cấp gói tệp tờ khai cho hồ sơ bị từ chối. Vui lòng chọn bản nộp lại được chấp nhận.`;
+      item.filing.downloadStatus = 'FAILED';
+      item.filing.downloadError = item.error;
+      this.emit('item_failed', { item, error: item.error });
+      this.emitProgress(item);
+      return;
+    }
 
     item.status = 'DOWNLOADING';
     item.filing.downloadStatus = 'DOWNLOADING';
     this.emitProgress(item);
-
     // 🎯 Pacing & Jitter an toàn để bảo vệ phiên và tránh bị Cổng Thuế chặn tần suất (HTTP 429)
     const pacingDelayMs = (PORTAL_CONFIG.DOWNLOAD_ITEM_DELAY_MS || 1500) + Math.floor(Math.random() * (PORTAL_CONFIG.DOWNLOAD_ITEM_JITTER_MS || 800));
     await new Promise<void>(resolve => setTimeout(resolve, pacingDelayMs));
     if (generation !== this.queueGeneration || this.isPaused || this.isCancelled) {
+      item.status = 'PENDING';
       item.filing.downloadStatus = 'PENDING';
       return;
     }
@@ -470,10 +489,13 @@ export class DownloadManager extends EventEmitter {
             // tự động fallback sang phân hệ eTax để lấy tệp XML/PDF gốc.
             if (this.legacyClient && !isDirectEtaxSource) {
               try {
+                const fallbackSignal = (itemController.signal.aborted && !this.isCancelled && !this.isPaused)
+                  ? undefined
+                  : itemController.signal;
                 const legacyFile = await this.legacyClient.resolveAndDownloadFiling(
                   this.taxCode,
                   item.filing,
-                  itemController.signal
+                  fallbackSignal
                 );
                 payload = {
                   fileName: legacyFile.fileName,
@@ -481,16 +503,22 @@ export class DownloadManager extends EventEmitter {
                   content: legacyFile.dataBuffer.toString('base64'),
                   fileCount: 1
                 };
-              } catch (etaxFallbackErr: any) {
-                const isRateLimit = etaxFallbackErr?.code === 'RATE_LIMIT' || etaxFallbackErr?.status === 429 || String(etaxFallbackErr?.message).includes('429');
-                const isAuth = etaxFallbackErr?.code === 'SESSION_EXPIRED' || etaxFallbackErr?.code === 'AUTH_REQUIRED';
-                if (isRateLimit || isAuth || etaxFallbackErr?.code === 'CANCELLED') {
+              } catch (etaxFallbackErr: unknown) {
+                const fallbackObj = etaxFallbackErr as { code?: string; status?: number; response?: { status?: number }; message?: string } | null | undefined;
+                const isRateLimit = fallbackObj?.code === 'RATE_LIMIT' || fallbackObj?.status === 429 || fallbackObj?.response?.status === 429 || String(fallbackObj?.message).includes('429');
+                const isAuth = fallbackObj?.code === 'SESSION_EXPIRED' || fallbackObj?.code === 'AUTH_REQUIRED';
+                if (isRateLimit || isAuth || fallbackObj?.code === 'CANCELLED') {
                   throw etaxFallbackErr;
                 }
                 const dvcMsg = dvcErr instanceof Error ? dvcErr.message : String(dvcErr);
                 const etaxMsg = etaxFallbackErr instanceof Error ? etaxFallbackErr.message : String(etaxFallbackErr);
                 console.warn(`[DownloadManager] Fallback eTax thất bại cho ${item.filingId}: ${etaxMsg}`);
-                const combined = new Error(`${dvcMsg} (Fallback eTax: ${etaxMsg})`);
+                const isFromDvc = item.filing.source !== 'dvc-etax-html';
+                const combined = new Error(
+                  isFromDvc
+                    ? `Cổng DVC chưa mở gói tệp [${item.filingId}] (${dvcMsg}). Đã thử tìm dự phòng trên eTax nhưng không có (${etaxMsg}).`
+                    : `${dvcMsg} (Fallback eTax: ${etaxMsg})`
+                );
                 Object.assign(combined, dvcErr);
                 throw combined;
               }
@@ -513,12 +541,14 @@ export class DownloadManager extends EventEmitter {
       // 3. Tầng 2: Giải nén an toàn & kiểm tra integrity SHA-256
       let saveResult: ExtractedZipResult;
       try {
-        saveResult = this.fileOrganizer.saveExtractedFiling(
-          payload.content,
-          item.filing,
-          this.taxCode,
-          this.year
-        );
+        saveResult = this.fileOrganizer.saveDownloadedFiling({
+          content: payload.content,
+          fileName: payload.fileName,
+          contentType: payload.fileType,
+          filing: item.filing,
+          taxCode: this.taxCode,
+          year: this.year
+        });
       } catch (extractErr: unknown) {
         // Nếu gói tệp từ DVC bị lỗi giải nén (ví dụ ZIP hỏng/thiếu header/không đúng định dạng),
         // và chưa thử nguồn eTax -> tự động fallback sang eTax để lấy tệp XML/PDF gốc từ CQT!
@@ -526,10 +556,13 @@ export class DownloadManager extends EventEmitter {
           const extractMsg = extractErr instanceof Error ? extractErr.message : String(extractErr);
           console.warn(`[DownloadManager] Giải nén file DVC thất bại (${extractMsg}) -> tự động fallback sang eTax cho ${item.filingId}`);
           try {
+            const fallbackSignal = (itemController.signal.aborted && !this.isCancelled && !this.isPaused)
+              ? undefined
+              : itemController.signal;
             const legacyFile = await this.legacyClient.resolveAndDownloadFiling(
               this.taxCode,
               item.filing,
-              itemController.signal
+              fallbackSignal
             );
             payload = {
               fileName: legacyFile.fileName,
@@ -537,14 +570,19 @@ export class DownloadManager extends EventEmitter {
               content: legacyFile.dataBuffer.toString('base64'),
               fileCount: 1
             };
-            saveResult = this.fileOrganizer.saveExtractedFiling(
-              payload.content,
-              item.filing,
-              this.taxCode,
-              this.year
-            );
+            saveResult = this.fileOrganizer.saveDownloadedFiling({
+              content: payload.content,
+              fileName: payload.fileName,
+              contentType: payload.fileType,
+              filing: item.filing,
+              taxCode: this.taxCode,
+              year: this.year
+            });
           } catch (etaxFallbackErr: unknown) {
-            throw extractErr;
+            const etaxMsg = etaxFallbackErr instanceof Error ? etaxFallbackErr.message : String(etaxFallbackErr);
+            const combinedErr = new Error(`Giải nén DVC thất bại (${extractMsg}) và fallback eTax thất bại: ${etaxMsg}`);
+            Object.assign(combinedErr, extractErr);
+            throw combinedErr;
           }
         } else {
           throw extractErr;
@@ -629,7 +667,8 @@ export class DownloadManager extends EventEmitter {
       // - 429 đầu tiên: dừng ngay toàn bộ queue, không để mỗi item tự thử lại.
       // - Hai lỗi server 5xx liên tiếp: coi endpoint đang lỗi hệ thống và dừng
       //   phần còn lại thay vì tạo hàng chục response 500 như bản cũ.
-      const isRateLimited = err.code === 'RATE_LIMIT' || err.httpStatus === 429;
+      const errHttpStatus = Number(err?.response?.status || err?.httpStatus || err?.status || 0);
+      const isRateLimited = err.code === 'RATE_LIMIT' || errHttpStatus === 429;
       const isRejectedPayload = err.code === 'FILING_PAYLOAD_REJECTED';
       const isRecordSpecificFailure = this.isRecordSpecificDownloadFailure(err);
       const isServerFailure = !isRejectedPayload && !isRecordSpecificFailure && (

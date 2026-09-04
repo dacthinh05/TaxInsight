@@ -58,7 +58,7 @@ export interface TaxFiling {
   noticeAvailable?: boolean;
   noticeId?: string;
   // ─────────────────────────────────────────────────────────────────────────
-  downloadStatus?: 'PENDING' | 'DOWNLOADING' | 'COMPLETED' | 'EXISTING' | 'FAILED';
+  downloadStatus?: 'PENDING' | 'DOWNLOADING' | 'COMPLETED' | 'EXISTING' | 'FAILED' | 'CANCELLED';
   downloadError?: string;
   downloadedFiles?: {
     xml?: string;
@@ -215,6 +215,7 @@ export interface DownloadSummary {
   failed: number;
   downloading: number;
   pending: number;
+  cancelled?: number;
   remaining: number;
   isPaused: boolean;
   isCancelled: boolean;
@@ -237,7 +238,7 @@ export interface CheckpointData {
   targetDir: string;
   filings: TaxFiling[];
   downloadStates: Record<string, {
-    status: 'PENDING' | 'DOWNLOADING' | 'COMPLETED' | 'EXISTING' | 'FAILED';
+    status: 'PENDING' | 'DOWNLOADING' | 'COMPLETED' | 'EXISTING' | 'FAILED' | 'CANCELLED';
     savedPaths?: string[];
     hash?: string;
   }>;

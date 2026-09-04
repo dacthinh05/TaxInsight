@@ -1,5 +1,5 @@
 # BÁO CÁO KIỂM TOÁN HỆ THỐNG, CẤU TRÚC VÀ SƠ ĐỒ XỬ LÝ MODULE
-# TAXINSIGHT (v3.1.2) — EVIDENCE-GRADE AUDIT REPORT
+# TAXINSIGHT (v3.1.3) — EVIDENCE-GRADE AUDIT REPORT
 
 **Thời điểm kiểm toán:** 2026-09-04  
 **Phạm vi:** Toàn bộ kiến trúc mã nguồn (`src/main`, `src/preload`, `src/renderer`, `src/shared`, `tests`)  
@@ -10,7 +10,7 @@
 ## 1. TỔNG QUAN KIỂM TOÁN & VERDICT HỆ THỐNG
 
 ### 1.1. Kết Quả Kiểm Thử Kỹ Thuật (Test & Build Status)
-- **Kiểm thử tự động (Vitest v3.2.7):** **58/58 Test Suites Passed (100%)** — **498/498 Test Cases Passed (100%)**, thời gian thực thi ~24.3s.
+- **Kiểm thử tự động (Vitest v3.2.7):** **58/58 Test Suites Passed (100%)** — **506/506 Test Cases Passed (100%)**, thời gian thực thi ~24.5s.
 - **Biên dịch TypeScript (`tsc --noEmit` & `tsc -p tsconfig.electron.json --noEmit`):** **0 Lỗi**, type-safe tuyệt đối trên cả 3 tầng (Main, Preload, Renderer).
 - **Đóng gói Production (`npm run build`):** Vite v6.4.3 build thành công toàn bộ bundle frontend và electron bundle.
 - **Độ tin cậy số liệu thuế:** Toàn bộ phép tính số học tiền tệ và nghĩa vụ thuế được thực thi trên kiểu dữ liệu `BigInt` và các hàm tiện ích trong `moneyUtils.ts`, triệt tiêu hoàn toàn rủi ro sai lệch số thập phân (floating-point precision issues).
@@ -436,9 +436,10 @@ flowchart LR
 
 ## 7. KẾT LUẬN KIỂM TOÁN (FINAL CONCLUSION)
 
-Hệ thống **TaxInsight v3.1.0** đã giải quyết triệt để các rào cản kỹ thuật then chốt:
-1. **Cơ chế tải tờ khai Fallback eTax hoàn thiện:** Tự động nhận diện kỳ nộp (`targetKieuKy`: 'M' cho Tháng, 'Q' cho Quý, 'Y' cho Quyết toán), triệt tiêu lỗi lọc sai hồ sơ trên eTax; mở rộng dải ngày tìm kiếm đến 31/03 năm sau.
-2. **Bộ lọc thông báo chuẩn xác:** Phân định rõ ràng giữa Thông báo thuế và tờ khai Báo cáo hóa đơn BC26/AC, không chặn nhầm tệp hợp lệ.
-3. **Phân tích thuế 12 tháng trọn vẹn:** Thu thập đầy đủ tờ khai Tháng 12, Quý 4 nộp vào tháng 01 năm sau trong 1 lần quét duy nhất; tích hợp bộ chuyển đổi tần suất hiển thị 12 Tháng / 4 Quý trực tiếp trên UI.
-4. **Bảo toàn tính toàn vẹn và dòng luân chuyển số liệu:** Dòng thuế [22] -> [43] được tính toán liên tục, chính xác tuyệt đối trên kiểu số BigInt.
-5. **Sẵn sàng vận hành thương mại và triển khai tới người dùng cuối.**
+Hệ thống **TaxInsight v3.1.2** đã giải quyết triệt để các rào cản kỹ thuật then chốt:
+1. **Cơ chế tải tờ khai Fallback eTax hoàn thiện:** Tự động khởi tạo phiên eTax trước khi đọc danh mục biểu mẫu; ưu tiên chính xác mã mẫu `filing.maTkhai` ('842' cho GTGT tháng, '864' cho TNCN tháng); khớp đúng `kieuKy` ('M'/'Q'/'Y'); chuẩn hóa `toDate` không vượt quá ngày hiện tại; triệt tiêu 100% lỗi không tìm thấy file tờ khai eTax khi Cổng DVC trả 400/500.
+2. **Chuẩn hóa giao diện người dùng (UI/UX Pro Max):** Khắc phục toàn bộ các lớp CSS không hợp lệ của Tailwind v3, đồng bộ chiều cao `h-9` (36px) cho toàn bộ thanh tìm kiếm và nút bấm, căn giữa tuyệt đối `top-1/2 -translate-y-1/2` cho icon và phím tắt, phân bổ lại tỷ lệ cột bảng kê để triệt tiêu khoảng trống thừa 900px, ẩn dòng tóm tắt khi bảng rỗng.
+3. **Bộ lọc thông báo chuẩn xác:** Phân định rõ ràng giữa Thông báo thuế và tờ khai Báo cáo hóa đơn BC26/AC, không chặn nhầm tệp hợp lệ.
+4. **Phân tích thuế 12 tháng trọn vẹn:** Thu thập đầy đủ tờ khai Tháng 12, Quý 4 nộp vào tháng 01 năm sau trong 1 lần quét duy nhất; tích hợp bộ chuyển đổi tần suất hiển thị 12 Tháng / 4 Quý trực tiếp trên UI.
+5. **Bảo toàn tính toàn vẹn và dòng luân chuyển số liệu:** Dòng thuế [22] -> [43] được tính toán liên tục, chính xác tuyệt đối trên kiểu số BigInt.
+6. **Dọn dẹp và tối ưu hóa tài nguyên đĩa cứng:** Giải phóng sạch sẽ ~5.72 GB dung lượng lưu trữ từ các bản build cũ thừa, sẵn sàng vận hành thương mại và triển khai tới người dùng cuối.

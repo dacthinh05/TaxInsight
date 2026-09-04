@@ -6,7 +6,7 @@ import { LegacyFilingClient } from '../portal/LegacyFilingClient';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
 
 const ITEM_DEADLINE_MS = 60_000;
-const MAX_TRANSIENT_RETRIES = 2;
+const MAX_TRANSIENT_RETRIES = 3;
 
 export class LegacyFilingDownloader extends EventEmitter {
   private queue: DownloadQueueItem[] = [];
@@ -22,7 +22,7 @@ export class LegacyFilingDownloader extends EventEmitter {
   private year = new Date().getFullYear();
   private queueGeneration = 0;
   private consecutiveServerFailures = 0;
-
+  private rateLimitCooldownTimer: NodeJS.Timeout | null = null;
   constructor(
     private readonly client: LegacyFilingClient,
     private readonly fileOrganizer: FileOrganizer
@@ -35,6 +35,39 @@ export class LegacyFilingDownloader extends EventEmitter {
     this.year = Math.trunc(Number(year)) || new Date().getFullYear();
   }
 
+  public getContext(): { taxCode: string; year: number } {
+    return { taxCode: this.taxCode, year: this.year };
+  }
+
+  private isValidEtaxMessageId(id?: string): boolean {
+    if (!id) return false;
+    return /^\d{17}$/.test(String(id).trim());
+  }
+  private extractHttpStatus(error: unknown): number {
+    const errObj = error as { response?: { status?: number }; httpStatus?: number; status?: number } | null | undefined;
+    return Number(errObj?.response?.status || errObj?.httpStatus || errObj?.status || 0);
+  }
+
+  private isAuthError(error: unknown): boolean {
+    const errObj = error as { code?: string; message?: string } | null | undefined;
+    const code = String(errObj?.code || '');
+    const status = this.extractHttpStatus(error);
+    const msg = String(errObj?.message || '').toLowerCase();
+    return (
+      ['AUTH_EXPIRED', 'SESSION_EXPIRED', 'SSO_INTERACTIVE_REQUIRED', 'AUTH_REQUIRED'].includes(code) ||
+      status === 401 ||
+      msg.includes('hết phiên') ||
+      msg.includes('đăng nhập') ||
+      msg.includes('trang html thay vì tệp hồ sơ')
+    );
+  }
+
+  private clearRateLimitCooldown() {
+    if (this.rateLimitCooldownTimer) {
+      clearTimeout(this.rateLimitCooldownTimer);
+      this.rateLimitCooldownTimer = null;
+    }
+  }
   public getState(): DownloadState {
     return this.state;
   }
@@ -45,12 +78,14 @@ export class LegacyFilingDownloader extends EventEmitter {
     let failed = 0;
     let downloading = 0;
     let pending = 0;
+    let cancelled = 0;
     for (const item of this.queue) {
       if (item.status === 'COMPLETED') completed++;
       else if (item.status === 'EXISTING') existing++;
       else if (item.status === 'FAILED') failed++;
       else if (item.status === 'DOWNLOADING') downloading++;
       else if (item.status === 'PENDING') pending++;
+      else if (item.status === 'CANCELLED') cancelled++;
     }
     const total = this.queue.length;
     return {
@@ -60,7 +95,8 @@ export class LegacyFilingDownloader extends EventEmitter {
       failed,
       downloading,
       pending,
-      remaining: Math.max(0, total - completed - existing - failed),
+      cancelled,
+      remaining: Math.max(0, total - completed - existing - failed - cancelled),
       isPaused: this.isPaused,
       isCancelled: this.isCancelled,
       isRunning: this.state === 'RUNNING',
@@ -73,6 +109,7 @@ export class LegacyFilingDownloader extends EventEmitter {
   }
 
   public clearQueue() {
+    this.clearRateLimitCooldown();
     this.invalidateWorkers();
     this.queue = [];
     this.isPaused = false;
@@ -80,33 +117,33 @@ export class LegacyFilingDownloader extends EventEmitter {
     this.state = 'IDLE';
     this.consecutiveServerFailures = 0;
   }
-
   public enqueueFilings(filings: TaxFiling[], taxCode?: string, year?: number) {
     if (taxCode) this.taxCode = String(taxCode).trim();
     if (year) this.year = Math.trunc(Number(year)) || this.year;
+    this.clearRateLimitCooldown();
     this.invalidateWorkers();
     this.queue = [];
     this.isCancelled = false;
-    this.isPaused = false;
     this.state = 'IDLE';
     this.consecutiveServerFailures = 0;
 
     const seenIds = new Set<string>();
     for (const filing of filings) {
-      const messageId = String(filing.messageId || filing.id || '').trim();
-      if (
-        filing.source !== 'dvc-etax-html' ||
-        !messageId ||
-        seenIds.has(messageId)
-      ) {
+      const rawId = String(filing.id || filing.messageId || '').trim();
+      if (!rawId || seenIds.has(rawId)) {
         continue;
       }
-      seenIds.add(messageId);
+      seenIds.add(rawId);
+      const hasValidMsgId = this.isValidEtaxMessageId(filing.messageId)
+        ? filing.messageId
+        : this.isValidEtaxMessageId(filing.id)
+          ? filing.id
+          : undefined;
       const normalizedFiling: TaxFiling = {
         ...filing,
-        id: messageId,
-        messageId,
-        source: 'dvc-etax-html'
+        id: rawId,
+        messageId: hasValidMsgId || filing.messageId,
+        source: filing.source || 'dvc-etax-html'
       };
       const filingYear = normalizedFiling.periodNormalized?.year || this.year;
       const check = this.fileOrganizer.checkPreDownloadStatus(
@@ -117,11 +154,12 @@ export class LegacyFilingDownloader extends EventEmitter {
       if (check.isAlreadyDownloaded) {
         normalizedFiling.downloadStatus = 'EXISTING';
         normalizedFiling.downloadedFiles = {
-          xml: check.savedPaths?.[0],
-          other: check.savedPaths?.slice(1)
+          xml: check.xmlPath,
+          pdf: check.pdfPath,
+          other: check.otherPaths
         };
         this.queue.push({
-          filingId: messageId,
+          filingId: rawId,
           filing: normalizedFiling,
           status: 'EXISTING',
           retries: 0,
@@ -131,7 +169,7 @@ export class LegacyFilingDownloader extends EventEmitter {
       } else {
         normalizedFiling.downloadStatus = 'PENDING';
         this.queue.push({
-          filingId: messageId,
+          filingId: rawId,
           filing: normalizedFiling,
           status: 'PENDING',
           retries: 0,
@@ -145,7 +183,7 @@ export class LegacyFilingDownloader extends EventEmitter {
     if (this.state === 'RUNNING') return;
     if (!this.taxCode) throw new Error('Thiếu mã số thuế cho lô tải năm cũ.');
     if (!this.queue.length) throw new Error('Không có hồ sơ năm cũ hợp lệ để tải.');
-
+    this.clearRateLimitCooldown();
     this.isCancelled = false;
     this.isPaused = false;
     this.state = 'RUNNING';
@@ -156,8 +194,13 @@ export class LegacyFilingDownloader extends EventEmitter {
     // session hỏng rồi bắn thêm request.
     try {
       await this.client.ensureEtaxSession();
-    } catch (error: any) {
-      this.pauseForAuthOrInfrastructure(error);
+    } catch (error: unknown) {
+      const isAuth = this.isAuthError(error);
+      this.pauseForAuthOrInfrastructure(error, isAuth);
+      const errObj = error as { message?: string } | null | undefined;
+      if (isAuth) {
+        this.emit('auth_expired', { message: errObj?.message || 'Phiên làm việc eTax đã hết hạn' });
+      }
       throw error;
     }
     if (!this.isGenerationActive(generation)) return;
@@ -169,6 +212,7 @@ export class LegacyFilingDownloader extends EventEmitter {
 
   public pause() {
     if (this.state !== 'RUNNING') return;
+    this.clearRateLimitCooldown();
     this.invalidateWorkers();
     this.isPaused = true;
     this.isCancelled = false;
@@ -187,8 +231,13 @@ export class LegacyFilingDownloader extends EventEmitter {
     const generation = this.queueGeneration;
     try {
       await this.client.ensureEtaxSession(true);
-    } catch (error: any) {
-      this.pauseForAuthOrInfrastructure(error);
+    } catch (error: unknown) {
+      const isAuth = this.isAuthError(error);
+      this.pauseForAuthOrInfrastructure(error, isAuth);
+      const errObj = error as { message?: string } | null | undefined;
+      if (isAuth) {
+        this.emit('auth_expired', { message: errObj?.message || 'Phiên làm việc eTax đã hết hạn' });
+      }
       throw error;
     }
     if (!this.isGenerationActive(generation)) return;
@@ -196,8 +245,8 @@ export class LegacyFilingDownloader extends EventEmitter {
     this.emitProgress();
     this.processQueue(generation);
   }
-
   public cancel() {
+    this.clearRateLimitCooldown();
     this.invalidateWorkers();
     this.isCancelled = true;
     this.isPaused = false;
@@ -206,6 +255,8 @@ export class LegacyFilingDownloader extends EventEmitter {
       if (item.status === 'PENDING' || item.status === 'DOWNLOADING') {
         item.status = 'CANCELLED';
         item.progressPercent = 0;
+        item.filing.downloadStatus = 'CANCELLED';
+        item.filing.downloadError = 'Đã hủy tiến trình tải hồ sơ';
       }
     }
     this.emit('cancelled', this.getSummary());
@@ -219,14 +270,25 @@ export class LegacyFilingDownloader extends EventEmitter {
       const nextItem = this.queue.find(item => item.status === 'PENDING');
       if (!nextItem) break;
       this.activeDownloads++;
-      void this.downloadItem(nextItem, generation).finally(() => {
-        if (generation !== this.queueGeneration) return;
-        this.activeDownloads = Math.max(0, this.activeDownloads - 1);
-        if (this.isGenerationActive(generation)) {
-          this.processQueue(generation);
-          this.finishIfDone();
-        }
-      });
+      void this.downloadItem(nextItem, generation)
+        .catch(err => {
+          console.error('[LegacyFilingDownloader] Lỗi không bắt được trong worker:', err);
+          if (this.isGenerationActive(generation)) {
+            nextItem.status = 'FAILED';
+            nextItem.error = err instanceof Error ? err.message : String(err);
+            nextItem.filing.downloadStatus = 'FAILED';
+            nextItem.filing.downloadError = nextItem.error;
+            this.emit('file_failed', { item: nextItem, error: nextItem.error, summary: this.getSummary() });
+          }
+        })
+        .finally(() => {
+          if (generation !== this.queueGeneration) return;
+          this.activeDownloads = Math.max(0, this.activeDownloads - 1);
+          if (this.isGenerationActive(generation)) {
+            this.processQueue(generation);
+            this.finishIfDone();
+          }
+        });
     }
     this.finishIfDone();
   }
@@ -237,28 +299,53 @@ export class LegacyFilingDownloader extends EventEmitter {
     item.filing.downloadStatus = 'DOWNLOADING';
     this.emitProgress(item);
 
-    await this.delay(250 + Math.random() * 300);
+    await this.delay(PORTAL_CONFIG.DOWNLOAD_ITEM_JITTER_MS);
     if (!this.isGenerationActive(generation)) return;
-
+    let deadlineHit = false;
     const itemController = new AbortController();
     const queueAbort = () => itemController.abort();
     this.abortController?.signal.addEventListener('abort', queueAbort, { once: true });
-    const deadline = setTimeout(() => itemController.abort(), ITEM_DEADLINE_MS);
-
+    const deadline = setTimeout(() => {
+      deadlineHit = true;
+      itemController.abort();
+    }, ITEM_DEADLINE_MS);
     try {
-      const result = await this.client.downloadFiling(
-        item.filing.messageId || item.filing.id,
-        itemController.signal
-      );
+      const hasValidMsgId = this.isValidEtaxMessageId(item.filing.messageId)
+        ? item.filing.messageId
+        : this.isValidEtaxMessageId(item.filing.id)
+          ? item.filing.id
+          : undefined;
+
+      let result: {
+        dataBuffer: Buffer;
+        fileName: string;
+        contentType: string;
+      };
+
+      if (hasValidMsgId) {
+        result = await this.client.downloadFiling(
+          hasValidMsgId,
+          itemController.signal,
+          item.filing.periodNormalized?.year || this.year
+        );
+      } else {
+        result = await this.client.resolveAndDownloadFiling(
+          this.taxCode,
+          item.filing,
+          itemController.signal
+        );
+      }
       if (!this.isGenerationActive(generation)) return;
 
       const filingYear = item.filing.periodNormalized?.year || this.year;
-      const saveResult = this.fileOrganizer.saveExtractedFiling(
-        result.dataBuffer.toString('base64'),
-        item.filing,
-        this.taxCode,
-        filingYear
-      );
+      const saveResult = this.fileOrganizer.saveDownloadedFiling({
+        content: result.dataBuffer,
+        fileName: result.fileName,
+        contentType: result.contentType,
+        filing: item.filing,
+        taxCode: this.taxCode,
+        year: filingYear
+      });
       if (!this.isGenerationActive(generation)) return;
 
       this.consecutiveServerFailures = 0;
@@ -275,12 +362,19 @@ export class LegacyFilingDownloader extends EventEmitter {
           savedPath => savedPath !== saveResult.xmlPath && savedPath !== saveResult.pdfPath
         )
       };
-      this.emit('file_downloaded', { item, summary: this.getSummary() });
+      this.emit('file_downloaded', { item, saveResult, summary: this.getSummary() });
+      this.emit('item_completed', { item, saveResult, summary: this.getSummary() });
       this.emitProgress(item);
-    } catch (error: any) {
+    } catch (rawError: unknown) {
       if (!this.isGenerationActive(generation)) return;
-      await this.handleItemError(item, error, generation);
-    } finally {
+      let finalError = rawError;
+      if (deadlineHit) {
+        finalError = Object.assign(new Error('Thời gian tải hồ sơ vượt quá 60 giây (Timeout)'), {
+          code: 'TIMEOUT',
+          isTimeout: true
+        });
+      }
+      await this.handleItemError(item, finalError, generation);
       clearTimeout(deadline);
       this.abortController?.signal.removeEventListener('abort', queueAbort);
     }
@@ -288,16 +382,17 @@ export class LegacyFilingDownloader extends EventEmitter {
 
   private async handleItemError(
     item: DownloadQueueItem,
-    error: any,
+    error: unknown,
     generation: number
   ): Promise<void> {
-    const status = Number(error?.response?.status || error?.httpStatus || 0);
-    const code = String(error?.code || '');
-    const message = error?.message || 'Lỗi khi tải hồ sơ năm cũ';
-    const isAuth = ['AUTH_EXPIRED', 'SESSION_EXPIRED', 'SSO_INTERACTIVE_REQUIRED'].includes(code);
+    const errObj = error as { code?: string; message?: string; isTimeout?: boolean } | null | undefined;
+    const status = this.extractHttpStatus(error);
+    const code = String(errObj?.code || '');
+    const message = errObj?.message || 'Lỗi khi tải hồ sơ năm cũ';
+    const isAuth = this.isAuthError(error);
     const isRateLimited = code === 'RATE_LIMIT' || status === 429;
     const isServerFailure = code === 'SERVER_ERROR' || status >= 500;
-    const isTransient = code === 'NETWORK' || code === 'TIMEOUT';
+    const isTransient = code === 'NETWORK' || code === 'TIMEOUT' || errObj?.isTimeout === true;
 
     if (isAuth) {
       item.status = 'PENDING';
@@ -311,9 +406,28 @@ export class LegacyFilingDownloader extends EventEmitter {
     if (isRateLimited) {
       item.status = 'PENDING';
       item.progressPercent = 0;
+      const cooldownMs = PORTAL_CONFIG.RATE_LIMIT_COOLDOWN_MS || 45_000;
       TaxPortalClient.triggerGlobalRateLimit(4_000);
-      this.pauseForAuthOrInfrastructure(error);
-      this.emit('rate_limited', { item, message });
+      this.pauseForAuthOrInfrastructure(error, false);
+      this.emit('rate_limited', {
+        item,
+        message: `Máy chủ Cổng Thuế giới hạn tần suất yêu cầu (HTTP 429). Tự động thử lại sau ${Math.round(cooldownMs / 1000)}s...`,
+        cooldownMs,
+        resumeAt: Date.now() + cooldownMs
+      });
+
+      this.clearRateLimitCooldown();
+      this.rateLimitCooldownTimer = setTimeout(async () => {
+        if (this.isPaused && !this.isCancelled) {
+          console.log(`[LegacyFilingDownloader] Hết thời gian chờ 429 (${cooldownMs}ms) -> tự động resume queue`);
+          await this.resume().catch(e => {
+            console.warn('[LegacyFilingDownloader] Tự động resume sau 429 thất bại:', e);
+          });
+        }
+      }, cooldownMs);
+      if (typeof this.rateLimitCooldownTimer.unref === 'function') {
+        this.rateLimitCooldownTimer.unref();
+      }
       this.emitProgress(item);
       return;
     }
@@ -354,16 +468,17 @@ export class LegacyFilingDownloader extends EventEmitter {
     this.emitProgress(item);
   }
 
-  private pauseForAuthOrInfrastructure(error: any, authRequired = false) {
+  private pauseForAuthOrInfrastructure(error: unknown, authRequired = false) {
     this.invalidateWorkers();
     this.returnDownloadingToPending();
     this.isPaused = true;
     this.isCancelled = false;
     this.state = authRequired ? 'AUTH_REQUIRED' : 'PAUSED';
+    const errObj = error as { code?: string; response?: { status?: number }; httpStatus?: number; status?: number } | null | undefined;
     this.emit('paused', {
       ...this.getSummary(),
-      errorCode: error?.code,
-      httpStatus: error?.response?.status || error?.httpStatus
+      errorCode: errObj?.code,
+      httpStatus: errObj?.response?.status || errObj?.httpStatus || errObj?.status
     });
   }
 

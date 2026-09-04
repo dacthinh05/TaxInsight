@@ -653,7 +653,10 @@ export class LegacyFilingClient {
       const testBuf = Buffer.from(res.data);
       const testHead = testBuf.subarray(0, 512).toString('utf-8').trimStart().toLowerCase();
       if (testHead.startsWith('<!doctype html') || testHead.startsWith('<html')) {
-        throw new Error('eTax trả về trang HTML thay vì tệp hồ sơ');
+        const isLogin = testHead.includes('login') || testHead.includes('dang nhap') || testHead.includes('hết phiên') || testHead.includes('phiên làm việc');
+        const err = new Error(isLogin ? 'Phiên làm việc eTax đã hết hạn khi tải tờ khai.' : 'eTax trả về trang HTML thay vì tệp hồ sơ');
+        Object.assign(err, { code: isLogin ? 'AUTH_EXPIRED' : 'INVALID_PAYLOAD' });
+        throw err;
       }
       return res;
     };
@@ -663,6 +666,10 @@ export class LegacyFilingClient {
       try {
         res = await executeDownload();
       } catch (firstErr: unknown) {
+        const errObj = firstErr as { code?: string; response?: { status?: number } } | null | undefined;
+        if (errObj?.code === 'AUTH_EXPIRED' || errObj?.code === 'CANCELLED' || errObj?.response?.status === 429) {
+          throw firstErr;
+        }
         // Nếu bị lỗi HTML hoặc 500 do lệch trạng thái phân trang trên eTax,
         // tìm lại đúng trang chứa hồ sơ rồi tải lại
         if (effectiveYear) {

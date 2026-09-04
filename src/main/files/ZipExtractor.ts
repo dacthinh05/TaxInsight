@@ -15,6 +15,10 @@ export interface ExtractedZipResult {
   fileHashes: Record<string, string>;
 }
 
+export interface ExtractBufferOptions {
+  originalFileName?: string;
+  contentType?: string;
+}
 export class ZipExtractor {
   private static MAX_ZIP_SIZE = 100 * 1024 * 1024; // 100MB (nén)
   private static MAX_ENTRIES = 50;
@@ -169,9 +173,21 @@ export class ZipExtractor {
     if (!base64Content) {
       throw new Error('Nội dung Base64 rỗng');
     }
-
     const zipBuffer = Buffer.from(base64Content, 'base64');
-    if (zipBuffer.length === 0) {
+    return this.extractBuffer(zipBuffer, destDir, filing, taxCode);
+  }
+
+  /**
+   * Kiểm tra an toàn, tính SHA-256 hash và giải nén hoặc lưu trực tiếp buffer tệp
+   */
+  public static extractBuffer(
+    zipBuffer: Buffer,
+    destDir: string,
+    filing: TaxFiling,
+    taxCode: string,
+    options?: ExtractBufferOptions
+  ): ExtractedZipResult {
+    if (!zipBuffer || zipBuffer.length === 0) {
       throw new Error('Buffer giải mã có kích thước 0 byte');
     }
 
@@ -200,6 +216,29 @@ export class ZipExtractor {
       ? `BoSung-L${filing.supplementalNo || 1}`
       : (isQuyetToan ? 'QuyetToan' : 'ChinhThuc');
     const filingIdentity = this.buildFilingIdentity(filing, taxCode);
+
+    // ─── 0. KIỂM TRA TỆP ĐÍNH KÈM TÀI LIỆU (Excel / Word / Ảnh) ─────────
+    const origExt = options?.originalFileName ? path.extname(options.originalFileName).toLowerCase() : '';
+    const isAttachmentDoc = ['.xlsx', '.xls', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.txt', '.csv'].includes(origExt);
+    if (isAttachmentDoc) {
+      const finalFileName = this.buildSafeFileName(
+        `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}`,
+        origExt
+      );
+      const resolved = this.resolveCollisionSafePath(destDir, finalFileName, zipBuffer);
+      if (!resolved.isExisting) {
+        fs.writeFileSync(resolved.targetPath, zipBuffer);
+      }
+      if (fs.statSync(resolved.targetPath).size === 0) {
+        throw new Error(`Tệp đính kèm đã lưu "${finalFileName}" có kích thước 0 byte`);
+      }
+      return {
+        isExisting: resolved.isExisting,
+        savedPaths: [resolved.targetPath],
+        sha256,
+        fileHashes: { [resolved.targetPath]: resolved.hash }
+      };
+    }
 
     // ─── 1. KIỂM TRA TỆP XML ĐƠN LẺ (Không nén trong ZIP, hỗ trợ BOM / Comments) ──
     const xmlCheck = this.cleanXmlBuffer(zipBuffer);
@@ -253,13 +292,13 @@ export class ZipExtractor {
     if (zipBuffer.length >= 2 && zipBuffer[0] === 0x1f && zipBuffer[1] === 0x8b) {
       try {
         const uncompressed = zlib.gunzipSync(zipBuffer);
-        return this.extractBase64Zip(uncompressed.toString('base64'), destDir, filing, taxCode);
+        return this.extractBuffer(uncompressed, destDir, filing, taxCode, options);
       } catch {}
     }
     if (zipBuffer.length >= 2 && zipBuffer[0] === 0x78 && (zipBuffer[1] === 0x9c || zipBuffer[1] === 0x01 || zipBuffer[1] === 0xda)) {
       try {
         const uncompressed = zlib.inflateSync(zipBuffer);
-        return this.extractBase64Zip(uncompressed.toString('base64'), destDir, filing, taxCode);
+        return this.extractBuffer(uncompressed, destDir, filing, taxCode, options);
       } catch {}
     }
 
@@ -382,6 +421,26 @@ export class ZipExtractor {
       );
       if (embeddedXml && embeddedXml.savedPaths.length > 0) {
         return embeddedXml;
+      }
+
+      if (options?.originalFileName) {
+        const ext = path.extname(options.originalFileName) || '.bin';
+        if (ext.toLowerCase() !== '.zip') {
+          const finalFileName = this.buildSafeFileName(
+            `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}`,
+            ext
+          );
+          const resolved = this.resolveCollisionSafePath(destDir, finalFileName, zipBuffer);
+          if (!resolved.isExisting) {
+            fs.writeFileSync(resolved.targetPath, zipBuffer);
+          }
+          return {
+            isExisting: resolved.isExisting,
+            savedPaths: [resolved.targetPath],
+            sha256,
+            fileHashes: { [resolved.targetPath]: resolved.hash }
+          };
+        }
       }
 
       const msg = err instanceof Error ? err.message : String(err);

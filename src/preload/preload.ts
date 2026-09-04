@@ -168,6 +168,11 @@ const api = {
     ipcRenderer.on('download:completed', handler);
     return () => ipcRenderer.removeListener('download:completed', handler);
   },
+  onDownloadRateLimited: (callback: (data: { cooldownMs: number; resumeAt: number; item?: unknown; message: string }) => void) => {
+    const handler = (_: unknown, data: unknown) => callback(data as { cooldownMs: number; resumeAt: number; item?: unknown; message: string });
+    ipcRenderer.on('download:rate_limited', handler);
+    return () => ipcRenderer.removeListener('download:rate_limited', handler);
+  },
   onSessionExpired: (callback: () => void) => {
     const handler = () => callback();
     ipcRenderer.on('session:expired', handler);

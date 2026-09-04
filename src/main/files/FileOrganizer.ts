@@ -5,6 +5,14 @@ import { TaxFiling } from '../../shared/types';
 import { FileManifest } from './FileManifest';
 import { ExtractedZipResult, ZipExtractor } from './ZipExtractor';
 
+export interface SaveDownloadedFilingOptions {
+  content: Buffer | string;
+  fileName?: string;
+  contentType?: string;
+  filing: TaxFiling;
+  taxCode: string;
+  year: number;
+}
 export class FileOrganizer {
   private baseDir: string;
 
@@ -39,13 +47,30 @@ export class FileOrganizer {
   /**
    * Tầng 1: Kiểm tra trước xem có thể bỏ qua download không
    */
-  public checkPreDownloadStatus(taxCode: string, filing: TaxFiling, year: number): { isAlreadyDownloaded: boolean; savedPaths?: string[] } {
+  public checkPreDownloadStatus(
+    taxCode: string,
+    filing: TaxFiling,
+    year: number
+  ): {
+    isAlreadyDownloaded: boolean;
+    savedPaths?: string[];
+    xmlPath?: string;
+    pdfPath?: string;
+    otherPaths?: string[];
+  } {
     const manifest = this.getManifest(taxCode, year);
     const check = manifest.isAlreadyDownloaded(filing.id);
     if (check.exists && check.entry) {
+      const savedPaths = check.entry.savedPaths || [];
+      const xmlPath = check.entry.xmlPath || savedPaths.find(p => p.toLowerCase().endsWith('.xml'));
+      const pdfPath = check.entry.pdfPath || savedPaths.find(p => p.toLowerCase().endsWith('.pdf'));
+      const otherPaths = savedPaths.filter(p => p !== xmlPath && p !== pdfPath);
       return {
         isAlreadyDownloaded: true,
-        savedPaths: check.entry.savedPaths
+        savedPaths,
+        xmlPath,
+        pdfPath,
+        otherPaths
       };
     }
     return { isAlreadyDownloaded: false };
@@ -54,18 +79,21 @@ export class FileOrganizer {
   /**
    * Tầng 2: Giải nén, lưu trữ và ghi nhận vào Manifest
    */
-  public saveExtractedFiling(
-    base64Content: string,
-    filing: TaxFiling,
-    taxCode: string,
-    year: number
-  ): ExtractedZipResult {
+  /**
+   * Tầng 2: Lưu trữ đa hình (ZIP, XML, PDF, phụ lục) và ghi nhận vào Manifest
+   */
+  public saveDownloadedFiling(options: SaveDownloadedFilingOptions): ExtractedZipResult {
+    const { content, fileName, contentType, filing, taxCode, year } = options;
     const destDir = this.getDestinationDir(taxCode, filing, year);
-    const result = ZipExtractor.extractBase64Zip(base64Content, destDir, filing, taxCode);
+    const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content, 'base64');
+    const result = ZipExtractor.extractBuffer(buffer, destDir, filing, taxCode, {
+      originalFileName: fileName,
+      contentType
+    });
 
     // Xác nhận tệp thực sự tồn tại trên đĩa và có kích thước > 0 trước khi ghi manifest
     if (!result.savedPaths || result.savedPaths.length === 0) {
-      throw new Error('Không có tệp nào được lưu sau giải nén');
+      throw new Error('Không có tệp nào được lưu sau khi xử lý tải về');
     }
     for (const p of result.savedPaths) {
       if (!fs.existsSync(p) || fs.statSync(p).size === 0) {
@@ -91,5 +119,22 @@ export class FileOrganizer {
     });
 
     return result;
+  }
+
+  /**
+   * Tương thích ngược: giải nén ZIP từ Base64
+   */
+  public saveExtractedFiling(
+    base64Content: string,
+    filing: TaxFiling,
+    taxCode: string,
+    year: number
+  ): ExtractedZipResult {
+    return this.saveDownloadedFiling({
+      content: base64Content,
+      filing,
+      taxCode,
+      year
+    });
   }
 }

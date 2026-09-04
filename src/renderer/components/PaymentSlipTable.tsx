@@ -58,9 +58,9 @@ export const PaymentSlipTable: React.FC<PaymentSlipTableProps> = ({
       {/* Table Area */}
       <div className="flex-1 overflow-auto">
         <table className="w-full text-left border-collapse text-xs">
-          <thead className="bg-[#F8FAFC] sticky top-0 z-10 border-b border-slate-200 text-slate-500 font-semibold text-[11px] select-none">
+          <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200 text-slate-600 font-bold text-[11px] uppercase tracking-wider select-none">
             <tr>
-              <th className="w-9 px-2.5 py-2 text-center">
+              <th className="w-10 px-2.5 py-2.5 text-center">
                 <button
                   type="button"
                   onClick={handleToggleSelectAll}
@@ -73,14 +73,14 @@ export const PaymentSlipTable: React.FC<PaymentSlipTableProps> = ({
                   )}
                 </button>
               </th>
-              <th className="w-[72px] px-2.5 py-2">Ngày nộp</th>
-              <th className="px-2.5 py-2 min-w-[220px]">Số GNT / Mã GD</th>
-              <th className="w-[84px] px-2.5 py-2">Loại thuế</th>
-              <th className="w-[88px] px-2.5 py-2">Kỳ thuế</th>
-              <th className="w-[118px] px-2.5 py-2 text-right">Số tiền</th>
-              <th className="w-[100px] px-2.5 py-2">Đối chiếu</th>
-              <th className="w-[110px] px-2.5 py-2">Trạng thái</th>
-              <th className="w-11 px-1.5 py-2 text-center sticky right-0 bg-[#F8FAFC]">Xem</th>
+              <th className="w-24 px-2.5 py-2.5 text-center">Ngày nộp</th>
+              <th className="px-3 py-2.5 min-w-[200px] text-left">Số GNT / Mã GD</th>
+              <th className="w-28 px-2.5 py-2.5 text-center">Loại thuế</th>
+              <th className="w-28 px-2.5 py-2.5 text-center">Kỳ thuế</th>
+              <th className="w-36 px-3 py-2.5 text-right">Số tiền</th>
+              <th className="w-32 px-2.5 py-2.5 text-center">Đối chiếu</th>
+              <th className="w-32 px-2.5 py-2.5 text-center">Trạng thái</th>
+              <th className="w-12 px-1.5 py-2.5 text-center sticky right-0 bg-slate-50/95">Xem</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">

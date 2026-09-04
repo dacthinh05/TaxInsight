@@ -112,7 +112,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
           value={scanRangeMode}
           onChange={e => onRangeModeChange(e.target.value)}
           disabled={isScanning}
-          className="h-8.5 max-w-[290px] px-3 bg-slate-50 hover:bg-white border border-slate-300/90 rounded-lg font-medium text-slate-800 text-xs focus-ring transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
+          className="h-9 max-w-[290px] px-3 bg-slate-50 hover:bg-white border border-slate-300 rounded-lg font-medium text-slate-800 text-xs focus-ring transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
         >
           <optgroup label="Quét Đa Năm (Soát xét toàn diện)">
             <option value="MULTI_3_YEARS">3 năm gần nhất ({currentYear - 2} – {currentYear})</option>
@@ -160,7 +160,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
           <select
             value={selectedTaxType}
             onChange={e => onTaxTypeChange(e.target.value as TaxType)}
-            className="h-8.5 px-3 bg-slate-50 hover:bg-white border border-slate-300/90 rounded-lg font-medium text-slate-800 text-xs focus-ring transition-all cursor-pointer shadow-2xs"
+            className="h-9 px-3 bg-slate-50 hover:bg-white border border-slate-300 rounded-lg font-medium text-slate-800 text-xs focus-ring transition-all cursor-pointer shadow-xs"
           >
             <option value="ALL">Tất cả tờ khai thuế</option>
             <option value="VAT">Thuế GTGT</option>
@@ -183,7 +183,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
             value={gntSearchValue}
             onChange={e => onGntSearchChange?.(e.target.value)}
             placeholder="Tìm GNT, mã GD, loại thuế, kỳ thuế…"
-            className="w-full h-8.5 pl-9 pr-3 bg-slate-50 focus:bg-white border border-slate-300/90 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus-ring transition-all shadow-2xs"
+            className="w-full h-9 pl-9 pr-3 bg-slate-50 focus:bg-white border border-slate-300 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus-ring transition-all shadow-xs"
           />
         </div>
       )}
@@ -192,17 +192,17 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
         {/* Summary: 10 GNT · Tổng nộp X đ · Chưa đối chiếu N */}
         {isGntMode && gntStats && (
           <div className="flex items-center gap-1.5 whitespace-nowrap" title="Thống kê theo danh sách đang hiển thị (bao gồm bộ lọc tìm kiếm)">
-            <span className="inline-flex items-center h-8 px-2.5 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-800">
+            <span className="inline-flex items-center h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-800 shadow-xs">
               <CreditCard className="w-3.5 h-3.5 text-teal-700 mr-1.5" />
               {gntStats.count} GNT
             </span>
-            <span className="inline-flex items-center h-8 px-2.5 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold text-slate-900 tabular-nums">
+            <span className="inline-flex items-center h-9 px-3 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold text-slate-900 tabular-nums shadow-xs">
               <span className="font-sans font-normal text-slate-500 mr-1.5">Tổng nộp</span>
               {fmtVnd(gntStats.totalAmount)} ₫
             </span>
             {gntStats.unreconciledCount > 0 && (
               <span
-                className="inline-flex items-center h-8 px-2.5 bg-amber-50 border border-amber-200 rounded-lg font-semibold text-amber-800 cursor-help"
+                className="inline-flex items-center h-9 px-3 bg-amber-50 border border-amber-200 rounded-lg font-semibold text-amber-800 cursor-help shadow-xs"
                 title={`${gntStats.unreconciledCount} GNT chưa khớp nghĩa vụ thuế nào — xem cột «Đối chiếu» để biết chi tiết`}
               >
                 Chưa đối chiếu {gntStats.unreconciledCount}
@@ -216,7 +216,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
             type="button"
             onClick={onOpenGntStats}
             disabled={!gntStats || gntStats.count === 0}
-            className="h-8.5 px-3 bg-white border border-slate-300 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-semibold rounded-lg flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-40 btn-press"
+            className="h-9 px-3.5 bg-white border border-slate-300 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-semibold rounded-lg flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-40 btn-press"
             title="Tổng hợp tiền đã nộp theo tháng & loại thuế (GTGT/TNCN/TNDN…)"
           >
             <BarChart3 className="w-3.5 h-3.5 text-sky-700" />
@@ -230,7 +230,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
             type="button"
             onClick={onExportGntExcel}
             disabled={!gntStats || gntStats.count === 0}
-            className="h-8.5 px-3 bg-white border border-slate-300 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-semibold rounded-lg flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-40 btn-press"
+            className="h-9 px-3.5 bg-white border border-slate-300 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-semibold rounded-lg flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-40 btn-press"
             title="Xuất danh sách Giấy Nộp Tiền ra file Excel"
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
@@ -243,7 +243,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
           type="button"
           onClick={onStartScan}
           disabled={isScanning}
-          className={`h-8.5 px-4.5 rounded-lg font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs shrink-0 select-none btn-press ${
+          className={`h-9 px-4.5 rounded-lg font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs shrink-0 select-none btn-press ${
             isScanning
               ? 'bg-teal-800 text-teal-100 cursor-wait border border-teal-700/60 shadow-inner'
               : 'bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 active:from-teal-800 active:to-teal-700 text-white hover:shadow-sm cursor-pointer border border-teal-700/40'

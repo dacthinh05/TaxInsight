@@ -300,6 +300,31 @@ export function setupIpcHandlers(
   legacyFilingDownloader.on('progress', data => {
     sendToRenderer('legacyFiling:downloadProgress', data);
   });
+  legacyFilingDownloader.on('file_downloaded', ({ item }) => {
+    auditLogger.log('SUCCESS', `Tải thành công tờ khai năm cũ: ${item.filing.title}`, item.filing.id);
+    const { taxCode: ctxTaxCode, year: ctxYear } = legacyFilingDownloader.getContext();
+    const filingYear = item.filing.periodNormalized?.year || ctxYear;
+    if (isValidTaxCode(ctxTaxCode) && filingYear) {
+      const existing = checkpointStore.loadCheckpoint(ctxTaxCode, filingYear);
+      const merged: TaxFiling[] = [...(existing?.filings || [])];
+      const indexById = new Map(merged.map((f, idx) => [f.id, idx]));
+      for (const q of legacyFilingDownloader.getQueue()) {
+        const updatedFiling = q.filing;
+        const existingIdx = indexById.get(updatedFiling.id);
+        if (existingIdx !== undefined) {
+          merged[existingIdx] = { ...merged[existingIdx], ...updatedFiling };
+        } else {
+          indexById.set(updatedFiling.id, merged.length);
+          merged.push(updatedFiling);
+        }
+      }
+      checkpointStore.saveCheckpoint(ctxTaxCode, filingYear, merged);
+    }
+  });
+
+  legacyFilingDownloader.on('file_failed', ({ item, error }) => {
+    auditLogger.log('ERROR', `Tải thất bại tờ khai năm cũ: ${item.filing.title}`, error);
+  });
 
   legacyFilingDownloader.on('completed', summary => {
     auditLogger.log('SUCCESS', `Hoàn thành tải tờ khai năm cũ: ${summary.completed} thành công, ${summary.existing} có sẵn, ${summary.failed} lỗi`);
@@ -309,6 +334,11 @@ export function setupIpcHandlers(
   legacyFilingDownloader.on('auth_expired', data => {
     auditLogger.log('WARNING', 'Phiên làm việc eTax hết hạn trong lúc tải hồ sơ năm cũ');
     sendToRenderer('legacyFiling:authExpired', data);
+  });
+
+  legacyFilingDownloader.on('rate_limited', (data: { cooldownMs: number; resumeAt: number; item: unknown; message: string }) => {
+    auditLogger.log('WARNING', `Máy chủ Cổng Thuế giới hạn tần suất (HTTP 429). Tự động thử lại sau ${Math.round(data.cooldownMs / 1000)}s`);
+    sendToRenderer('download:rate_limited', data);
   });
 
   // ─── AUTH IPC HANDLERS ──────────────────────────────────────────────
@@ -1879,7 +1909,7 @@ export function setupIpcHandlers(
     try {
       const safeTaxCode = requireSessionTaxCode(taxCode);
       const safeFilings = normalizeFilingList(filings).filter(
-        filing => filing.source === 'dvc-etax-html' && Boolean(filing.messageId || filing.id)
+        filing => Boolean(filing.messageId || filing.id)
       );
       if (!safeFilings.length) {
         throw new Error('Danh sách không có tờ khai eTax năm cũ hợp lệ.');

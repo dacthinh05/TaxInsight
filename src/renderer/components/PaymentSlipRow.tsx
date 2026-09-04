@@ -40,7 +40,7 @@ export const PaymentSlipRow: React.FC<PaymentSlipRowProps> = ({
       }`}
     >
       {/* 1. Checkbox */}
-      <td className="w-9 px-2.5 text-center">
+      <td className="w-10 px-2.5 text-center">
         <button
           type="button"
           onClick={() => onToggleSelect(slip.id)}
@@ -55,12 +55,12 @@ export const PaymentSlipRow: React.FC<PaymentSlipRowProps> = ({
       </td>
 
       {/* 2. Ngày nộp */}
-      <td className="px-2.5 font-mono text-[11px] text-slate-700 whitespace-nowrap" title={slip.ngayNopThue || slip.ngayLapGnt}>
+      <td className="w-24 px-2.5 font-mono text-[11px] text-slate-700 whitespace-nowrap text-center" title={slip.ngayNopThue || slip.ngayLapGnt}>
         {formatDateShort(slip.ngayNopThue || slip.ngayLapGnt)}
       </td>
 
       {/* 3. Số GNT (primary) / Mã GD (secondary) */}
-      <td className="px-2.5 min-w-[220px]">
+      <td className="px-3 min-w-[200px]">
         <button
           type="button"
           onClick={() => onViewDetail(slip)}
@@ -75,7 +75,7 @@ export const PaymentSlipRow: React.FC<PaymentSlipRowProps> = ({
       </td>
 
       {/* 4. Loại thuế */}
-      <td className="px-2.5">
+      <td className="w-28 px-2.5 text-center">
         {taxTypes.length > 0 ? (
           <div className="flex items-center gap-1" title={taxTypes.map(t => getTaxTypeLabel(t).vietnameseName).join(', ')}>
             <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap ${getTaxTypeLabel(taxTypes[0]).badgeClass}`}>
@@ -100,7 +100,7 @@ export const PaymentSlipRow: React.FC<PaymentSlipRowProps> = ({
       </td>
 
       {/* 5. Kỳ thuế */}
-      <td className="px-2.5 font-mono text-[11px] text-slate-700 whitespace-nowrap" title={uniquePeriods.join('; ') || undefined}>
+      <td className="w-28 px-2.5 font-mono text-[11px] text-slate-700 whitespace-nowrap text-center" title={uniquePeriods.join('; ') || undefined}>
         {uniquePeriods.length > 0 ? (
           <>
             {uniquePeriods[0]}
@@ -114,13 +114,13 @@ export const PaymentSlipRow: React.FC<PaymentSlipRowProps> = ({
       </td>
 
       {/* 6. Số tiền */}
-      <td className="px-2.5 text-right font-mono font-semibold text-slate-900 whitespace-nowrap tabular-nums" title={`${slip.soTienFormatted} ${slip.loaiTien}`}>
+      <td className="w-36 px-3 text-right font-mono font-semibold text-slate-900 whitespace-nowrap tabular-nums" title={`${slip.soTienFormatted} ${slip.loaiTien}`}>
         {slip.soTienFormatted}
         {slip.loaiTien !== 'VND' && <span className="text-[10px] font-normal text-slate-500 ml-0.5">{slip.loaiTien}</span>}
       </td>
 
       {/* 7. Đối chiếu nghĩa vụ */}
-      <td className="px-2.5 whitespace-nowrap">
+      <td className="w-32 px-2.5 whitespace-nowrap text-center">
         {reconInfo && reconMeta ? (
           <span
             className={`inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px] font-medium border cursor-help ${reconMeta.badgeClass}`}
@@ -135,7 +135,7 @@ export const PaymentSlipRow: React.FC<PaymentSlipRowProps> = ({
       </td>
 
       {/* 8. Trạng thái thanh toán */}
-      <td className="px-2.5 whitespace-nowrap">
+      <td className="w-32 px-2.5 whitespace-nowrap text-center">
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium border cursor-help ${statusView.badgeClass}`}
           title={statusView.tooltip}
@@ -145,7 +145,7 @@ export const PaymentSlipRow: React.FC<PaymentSlipRowProps> = ({
       </td>
 
       {/* 9. Xem chi tiết */}
-      <td className="w-11 px-1.5 sticky right-0 bg-white group-hover:bg-slate-50/80">
+      <td className="w-12 px-1.5 text-center sticky right-0 bg-white group-hover:bg-slate-50/80">
         <button
           type="button"
           onClick={() => onViewDetail(slip)}

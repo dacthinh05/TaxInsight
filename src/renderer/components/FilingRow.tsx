@@ -104,7 +104,7 @@ export const FilingRow: React.FC<FilingRowProps> = ({
     >
       {/* 1. Checkbox */}
       <td
-        className="w-10 px-3 py-2 text-center"
+        className="w-11 px-3 py-2 text-center"
         onClick={e => {
           e.stopPropagation();
           onToggleSelect(filing.id);
@@ -124,7 +124,7 @@ export const FilingRow: React.FC<FilingRowProps> = ({
 
       {/* 2. Cột Kỳ kê khai (chỉ hiện ở chế độ LIST) */}
       {viewMode === 'LIST' && (
-        <td className="w-32 px-3 py-2 font-medium text-slate-800 text-[13.5px] tabular-nums whitespace-nowrap">
+        <td className="w-32 px-3 py-2 font-medium text-slate-800 text-xs tabular-nums whitespace-nowrap text-center">
           {compactPeriod !== '—' ? (
             <span className="font-bold text-slate-900 font-mono">{compactPeriod}</span>
           ) : (
@@ -134,7 +134,7 @@ export const FilingRow: React.FC<FilingRowProps> = ({
       )}
 
       {/* 3. Hồ sơ / Tờ khai (Typography 14.5px nổi bật + Secondary 12.5px) */}
-      <td className="px-3.5 py-2 min-w-[380px] lg:min-w-[420px]">
+      <td className="px-4 py-2 min-w-[320px]">
         <div
           className="cursor-pointer hover:text-teal-900 flex flex-col justify-center"
           title={`Tên đầy đủ: ${filing.title}\nID: ${filing.id}`}
@@ -162,7 +162,7 @@ export const FilingRow: React.FC<FilingRowProps> = ({
       </td>
 
       {/* 4. Mẫu biểu */}
-      <td className="w-[100px] px-3 py-2 whitespace-nowrap">
+      <td className="w-28 px-3 py-2 whitespace-nowrap text-center">
         {filing.declarationCode ? (
           <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-[12px] font-mono font-semibold text-slate-700">
             {filing.declarationCode}
@@ -177,7 +177,7 @@ export const FilingRow: React.FC<FilingRowProps> = ({
       </td>
 
       {/* 5. Loại hồ sơ / Phiên bản */}
-      <td className="w-[140px] px-3 py-2 whitespace-nowrap">
+      <td className="w-36 px-3 py-2 whitespace-nowrap text-center">
         {filing.filingType === 'SUPPLEMENTAL' ? (
           <span className="inline-flex items-center h-6 px-2.5 rounded-full text-[12px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
             Bổ sung lần {filing.supplementalNo || 1}
@@ -198,13 +198,12 @@ export const FilingRow: React.FC<FilingRowProps> = ({
       </td>
 
       {/* 6. Ngày nộp */}
-      <td className="w-[160px] px-3 py-2 text-slate-700 text-[13px] font-mono tabular-nums whitespace-nowrap" title={timePart ? `Thời gian: ${timePart}` : undefined}>
+      <td className="w-44 px-3 py-2 text-slate-700 text-xs font-mono tabular-nums whitespace-nowrap text-center" title={timePart ? `Thời gian: ${timePart}` : undefined}>
         {filing.submittedAt || datePart}
       </td>
 
       {/* 7. Trạng thái */}
-      {/* 7. Trạng thái */}
-      <td className="w-[150px] px-3 py-2 whitespace-nowrap">
+      <td className="w-44 px-3 py-2 whitespace-nowrap text-center">
         <span
           className={`inline-flex items-center h-6 px-2.5 rounded-full text-[11.5px] font-semibold tracking-tight ${
             isRejectedStatus
@@ -221,7 +220,7 @@ export const FilingRow: React.FC<FilingRowProps> = ({
         </span>
       </td>
       {/* 8. Action (Cố định 68px, có icon tải ✓ và nút 👁 xem nhanh luôn rõ ràng) */}
-      <td className="w-[68px] px-2 py-2 text-center sticky right-0 bg-inherit whitespace-nowrap">
+      <td className="w-16 px-2 py-2 text-center sticky right-0 bg-inherit whitespace-nowrap">
         <div className="flex items-center justify-center space-x-1">
           {isDownloaded && (
             <span title="Đã tải về máy" className="text-teal-700 inline-flex items-center">
@@ -234,7 +233,7 @@ export const FilingRow: React.FC<FilingRowProps> = ({
               e.stopPropagation();
               onPreview(filing);
             }}
-            className="h-7.5 w-7.5 rounded-lg hover:bg-teal-100/70 text-slate-400 hover:text-teal-800 inline-flex items-center justify-center transition-colors cursor-pointer btn-press"
+            className="h-7 w-7 rounded-lg hover:bg-teal-100/70 text-slate-400 hover:text-teal-800 inline-flex items-center justify-center transition-colors cursor-pointer btn-press"
             title="Xem chi tiết tờ khai (Enter hoặc nhấp đúp)"
           >
             <Eye className="w-4 h-4" />
