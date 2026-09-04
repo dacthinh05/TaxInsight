@@ -35,3 +35,7 @@ test_out/
 # Python cache
 __pycache__/
 *.pyc
+
+# Test coverage and autoresearch
+coverage/
+loop-results.tsv*
