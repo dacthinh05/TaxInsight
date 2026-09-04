@@ -346,13 +346,25 @@ export class DownloadManager extends EventEmitter {
       if (!nextItem) break;
 
       this.activeDownloads++;
-      this.downloadItemWithWorker(nextItem, generation).finally(() => {
-        this.activeDownloads = Math.max(0, this.activeDownloads - 1);
-        if (generation !== this.queueGeneration) return;
-        if (this.state === 'RUNNING' && !this.isPaused && !this.isCancelled) {
-          this.processQueue(generation);
-        }
-      });
+      this.downloadItemWithWorker(nextItem, generation)
+        .catch(err => {
+          console.error('[DownloadManager] Lỗi không bắt được trong worker:', err);
+          if (generation === this.queueGeneration && !this.isCancelled) {
+            nextItem.status = 'FAILED';
+            nextItem.error = err instanceof Error ? err.message : String(err);
+            nextItem.filing.downloadStatus = 'FAILED';
+            nextItem.filing.downloadError = nextItem.error;
+            this.emit('item_failed', { item: nextItem, error: nextItem.error });
+            this.emitProgress(nextItem);
+          }
+        })
+        .finally(() => {
+          this.activeDownloads = Math.max(0, this.activeDownloads - 1);
+          if (generation !== this.queueGeneration) return;
+          if (this.state === 'RUNNING' && !this.isPaused && !this.isCancelled) {
+            this.processQueue(generation);
+          }
+        });
     }
 
     if (this.activeDownloads === 0 && this.state === 'RUNNING') {
@@ -373,8 +385,8 @@ export class DownloadManager extends EventEmitter {
     }
 
     // 🎯 Kiểm tra nhanh xem file đã tồn tại trên đĩa chưa trước khi gửi request lên Cổng
-    const preCheck = this.fileOrganizer.checkPreDownloadStatus(this.taxCode, item.filing, this.year);
-    if (preCheck.isAlreadyDownloaded) {
+    const preCheck = this.fileOrganizer?.checkPreDownloadStatus?.(this.taxCode, item.filing, this.year);
+    if (preCheck?.isAlreadyDownloaded) {
       item.status = 'EXISTING';
       item.progressPercent = 100;
       item.savedPaths = preCheck.savedPaths;
@@ -413,8 +425,10 @@ export class DownloadManager extends EventEmitter {
     const pacingDelayMs = (PORTAL_CONFIG.DOWNLOAD_ITEM_DELAY_MS || 1500) + Math.floor(Math.random() * (PORTAL_CONFIG.DOWNLOAD_ITEM_JITTER_MS || 800));
     await new Promise<void>(resolve => setTimeout(resolve, pacingDelayMs));
     if (generation !== this.queueGeneration || this.isPaused || this.isCancelled) {
-      item.status = 'PENDING';
-      item.filing.downloadStatus = 'PENDING';
+      if (!this.isCancelled && this.isPaused) {
+        item.status = 'PENDING';
+        item.filing.downloadStatus = 'PENDING';
+      }
       return;
     }
 
@@ -719,7 +733,9 @@ export class DownloadManager extends EventEmitter {
             this.rateLimitCooldownTimer = setTimeout(async () => {
               if (this.isPaused && !this.isCancelled) {
                 console.log(`[DownloadManager] Hết thời gian chờ 429 (${cooldownMs}ms) -> tự động resume queue`);
-                await this.resume();
+                await this.resume().catch(e => {
+                  console.warn('[DownloadManager] Tự động resume sau 429 thất bại:', e);
+                });
               }
             }, cooldownMs);
             if (typeof this.rateLimitCooldownTimer.unref === 'function') {

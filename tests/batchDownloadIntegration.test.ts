@@ -496,4 +496,43 @@ describe('Batch Download Integration — Tải Hàng Loạt Toàn Diện', () =>
     expect(dm.getSummary().existing).toBe(1);
     expect(dm.getSummary().completed).toBe(0);
   });
+
+  // ── 14. DVC timeout/abort signal -> eTax fallback nhận signal mới hợp lệ ──
+  it('14. DVC timeout/abort signal -> eTax fallback nhận signal mới hợp lệ', async () => {
+    const filing = makeFiling('FALLBACK_SIGNAL_TEST');
+    const session = new PortalSession();
+    const client = new TaxPortalClient(session);
+    client.checkSession = vi.fn().mockResolvedValue(true);
+
+    client.downloadHoSo = vi.fn().mockImplementation(async (_id, signal) => {
+      // Giả lập DVC timeout: signal bị abort
+      const err = new Error('Timeout DVC');
+      Object.assign(err, { code: 'TIMEOUT' });
+      throw err;
+    });
+
+    const legacyClient = new LegacyFilingClient(session);
+    let receivedSignalAborted: boolean | undefined;
+    legacyClient.resolveAndDownloadFiling = vi.fn().mockImplementation(async (_tc, _f, signal) => {
+      receivedSignalAborted = signal?.aborted;
+      return {
+        fileName: '01_GTGT_eTax.xml',
+        contentType: 'application/xml',
+        dataBuffer: Buffer.from('<?xml version="1.0"?><HSoThueDTu><TKhai>01/GTGT</TKhai></HSoThueDTu>', 'utf8')
+      };
+    });
+
+    const organizer = new FileOrganizer(tempDir);
+    const dm = new DownloadManager(client, organizer, legacyClient);
+
+    dm.enqueueFilings([filing], '3702735709', 2026);
+    const { promise: completedPromise, resolve } = Promise.withResolvers<void>();
+    dm.once('completed', () => resolve());
+    await dm.start();
+    await completedPromise;
+
+    expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledTimes(1);
+    expect(receivedSignalAborted).toBe(false);
+    expect(dm.getSummary().completed).toBe(1);
+  });
 });

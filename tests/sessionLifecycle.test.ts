@@ -348,4 +348,43 @@ describe('HOTFIX — Session Lifecycle & Download Queue Invariants', () => {
     expect(organizer.saveDownloadedFiling).toHaveBeenCalledTimes(1);
     expect(manager.getSummary().completed).toBe(1);
   });
+
+  it('11. User cancel trong pacing delay giữ CANCELLED, không bị worker ghi đè về PENDING', async () => {
+    const client = createMockClient({ isAlive: true });
+    const organizer = createMockOrganizer();
+    const manager = new DownloadManager(client, organizer);
+
+    manager.enqueueFilings([sampleFilings[0]], '3702735709', 2026);
+    const startPromise = manager.start();
+
+    // Chờ 5ms để worker bắt đầu và bước vào pacing delay
+    await new Promise(resolve => setTimeout(resolve, 5));
+    manager.cancel();
+
+    await startPromise;
+    // Chờ hết thời gian pacing delay (trong test là 20-30ms)
+    await new Promise(resolve => setTimeout(resolve, 60));
+
+    const queue = manager.getQueue();
+    expect(queue[0].status).toBe('CANCELLED');
+    expect(queue[0].filing.downloadStatus).toBe('CANCELLED');
+    expect(manager.getState()).toBe('CANCELLED');
+  });
+
+  it('12. Worker unhandled exception an toàn và không gây crash process', async () => {
+    const client = createMockClient({ isAlive: true });
+    client.downloadHoSo = vi.fn().mockImplementation(() => {
+      throw new Error('Fatal unhandled error');
+    });
+    const organizer = createMockOrganizer();
+    const manager = new DownloadManager(client, organizer);
+
+    manager.enqueueFilings([sampleFilings[0]], '3702735709', 2026);
+    await manager.start();
+    await new Promise(resolve => setTimeout(resolve, 60));
+
+    const queue = manager.getQueue();
+    expect(queue[0].status).toBe('FAILED');
+    expect(manager.getSummary().failed).toBe(1);
+  });
 });
