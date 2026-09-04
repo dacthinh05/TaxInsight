@@ -28,7 +28,7 @@ export function sanitizeFilename(input: string, fallback = 'document'): string {
 
   // Giới hạn độ dài tên file (150 ký tự an toàn)
   if (sanitized.length > 150) {
-    sanitized = sanitized.substring(0, 150).trim();
+    sanitized = sanitized.substring(0, 150).trim().replace(/[. ]+$/, '');
   }
 
   return sanitized || fallback;

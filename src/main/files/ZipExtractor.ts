@@ -299,6 +299,9 @@ export class ZipExtractor {
           if (!resolved.isExisting) {
             fs.writeFileSync(resolved.targetPath, uncompressedXml.cleanBuffer);
           }
+          if (fs.statSync(resolved.targetPath).size === 0) {
+            throw new Error(`Tệp XML đã lưu "${finalFileName}" có kích thước 0 byte (zlib fallback)`);
+          }
           return {
             isExisting: resolved.isExisting,
             savedPaths: [resolved.targetPath],
@@ -320,6 +323,9 @@ export class ZipExtractor {
         const resolved = this.resolveCollisionSafePath(destDir, finalFileName, pdfBuf);
         if (!resolved.isExisting) {
           fs.writeFileSync(resolved.targetPath, pdfBuf);
+        }
+        if (fs.statSync(resolved.targetPath).size === 0) {
+          throw new Error(`Tệp PDF đã lưu "${finalFileName}" có kích thước 0 byte (PDF fallback)`);
         }
         return {
           isExisting: resolved.isExisting,

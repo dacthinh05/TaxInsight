@@ -118,6 +118,7 @@ export const App: React.FC = () => {
 
   // Ref chống race khi gọi getCheckpoint liên tiếp (đổi năm nhanh) — response cũ phải bị bỏ qua
   const checkpointReqId = useRef(0);
+  const gntCheckpointReqId = useRef(0);
 
   // Counter cho id log (Date.now() bị trùng khi nhiều log cùng ms -> key React trùng)
   const logIdCounter = useRef(0);
@@ -407,15 +408,35 @@ export const App: React.FC = () => {
   };
 
   const checkExistingGntCheckpoint = async (taxCode: string, year: number) => {
-    if (!window.taxPortalAPI?.getGntCheckpoint || !taxCode) return;
+    if (!window.taxPortalAPI?.getGntCheckpoint || !taxCode) {
+      failedGntDetailIds.current.clear();
+      setPaymentSlips([]);
+      setGntDetails(new Map());
+      setPaymentQueryStatus('NOT_QUERIED');
+      return;
+    }
+    const reqId = ++gntCheckpointReqId.current;
     try {
       const res = await window.taxPortalAPI.getGntCheckpoint({ taxCode, year });
+      if (reqId !== gntCheckpointReqId.current) return;
       if (res?.success && res.data?.slips?.length > 0) {
         failedGntDetailIds.current.clear();
         setPaymentSlips(res.data.slips as PaymentSlipRecord[]);
+        setGntDetails(new Map());
         setPaymentQueryStatus('CONNECTED_WITH_DATA');
+      } else {
+        failedGntDetailIds.current.clear();
+        setPaymentSlips([]);
+        setGntDetails(new Map());
+        setPaymentQueryStatus('NOT_QUERIED');
       }
-    } catch {}
+    } catch {
+      if (reqId !== gntCheckpointReqId.current) return;
+      failedGntDetailIds.current.clear();
+      setPaymentSlips([]);
+      setGntDetails(new Map());
+      setPaymentQueryStatus('NOT_QUERIED');
+    }
   };
 
   // Lưu trữ dữ liệu hồ sơ độc lập theo từng năm trong phiên làm việc
@@ -429,6 +450,17 @@ export const App: React.FC = () => {
       loginTime: new Date().toISOString()
     };
     setSession(info);
+    setFilingsByYear({});
+    setFilings([]);
+    setVatSummary(null);
+    setIsVatDrawerOpen(false);
+    setPitSummary(null);
+    setIsPitDrawerOpen(false);
+    setPaymentSlips([]);
+    setGntDetails(new Map());
+    failedGntDetailIds.current.clear();
+    setPaymentQueryStatus('NOT_QUERIED');
+    setPaymentSlipsError(null);
     checkExistingCheckpoint(taxCode, selectedYear);
     checkExistingGntCheckpoint(taxCode, selectedYear);
   };
@@ -841,10 +873,21 @@ export const App: React.FC = () => {
     // 1. Lưu lại filings của năm cũ trước khi đổi
     setFilingsByYear(prev => ({ ...prev, [selectedYear]: filings }));
 
-    // 2. Chuyển sang năm mới — XÓA selection của năm cũ để tránh
-    // "Đã chọn N" ma với id không còn trong bảng (download câm lặng)
+    // 2. Chuyển sang năm mới — XÓA selection và analytics của năm cũ
     setSelectedYear(y);
     setSelectedIds(new Set());
+    setVatSummary(null);
+    setIsVatDrawerOpen(false);
+    setPitSummary(null);
+    setIsPitDrawerOpen(false);
+
+    // Reset dữ liệu GNT của năm cũ trước khi nạp năm mới
+    setPaymentSlips([]);
+    setGntDetails(new Map());
+    failedGntDetailIds.current.clear();
+    setPaymentQueryStatus('NOT_QUERIED');
+    setPaymentSlipsError(null);
+
     const currentYear = new Date().getFullYear();
     if (y !== currentYear && scanRangeMode === 'YEAR_TO_DATE') {
       setScanRangeMode('FULL_YEAR');
@@ -855,12 +898,15 @@ export const App: React.FC = () => {
       setFilings(filingsByYear[y]);
       setMissingVat(checkMissingPeriods(filingsByYear[y], y, 'VAT', true));
       setMissingPit(checkMissingPeriods(filingsByYear[y], y, 'PIT', true));
+      setAvailableCheckpoint(null);
     } else {
       setFilings([]);
       setMissingVat(undefined);
       setMissingPit(undefined);
       checkExistingCheckpoint(session.taxCode || '', y);
     }
+    // Luôn nạp GNT checkpoint tương ứng với năm mới
+    checkExistingGntCheckpoint(session.taxCode || '', y);
   };
 
   // Phân tích chuyên sâu GTGT (Tự động gom hồ sơ T12 nộp vào tháng 1 năm sau)
@@ -1286,13 +1332,17 @@ export const App: React.FC = () => {
       await window.taxPortalAPI.logout();
     }
     setSession({ isLoggedIn: false });
+    setFilingsByYear({});
     setFilings([]);
     setVatSummary(null);
     setIsVatDrawerOpen(false);
+    setPitSummary(null);
+    setIsPitDrawerOpen(false);
     setPaymentSlips([]);
     setGntDetails(new Map());
     failedGntDetailIds.current.clear();
     setPaymentQueryStatus('NOT_QUERIED');
+    setPaymentSlipsError(null);
     setTargetLoginTaxCode('');
   };
 
@@ -1301,13 +1351,17 @@ export const App: React.FC = () => {
       await window.taxPortalAPI.logout();
     }
     setSession({ isLoggedIn: false });
+    setFilingsByYear({});
     setFilings([]);
     setVatSummary(null);
     setIsVatDrawerOpen(false);
+    setPitSummary(null);
+    setIsPitDrawerOpen(false);
     setPaymentSlips([]);
     setGntDetails(new Map());
     failedGntDetailIds.current.clear();
     setPaymentQueryStatus('NOT_QUERIED');
+    setPaymentSlipsError(null);
     setTargetLoginTaxCode(targetMst);
   };
 

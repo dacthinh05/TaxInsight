@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage } from 'electron';
+import { app, BrowserWindow, nativeImage, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -263,7 +263,6 @@ app.on('web-contents-created', (_event, contents) => {
     try {
       const u = new URL(url);
       if (isAllowedExternalUrl(url)) {
-        const { shell } = require('electron') as typeof import('electron');
         shell.openExternal(url).catch(() => {});
       }
     } catch {

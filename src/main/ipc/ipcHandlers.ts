@@ -1249,7 +1249,6 @@ export function setupIpcHandlers(
             if (isManualStateReady && res && res.tableHtml && (res.tableHtml.includes('Giao dịch') || res.tableHtml.includes('chiTietCT') || res.tableHtml.includes('VND'))) {
               const gntRecords = GntParser.parseList(res.tableHtml);
               if (gntRecords.length > 0) {
-                hasClosed = true;
                 const records: PaymentSlipRecord[] = gntRecords.map(item => ({
                   id: item.ctuId,
                   stt: item.raw?.cells[0] ? parseInt(item.raw.cells[0], 10) || 1 : 1,
@@ -1387,7 +1386,8 @@ export function setupIpcHandlers(
     try {
       safeRange = normalizeDateRange(range);
     } catch {
-      safeRange = { fromDate: '01/01/2026', toDate: '31/12/2026', label: 'Cả năm 2026', level: 'YEAR' };
+      const currentYear = new Date().getFullYear();
+      safeRange = { fromDate: `01/01/${currentYear}`, toDate: `31/12/${currentYear}`, label: `Cả năm ${currentYear}`, level: 'YEAR' };
     }
 
     try {
