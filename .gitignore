@@ -6,6 +6,12 @@ dist/
 dist-electron/
 dist-build/
 dist-release/
+dist-release*/
+release-dist/
+output_*/
+test_output/
+*.html
+*.xml
 build-dist/
 dist-out/
 bin-release/
