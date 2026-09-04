@@ -35,6 +35,9 @@ export const PORTAL_CONFIG = {
   // trong < 1 giây đã trả 429). Tải tuần tự để mỗi hồ sơ có đủ ngân sách thử
   // đúng ID/payload mà không bị worker khác chiếm hạn mức.
   DOWNLOAD_CONCURRENCY: 1,
+  DOWNLOAD_ITEM_DELAY_MS: process.env.NODE_ENV === 'test' || process.env.VITEST ? 20 : 1500,
+  DOWNLOAD_ITEM_JITTER_MS: process.env.NODE_ENV === 'test' || process.env.VITEST ? 10 : 800,
+  RATE_LIMIT_COOLDOWN_MS: process.env.NODE_ENV === 'test' || process.env.VITEST ? 500 : 45000,
   MAX_RETRIES: 3,
   RETRY_BASE_DELAY_MS: 2000
 };

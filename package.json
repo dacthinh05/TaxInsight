@@ -12,7 +12,7 @@
     "icons": "node scripts/generate-icons.js && npx electron scripts/build-icon-assets.cjs",
     "keygen": "node scripts/generate-key.js",
     "dist": "npm run build && electron-builder --win -p never",
-    "electron:dev": "vite",
+    "electron:dev": "npm run build && electron .",
     "electron:build": "npm run dist"
   },
   "keywords": [

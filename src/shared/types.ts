@@ -204,6 +204,7 @@ export type DownloadState =
   | 'PAUSED'
   | 'AUTH_REQUIRED'
   | 'PAUSED_AUTH_REQUIRED'
+  | 'PAUSED_RATE_LIMIT'
   | 'COMPLETED'
   | 'CANCELLED';
 

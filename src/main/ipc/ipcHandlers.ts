@@ -277,6 +277,16 @@ export function setupIpcHandlers(
     sendToRenderer('session:expired', {});
   });
 
+  downloadManager.on('rate_limited', (data: { cooldownMs: number; resumeAt: number; item: unknown; message: string }) => {
+    auditLogger.log('WARNING', `Máy chủ Cổng Thuế giới hạn tần suất (HTTP 429). Tự động thử lại sau ${Math.round(data.cooldownMs / 1000)}s`);
+    sendToRenderer('download:rate_limited', data);
+  });
+
+  downloadManager.on('resumed', summary => {
+    auditLogger.log('INFO', 'Tiếp tục tiến trình tải hồ sơ sau thời gian chờ');
+    sendToRenderer('download:resumed', summary);
+  });
+
   // ─── LEGACY FILING EVENT LISTENERS ──────────────────────────────────
   legacyFilingWorkflow.on('progress', data => {
     sendToRenderer('legacyFiling:progress', data);

@@ -428,4 +428,72 @@ describe('Batch Download Integration — Tải Hàng Loạt Toàn Diện', () =>
     expect(s.completed).toBe(1);
     expect(s.failed).toBe(0);
   });
+
+  // ── 12. HTTP 429 kích hoạt rate_limited event và tự động phục hồi (auto-resume) ──
+  it('12. HTTP 429 kích hoạt rate_limited event và tự động phục hồi (auto-resume)', async () => {
+    const filing = makeFiling('RL_AUTO');
+    let attempts = 0;
+    const client = {
+      checkSession: vi.fn().mockResolvedValue(true),
+      downloadHoSo: vi.fn().mockImplementation(async () => {
+        attempts++;
+        if (attempts === 1) {
+          const err = new Error('Rate limit 429');
+          (err as any).code = 'RATE_LIMIT';
+          (err as any).httpStatus = 429;
+          throw err;
+        }
+        return {
+          fileName: 'ok.zip',
+          fileType: 'application/zip',
+          content: FAKE_XML_BASE64,
+          fileCount: 1
+        };
+      })
+    } as unknown as TaxPortalClient;
+
+    const organizer = new FileOrganizer(tempDir);
+    const dm = new DownloadManager(client, organizer);
+    dm.enqueueFilings([filing], '3702735709', 2026);
+
+    let rateLimitedReceived = false;
+    dm.once('rate_limited', data => {
+      rateLimitedReceived = true;
+      expect(data.cooldownMs).toBeDefined();
+      expect(data.resumeAt).toBeGreaterThan(Date.now() - 100);
+    });
+
+    const completedPromise = new Promise<void>(resolve => dm.once('completed', resolve));
+    await dm.start();
+    await completedPromise;
+
+    expect(rateLimitedReceived).toBe(true);
+    expect(attempts).toBe(2);
+    expect(dm.getSummary().completed).toBe(1);
+    expect(dm.getSummary().failed).toBe(0);
+  });
+
+  // ── 13. Pre-check trong worker bỏ qua gọi mạng nếu file đã tồn tại trên đĩa ──
+  it('13. Pre-check trong worker bỏ qua gọi mạng nếu file đã tồn tại trên đĩa', async () => {
+    const filing = makeFiling('DISK_EXISTING');
+    const client = {
+      checkSession: vi.fn().mockResolvedValue(true),
+      downloadHoSo: vi.fn().mockResolvedValue({
+        fileName: 'dummy.zip',
+        fileType: 'application/zip',
+        content: FAKE_XML_BASE64,
+        fileCount: 1
+      })
+    } as unknown as TaxPortalClient;
+
+    const organizer = makeOrganizer(tempDir, ['DISK_EXISTING']);
+    const dm = new DownloadManager(client, organizer);
+
+    dm.enqueueFilings([filing], '3702735709', 2026);
+    await dm.start();
+
+    expect(client.downloadHoSo).not.toHaveBeenCalled();
+    expect(dm.getSummary().existing).toBe(1);
+    expect(dm.getSummary().completed).toBe(0);
+  });
 });

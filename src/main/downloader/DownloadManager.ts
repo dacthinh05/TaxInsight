@@ -23,6 +23,7 @@ export class DownloadManager extends EventEmitter {
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private consecutiveInfrastructureFailures = 0;
   private queueGeneration = 0;
+  private rateLimitCooldownTimer: NodeJS.Timeout | null = null;
 
   constructor(client: TaxPortalClient, fileOrganizer: FileOrganizer, legacyClient?: LegacyFilingClient) {
     super();
@@ -34,6 +35,13 @@ export class DownloadManager extends EventEmitter {
   public setContext(taxCode: string, year: number) {
     this.taxCode = taxCode;
     this.year = year;
+  }
+
+  private clearRateLimitCooldown() {
+    if (this.rateLimitCooldownTimer) {
+      clearTimeout(this.rateLimitCooldownTimer);
+      this.rateLimitCooldownTimer = null;
+    }
   }
 
   /** Nguồn sự thật cho (taxCode, year) hiện tại của đợt tải — dùng cho checkpoint */
@@ -88,6 +96,7 @@ export class DownloadManager extends EventEmitter {
 
   public clearQueue() {
     this.queueGeneration++;
+    this.clearRateLimitCooldown();
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
@@ -111,6 +120,9 @@ export class DownloadManager extends EventEmitter {
         this.processQueue();
       }
     }, 2000);
+    if (typeof this.watchdogTimer.unref === 'function') {
+      this.watchdogTimer.unref();
+    }
   }
 
   private stopWatchdog() {
@@ -208,7 +220,7 @@ export class DownloadManager extends EventEmitter {
 
     // Người dùng có thể bấm Tạm dừng/Dừng trong lúc health check đang chờ mạng.
     // Không được để phần start tiếp tục ghi đè lại trạng thái điều khiển đó.
-    if (this.isCancelled || this.isPaused || this.state === 'PAUSED') {
+    if (this.isCancelled || this.isPaused || this.state === 'PAUSED' || this.state === 'PAUSED_RATE_LIMIT') {
       this.emitProgress();
       return;
     }
@@ -238,6 +250,7 @@ export class DownloadManager extends EventEmitter {
    * 3. RESUME DOWNLOAD SAU KHI ĐĂNG NHẬP LẠI
    */
   public async resume(): Promise<void> {
+    this.clearRateLimitCooldown();
     this.hasEmittedAuthExpired = false;
 
     // Kiểm tra lại phiên mới
@@ -258,6 +271,7 @@ export class DownloadManager extends EventEmitter {
     this.isPaused = false;
     this.isCancelled = false;
     this.state = 'RUNNING';
+    this.activeDownloads = 0;
     if (!this.abortController || this.abortController.signal.aborted) {
       this.abortController = new AbortController();
     }
@@ -270,6 +284,7 @@ export class DownloadManager extends EventEmitter {
 
   public pause() {
     this.stopWatchdog();
+    this.clearRateLimitCooldown();
     this.queueGeneration++;
     this.isPaused = true;
     this.state = 'PAUSED';
@@ -291,6 +306,7 @@ export class DownloadManager extends EventEmitter {
   public cancel() {
     this.stopWatchdog();
     this.queueGeneration++;
+    this.clearRateLimitCooldown();
     this.isCancelled = true;
     this.isPaused = false;
     this.state = 'CANCELLED';
@@ -321,8 +337,8 @@ export class DownloadManager extends EventEmitter {
 
       this.activeDownloads++;
       this.downloadItemWithWorker(nextItem, generation).finally(() => {
-        if (generation !== this.queueGeneration) return;
         this.activeDownloads = Math.max(0, this.activeDownloads - 1);
+        if (generation !== this.queueGeneration) return;
         if (this.state === 'RUNNING' && !this.isPaused && !this.isCancelled) {
           this.processQueue(generation);
         }
@@ -333,6 +349,7 @@ export class DownloadManager extends EventEmitter {
       const summary = this.getSummary();
       if (summary.remaining === 0) {
         this.stopWatchdog();
+        this.clearRateLimitCooldown();
         this.state = 'COMPLETED';
         this.emit('completed', this.getSummary());
         this.emitProgress();
@@ -345,12 +362,38 @@ export class DownloadManager extends EventEmitter {
       return;
     }
 
+    // 🎯 Kiểm tra nhanh xem file đã tồn tại trên đĩa chưa trước khi gửi request lên Cổng
+    const preCheck = this.fileOrganizer.checkPreDownloadStatus(this.taxCode, item.filing, this.year);
+    if (preCheck.isAlreadyDownloaded) {
+      item.status = 'EXISTING';
+      item.progressPercent = 100;
+      item.savedPaths = preCheck.savedPaths;
+      item.filing.downloadStatus = 'EXISTING';
+      item.filing.downloadedFiles = {
+        xml: preCheck.savedPaths?.find(p => p.toLowerCase().endsWith('.xml')),
+        pdf: preCheck.savedPaths?.find(p => p.toLowerCase().endsWith('.pdf')),
+        other: (preCheck.savedPaths || []).filter(p => !p.toLowerCase().endsWith('.xml') && !p.toLowerCase().endsWith('.pdf'))
+      };
+      this.emit('item_completed', {
+        item,
+        saveResult: {
+          isExisting: true,
+          savedPaths: preCheck.savedPaths || [],
+          xmlPath: item.filing.downloadedFiles.xml,
+          pdfPath: item.filing.downloadedFiles.pdf
+        }
+      });
+      this.emitProgress(item);
+      return;
+    }
+
     item.status = 'DOWNLOADING';
     item.filing.downloadStatus = 'DOWNLOADING';
     this.emitProgress(item);
 
-    // Jitter nhẹ tránh xung đột đồng thời giữa các workers
-    await new Promise(r => setTimeout(r, 50 + Math.random() * 100));
+    // 🎯 Pacing & Jitter an toàn để bảo vệ phiên và tránh bị Cổng Thuế chặn tần suất (HTTP 429)
+    const pacingDelayMs = (PORTAL_CONFIG.DOWNLOAD_ITEM_DELAY_MS || 1500) + Math.floor(Math.random() * (PORTAL_CONFIG.DOWNLOAD_ITEM_JITTER_MS || 800));
+    await new Promise<void>(resolve => setTimeout(resolve, pacingDelayMs));
     if (generation !== this.queueGeneration || this.isPaused || this.isCancelled) {
       item.filing.downloadStatus = 'PENDING';
       return;
@@ -622,6 +665,28 @@ export class DownloadManager extends EventEmitter {
           this.state = 'PAUSED';
           this.activeDownloads = 0;
           this.stopWatchdog();
+
+          if (isRateLimited) {
+            const cooldownMs = PORTAL_CONFIG.RATE_LIMIT_COOLDOWN_MS || 45000;
+            const resumeAt = Date.now() + cooldownMs;
+            this.emit('rate_limited', {
+              cooldownMs,
+              resumeAt,
+              item,
+              message: `Máy chủ Cổng Thuế giới hạn tần suất yêu cầu (HTTP 429). Tự động thử lại sau ${Math.round(cooldownMs / 1000)} giây...`
+            });
+
+            this.clearRateLimitCooldown();
+            this.rateLimitCooldownTimer = setTimeout(async () => {
+              if (this.isPaused && !this.isCancelled) {
+                console.log(`[DownloadManager] Hết thời gian chờ 429 (${cooldownMs}ms) -> tự động resume queue`);
+                await this.resume();
+              }
+            }, cooldownMs);
+            if (typeof this.rateLimitCooldownTimer.unref === 'function') {
+              this.rateLimitCooldownTimer.unref();
+            }
+          }
           this.emit('paused', this.getSummary());
           this.emitProgress(item);
           return;
