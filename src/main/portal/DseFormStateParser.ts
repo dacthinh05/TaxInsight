@@ -46,7 +46,7 @@ export class DseFormStateParser {
       return undefined;
     };
 
-    result.sessionId = extractField('dse_sessionId') || '';
+    result.sessionId = extractField('dse_sessionId') || extractField('sessionId') || '';
     result.applicationId = extractField('dse_applicationId');
     result.pageId = extractField('dse_pageId');
     result.operationName = extractField('dse_operationName');

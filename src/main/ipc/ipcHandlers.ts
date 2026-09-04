@@ -1249,7 +1249,7 @@ export function setupIpcHandlers(
             const needsUserInteraction = Boolean(
               res?.isDvcLoginPage ||
               res?.pluginGate ||
-              (elapsedMs > 6000 && !isManualStateReady && res?.isAtEtax)
+              (elapsedMs > 5000 && !isManualStateReady)
             );
             if (needsUserInteraction && !authWin.isDestroyed() && !authWin.isVisible()) {
               // Tự động hiển thị cửa sổ khi cần tương tác (login, CAPTCHA, plugin) để người dùng không phải chờ trong vô vọng
@@ -1369,6 +1369,9 @@ export function setupIpcHandlers(
           if (ssoData.startsWith('http') && ssoData.includes('thuedientu.gdt.gov.vn')) {
             directEtaxUrl = ssoData;
             auditLogger.log('SUCCESS', 'Đã lấy thành công direct SSO URL sang eTax', directEtaxUrl.slice(0, 60) + '...');
+          } else if (ssoData.includes('thuedientu.gdt.gov.vn') || ssoData.includes('<form')) {
+            directEtaxUrl = `data:text/html;charset=utf-8,${encodeURIComponent(ssoData)}`;
+            auditLogger.log('SUCCESS', 'Đã nhận HTML auto-submit form SSO sang eTax');
           }
         } catch (ssoErr: any) {
           console.warn('[triggerPaymentAuthWindow] Không lấy được direct eTax SSO link, dùng fallback:', ssoErr?.message || ssoErr);

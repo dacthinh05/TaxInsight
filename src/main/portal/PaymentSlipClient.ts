@@ -364,6 +364,10 @@ export class PaymentSlipClient {
       }
 
       let dseState = DseFormStateParser.extractDseFormState(initHtml);
+      if (!dseState.sessionId && redirectUrl) {
+        const urlSid = redirectUrl.match(/[?&](?:dse_)?sessionId=([^&"'#\s]+)/i)?.[1];
+        if (urlSid) dseState.sessionId = decodeURIComponent(urlSid);
+      }
       if (dseState.sessionId) {
         this.currentDseState = dseState;
         this.logCheckpoint('GNT_04_ETAX_ORIGIN_REACHED', 'PASS', `Đã vào origin eTax (op=${dseState.operationName ?? '?'})`);

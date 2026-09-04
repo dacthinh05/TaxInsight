@@ -4,11 +4,16 @@
 
 @layer base {
   body {
-    @apply bg-slate-100 text-slate-800 text-sm;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    @apply bg-slate-100 text-slate-800 text-sm font-sans;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum";
+  }
+  
+  ::selection {
+    background-color: #ccfbf1;
+    color: #0f766e;
   }
 }
 
@@ -20,7 +25,11 @@
 /* Smooth UI transitions & focus states */
 @layer utilities {
   .focus-ring {
-    @apply focus:outline-none focus:ring-2 focus:ring-teal-600/40 focus:border-teal-600 transition-shadow;
+    @apply focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600 transition-all duration-150;
+  }
+  
+  .btn-press {
+    @apply active:scale-[0.98] transition-transform duration-100;
   }
   
   .skeleton-shimmer {

@@ -81,7 +81,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
     const percent = total > 0 ? Math.round((successCount / total) * 100) : 0;
 
     return (
-      <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 text-slate-800 rounded-2xl px-5 py-3 shadow-xl flex items-center justify-between gap-4 text-xs select-none animate-slideUp overflow-x-auto min-w-[520px]">
+      <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 text-slate-800 rounded-2xl px-5 py-3 shadow-floating flex items-center justify-between gap-4 text-xs select-none animate-slideUp overflow-x-auto min-w-[520px]">
         {/* Left: Progress info & derived bar */}
         <div className="flex items-center space-x-3.5 flex-1 min-w-[260px] shrink-0">
           <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border ${
@@ -127,10 +127,10 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
 
           {/* Derived Real Progress Bar */}
           {isDownloading && (
-            <div className="flex-1 max-w-[160px] h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200 hidden md:block">
+            <div className="flex-1 max-w-[160px] h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/80 hidden md:block">
               <div
                 className={`h-full transition-all duration-300 rounded-full ${
-                  downloadSummary?.isPaused ? 'bg-amber-500' : 'bg-teal-600'
+                  downloadSummary?.isPaused ? 'bg-amber-500' : 'bg-gradient-to-r from-teal-600 to-teal-500'
                 }`}
                 style={{ width: `${percent}%` }}
               />
@@ -144,7 +144,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
             <button
               type="button"
               onClick={onResumeDownload}
-              className="h-8 px-3.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"
+              className="h-8.5 px-3.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs btn-press"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Đăng nhập lại</span>
@@ -155,7 +155,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
                 <button
                   type="button"
                   onClick={onResumeDownload}
-                  className="h-8 px-3.5 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"
+                  className="h-8.5 px-3.5 bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 active:from-teal-800 active:to-teal-700 text-white font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs btn-press border border-teal-700/40"
                 >
                   <Play className="w-3.5 h-3.5 fill-current" />
                   <span>Tiếp tục tải</span>
@@ -164,7 +164,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
                 <button
                   type="button"
                   onClick={onPauseDownload}
-                  className="h-8 px-3.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-colors cursor-pointer shadow-2xs"
+                  className="h-8.5 px-3.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs btn-press"
                 >
                   <Pause className="w-3.5 h-3.5 fill-current" />
                   <span>Tạm dừng</span>
@@ -173,7 +173,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
               <button
                 type="button"
                 onClick={onCancelDownload}
-                className="h-8 px-3 bg-slate-50 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 rounded-lg text-xs flex items-center space-x-1.5 transition-colors cursor-pointer shadow-2xs"
+                className="h-8.5 px-3 bg-slate-50 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 rounded-lg text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs btn-press"
                 title="Hủy tiến trình tải"
               >
                 <XCircle className="w-3.5 h-3.5" />
@@ -186,7 +186,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
                 <button
                   type="button"
                   onClick={onRetryFailed}
-                  className="h-8 px-3.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
+                  className="h-8.5 px-3.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer btn-press"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>Thử lại {failed} file lỗi</span>
@@ -195,7 +195,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
               <button
                 type="button"
                 onClick={onOpenFolder}
-                className="h-8 px-3.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-medium rounded-lg text-xs flex items-center space-x-1.5 transition-colors cursor-pointer shadow-2xs"
+                className="h-8.5 px-3.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs btn-press"
               >
                 <FolderOpen className="w-3.5 h-3.5 text-teal-600" />
                 <span>Mở thư mục</span>
@@ -203,7 +203,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
               <button
                 type="button"
                 onClick={onDismissDownload}
-                className="h-8 w-8 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 flex items-center justify-center transition-colors cursor-pointer"
+                className="h-8.5 w-8.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 flex items-center justify-center transition-all cursor-pointer btn-press"
                 title="Đóng thông báo"
               >
                 <X className="w-4 h-4" />
@@ -214,7 +214,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
           <button
             type="button"
             onClick={onOpenDetails}
-            className="h-8 px-3 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"
+            className="h-8.5 px-3.5 bg-teal-700 hover:bg-teal-800 text-white font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs btn-press"
           >
             <ExternalLink className="w-3.5 h-3.5" />
             <span>Chi tiết</span>
@@ -226,12 +226,12 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
 
   // ─── CASE B: SELECTION ONLY (Chưa bấm tải) ──────────────────────────
   return (
-    <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 text-slate-800 rounded-2xl px-5 py-3 shadow-xl flex items-center justify-between gap-4 animate-slideUp text-xs select-none">
+    <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 text-slate-800 rounded-2xl px-5 py-3 shadow-floating flex items-center justify-between gap-4 animate-slideUp text-xs select-none">
       <div className="flex items-center space-x-3">
         <div className="flex items-center space-x-2 text-slate-700 font-medium">
           <CheckSquare className="w-4 h-4 text-teal-600" />
           <span>
-            Đã chọn <strong className="text-teal-800 font-bold font-mono text-[13px]">{selectedCount}</strong> / {totalCount} hồ sơ
+            Đã chọn <strong className="text-teal-900 font-bold font-mono text-[13px] bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200/80">{selectedCount}</strong> / {totalCount} hồ sơ
           </span>
         </div>
         <button
@@ -246,7 +246,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
       <button
         type="button"
         onClick={onDownloadSelected}
-        className="h-8.5 px-4 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
+        className="h-8.5 px-4.5 bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 active:from-teal-800 active:to-teal-700 text-white font-bold rounded-lg text-xs flex items-center space-x-2 transition-all shadow-xs cursor-pointer btn-press border border-teal-700/40"
       >
         <Download className="w-3.5 h-3.5" />
         <span>{selectedCount === 1 ? 'Tải hồ sơ đã chọn' : `Tải ${selectedCount} hồ sơ đã chọn`}</span>

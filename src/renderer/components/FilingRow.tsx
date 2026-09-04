@@ -94,11 +94,11 @@ export const FilingRow: React.FC<FilingRowProps> = ({
           onPreview(filing);
         }
       }}
-      className={`group h-[50px] transition-colors border-b border-slate-100 select-none text-[14px] ${
+      className={`group h-[50px] transition-colors border-b border-slate-100 select-none text-xs ${
         isGroupStart ? 'border-t border-slate-200/90' : ''
       } ${
         isSelected
-          ? 'bg-teal-50/50'
+          ? 'bg-teal-50/70 border-l-[3px] border-l-teal-600'
           : 'hover:bg-slate-50/90 bg-white'
       }`}
     >
@@ -203,15 +203,16 @@ export const FilingRow: React.FC<FilingRowProps> = ({
       </td>
 
       {/* 7. Trạng thái */}
+      {/* 7. Trạng thái */}
       <td className="w-[150px] px-3 py-2 whitespace-nowrap">
         <span
-          className={`inline-flex items-center h-6 px-2.5 rounded-full text-[12px] font-medium ${
+          className={`inline-flex items-center h-6 px-2.5 rounded-full text-[11.5px] font-semibold tracking-tight ${
             isRejectedStatus
-              ? 'bg-red-50 text-red-700 border border-red-200'
+              ? 'bg-rose-50 text-rose-700 border border-rose-200'
               : isPendingStatus
               ? 'bg-amber-50 text-amber-700 border border-amber-200'
               : statusText.includes('kết quả')
-              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+              ? 'bg-sky-50 text-sky-700 border border-sky-200'
               : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
           }`}
           title={statusText}
@@ -219,7 +220,6 @@ export const FilingRow: React.FC<FilingRowProps> = ({
           {statusText}
         </span>
       </td>
-
       {/* 8. Action (Cố định 68px, có icon tải ✓ và nút 👁 xem nhanh luôn rõ ràng) */}
       <td className="w-[68px] px-2 py-2 text-center sticky right-0 bg-inherit whitespace-nowrap">
         <div className="flex items-center justify-center space-x-1">
@@ -234,7 +234,7 @@ export const FilingRow: React.FC<FilingRowProps> = ({
               e.stopPropagation();
               onPreview(filing);
             }}
-            className="h-7 w-7 rounded hover:bg-teal-50 text-slate-500 hover:text-teal-700 inline-flex items-center justify-center transition-colors cursor-pointer"
+            className="h-7.5 w-7.5 rounded-lg hover:bg-teal-100/70 text-slate-400 hover:text-teal-800 inline-flex items-center justify-center transition-colors cursor-pointer btn-press"
             title="Xem chi tiết tờ khai (Enter hoặc nhấp đúp)"
           >
             <Eye className="w-4 h-4" />

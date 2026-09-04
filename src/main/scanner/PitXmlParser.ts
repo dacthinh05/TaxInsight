@@ -115,12 +115,18 @@ export class PitXmlParser {
       const val22 = this.findTag(xmlContent, ['ct17', 'ct22', 'caNhanCuTru', 'ct_22', 'ct_17']);
 
       // 2. Quét thẻ Tổng thu nhập chịu thuế (TNCT) - [24], [27]
-      const val24 = isTt80Schema
+      // Lưu ý: Nếu XML có ct24, thì ct24 luôn là TNCT (ct21 là số lao động).
+      // Chỉ khi XML dùng ct16 cho số lao động (Mẫu 864 TT80), thì ct21 mới là TNCT.
+      const hasCt24 = this.findTag(xmlContent, ['ct24', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24']);
+      const hasCt16 = this.findTag(xmlContent, ['ct16', 'ct_16']);
+      const val24 = hasCt24 || (isTt80Schema && hasCt16
         ? this.findTag(xmlContent, [isFinalization ? 'ct23' : 'ct21', 'ct24', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24', 'ct_21', 'ct_23'])
-        : this.findTag(xmlContent, ['ct24', 'ct21', 'ct23', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24']);
-      const val27 = isTt80Schema
+        : this.findTag(xmlContent, ['ct24', 'ct23', 'tongTNCT', 'tongThuNhapChiuThue', 'ct_24']));
+
+      const hasCt27 = this.findTag(xmlContent, ['ct27', 'tnctKhauTru', 'ct_27']);
+      const val27 = hasCt27 || (isTt80Schema && hasCt16
         ? this.findTag(xmlContent, [isFinalization ? 'ct28' : 'ct26', 'ct27', 'tnctKhauTru', 'ct_27', 'ct_26', 'ct_28'])
-        : this.findTag(xmlContent, ['ct27', 'ct26', 'ct28', 'tnctKhauTru', 'ct_27']);
+        : this.findTag(xmlContent, ['ct27', 'ct28', 'tnctKhauTru', 'ct_27']));
 
       if (val21 !== undefined) ct21 = this.parseBigIntSafe(val21);
       if (val22 !== undefined) ct22 = this.parseBigIntSafe(val22);

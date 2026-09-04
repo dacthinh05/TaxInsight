@@ -186,11 +186,13 @@ export class VatXmlParser {
     let ct43Big = parseMoneyToBigInt(extractedCt43);
 
     // Tự động kiểm tra tính toán [43] nếu XML thiếu hoặc bằng 0 mà có thuế khấu trừ chuyển kỳ
+    // Chuẩn theo Thông tư 80/2021/TT-BTC: Nếu [40] = 0 (không phát sinh thuế phải nộp),
+    // số thuế còn được khấu trừ chuyển kỳ sau: [43] = ([22] - [37] + [38]) + ([25] - [35]) - [42]
     if (ct43Big === 0n && extractedCt43 === undefined && ct40Big === 0n) {
-      const netVat = ct35Big - ct25Big; // Thuế phát sinh [36]
-      if (netVat < 0n) {
-        const notDeducted = -netVat; // [41]
-        const computed43 = ct22Big + notDeducted - ct37Big + ct38Big - ct42Big;
+      const totalCredit = ct22Big + ct25Big - ct37Big + ct38Big;
+      const totalDebit = ct35Big + ct42Big;
+      if (totalCredit > totalDebit) {
+        const computed43 = totalCredit - totalDebit;
         if (computed43 > 0n) ct43Big = computed43;
       }
     }

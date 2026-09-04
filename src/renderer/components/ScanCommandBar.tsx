@@ -87,10 +87,10 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
   const mergedFormOptions = legacyFormOptions.length > 0 ? legacyFormOptions : defaultLegacyFormOptions;
 
   return (
-    <div className="bg-white border border-slate-200/90 rounded-xl px-4 py-2 shadow-xs flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+    <div className="bg-white border border-slate-200/80 rounded-xl px-4 py-2.5 shadow-card flex flex-wrap items-center gap-x-3 gap-y-2.5 text-xs">
       {/* 1. Năm */}
       <div className="flex items-center space-x-1.5 shrink-0">
-        <label className="font-medium text-slate-600 text-xs">
+        <label className="font-semibold text-slate-600 text-xs">
           {isGntMode ? 'Năm nộp:' : 'Năm:'}
         </label>
         <YearSelector
@@ -105,14 +105,14 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
 
       {/* 2. Thời gian nộp */}
       <div className="flex items-center space-x-1.5 shrink-0">
-        <label className="font-medium text-slate-600 text-xs">
+        <label className="font-semibold text-slate-600 text-xs">
           Thời gian:
         </label>
         <select
           value={scanRangeMode}
           onChange={e => onRangeModeChange(e.target.value)}
           disabled={isScanning}
-          className="h-8 max-w-[290px] px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus-ring focus:bg-white transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
+          className="h-8.5 max-w-[290px] px-3 bg-slate-50 hover:bg-white border border-slate-300/90 rounded-lg font-medium text-slate-800 text-xs focus-ring transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
         >
           <optgroup label="Quét Đa Năm (Soát xét toàn diện)">
             <option value="MULTI_3_YEARS">3 năm gần nhất ({currentYear - 2} – {currentYear})</option>
@@ -154,13 +154,13 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
       {/* 3. Loại hồ sơ */}
       {viewMode === 'FILINGS' && (
         <div className="flex items-center space-x-1.5 shrink-0">
-          <label className="font-medium text-slate-600 text-xs">
+          <label className="font-semibold text-slate-600 text-xs">
             Loại hồ sơ:
           </label>
           <select
             value={selectedTaxType}
             onChange={e => onTaxTypeChange(e.target.value as TaxType)}
-            className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus-ring focus:bg-white transition-all cursor-pointer shadow-2xs"
+            className="h-8.5 px-3 bg-slate-50 hover:bg-white border border-slate-300/90 rounded-lg font-medium text-slate-800 text-xs focus-ring transition-all cursor-pointer shadow-2xs"
           >
             <option value="ALL">Tất cả tờ khai thuế</option>
             <option value="VAT">Thuế GTGT</option>
@@ -177,17 +177,16 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
       {/* Search (chế độ GNT — thay cho toolbar riêng của bảng) */}
       {isGntMode && (
         <div className="relative flex-1 min-w-[220px] max-w-md">
-          <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2 pointer-events-none" />
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
           <input
             type="text"
             value={gntSearchValue}
             onChange={e => onGntSearchChange?.(e.target.value)}
             placeholder="Tìm GNT, mã GD, loại thuế, kỳ thuế…"
-            className="w-full h-8 pl-8 pr-3 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1.5 focus:ring-teal-600 focus:border-teal-600 transition-colors shadow-2xs"
+            className="w-full h-8.5 pl-9 pr-3 bg-slate-50 focus:bg-white border border-slate-300/90 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus-ring transition-all shadow-2xs"
           />
         </div>
       )}
-
       {/* Right: summary chips + secondary actions + CTA (canh lề bên phải) */}
       <div className="ml-auto flex flex-wrap items-center gap-2 shrink-0">
         {/* Summary: 10 GNT · Tổng nộp X đ · Chưa đối chiếu N */}
@@ -211,14 +210,13 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
             )}
           </div>
         )}
-
         {/* Thống kê (GNT mode) */}
         {isGntMode && (
           <button
             type="button"
             onClick={onOpenGntStats}
             disabled={!gntStats || gntStats.count === 0}
-            className="h-8 px-3 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium rounded-lg flex items-center space-x-1.5 transition-colors cursor-pointer shadow-2xs disabled:opacity-40"
+            className="h-8.5 px-3 bg-white border border-slate-300 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-semibold rounded-lg flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-40 btn-press"
             title="Tổng hợp tiền đã nộp theo tháng & loại thuế (GTGT/TNCN/TNDN…)"
           >
             <BarChart3 className="w-3.5 h-3.5 text-sky-700" />
@@ -232,7 +230,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
             type="button"
             onClick={onExportGntExcel}
             disabled={!gntStats || gntStats.count === 0}
-            className="h-8 px-3 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium rounded-lg flex items-center space-x-1.5 transition-colors cursor-pointer shadow-2xs disabled:opacity-40"
+            className="h-8.5 px-3 bg-white border border-slate-300 hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-semibold rounded-lg flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-40 btn-press"
             title="Xuất danh sách Giấy Nộp Tiền ra file Excel"
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
@@ -240,15 +238,15 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
           </button>
         )}
 
-        {/* Primary CTA — Nổi bật, sắc nét và đồng bộ chiều cao h-8 */}
+        {/* Primary CTA — Nổi bật, sắc nét và đồng bộ chiều cao h-8.5 */}
         <button
           type="button"
           onClick={onStartScan}
           disabled={isScanning}
-          className={`h-8 px-4 rounded-lg font-semibold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs shrink-0 select-none ${
+          className={`h-8.5 px-4.5 rounded-lg font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs shrink-0 select-none btn-press ${
             isScanning
               ? 'bg-teal-800 text-teal-100 cursor-wait border border-teal-700/60 shadow-inner'
-              : 'bg-teal-700 hover:bg-teal-600 active:bg-teal-800 active:scale-[0.98] text-white hover:shadow-sm cursor-pointer border border-teal-800/30'
+              : 'bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 active:from-teal-800 active:to-teal-700 text-white hover:shadow-sm cursor-pointer border border-teal-700/40'
           }`}
         >
           {isScanning ? (

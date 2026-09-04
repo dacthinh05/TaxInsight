@@ -425,19 +425,19 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
           (missingVatCheck?.isCompleteData === false && (missingVatCheck.missingPeriods?.length ?? 0) > 0) ||
           (missingPitCheck?.isCompleteData === false && (missingPitCheck.missingPeriods?.length ?? 0) > 0)
         ) && (
-          <div className="mx-4 my-2 p-3 bg-amber-50/90 border border-amber-200/80 rounded-lg text-[12px] text-amber-900 flex items-start space-x-2.5">
+          <div className="mx-4 my-2.5 p-3.5 bg-amber-50/90 border border-amber-200/90 rounded-xl text-xs text-amber-950 flex items-start space-x-2.5 shadow-2xs">
             <AlertTriangle className="w-4.5 h-4.5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="space-y-1 text-[12px]">
+            <div className="space-y-1 text-xs leading-relaxed">
               {missingVatCheck?.isCompleteData === false && (missingVatCheck.missingPeriods?.length ?? 0) > 0 && (
                 <div>
-                  <strong className="font-semibold text-amber-950">Đối chiếu sơ bộ: </strong>
-                  <span>GTGT ({missingVatCheck.periodType === 'MONTH' ? 'Khai tháng' : 'Khai quý'}): Chưa thấy kỳ {missingVatCheck.missingPeriods.join(', ')} trong dữ liệu đã quét.</span>
+                  <strong className="font-bold text-amber-950">Đối chiếu sơ bộ: </strong>
+                  <span>GTGT ({missingVatCheck.periodType === 'MONTH' ? 'Khai tháng' : 'Khai quý'}): Chưa thấy kỳ <strong className="font-mono">{missingVatCheck.missingPeriods.join(', ')}</strong> trong dữ liệu đã quét.</span>
                 </div>
               )}
               {missingPitCheck?.isCompleteData === false && (missingPitCheck.missingPeriods?.length ?? 0) > 0 && (
                 <div>
-                  <strong className="font-semibold text-amber-950">Đối chiếu sơ bộ: </strong>
-                  <span>TNCN ({missingPitCheck.periodType === 'MONTH' ? 'Khai tháng' : 'Khai quý'}): Chưa thấy kỳ {missingPitCheck.missingPeriods.join(', ')} trong dữ liệu đã quét.</span>
+                  <strong className="font-bold text-amber-950">Đối chiếu sơ bộ: </strong>
+                  <span>TNCN ({missingPitCheck.periodType === 'MONTH' ? 'Khai tháng' : 'Khai quý'}): Chưa thấy kỳ <strong className="font-mono">{missingPitCheck.missingPeriods.join(', ')}</strong> trong dữ liệu đã quét.</span>
                 </div>
               )}
             </div>
@@ -480,9 +480,9 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
         </div>
 
         {/* Summary status line thanh lịch phía trên table */}
-        <div className="px-4 py-2 bg-slate-50/70 border-t border-slate-200/80 flex items-center justify-between text-[12.5px] text-slate-600 font-sans">
+        <div className="px-4 py-2 bg-slate-50/80 border-t border-slate-200/80 flex items-center justify-between text-xs text-slate-600 font-sans">
           <div className="flex items-center space-x-2">
-            <span className="font-semibold text-slate-800">{filteredFilings.length} tờ khai</span>
+            <span className="font-bold text-slate-800">{filteredFilings.length} tờ khai</span>
             <span className="text-slate-300">·</span>
             <span className="text-emerald-700 font-semibold">
               {filteredFilings.filter(f => (f.status || '').toLowerCase().includes('chấp nhận')).length} đã chấp nhận
@@ -494,7 +494,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
           </div>
 
           {selectedTaxType !== 'ALL' && (
-            <div className="text-[12px] text-teal-800 font-medium bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
+            <div className="text-xs text-teal-800 font-semibold bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200 shadow-2xs">
               Đang xem {filteredFilings.length} / {counts.ALL} tờ khai
             </div>
           )}
@@ -503,7 +503,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
 
       <div className="flex-1 overflow-auto rounded-b-xl">
         <table className="w-full text-left border-collapse text-[14px]">
-          <thead className="bg-[#F8FAFC] sticky top-0 z-10 border-b border-slate-200 text-slate-700 font-semibold text-[12px] select-none">
+          <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider select-none">
             <tr>
               <th className="w-10 px-3 py-2.5 text-center">
                 <button
@@ -526,7 +526,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
               <th className="w-[140px] px-3 py-2.5">LOẠI HỒ SƠ</th>
               <th className="w-[160px] px-3 py-2.5">NGÀY NỘP</th>
               <th className="w-[150px] px-3 py-2.5">TRẠNG THÁI</th>
-              <th className="w-[68px] px-2 py-2.5 text-center sticky right-0 bg-[#F8FAFC]">XEM</th>
+              <th className="w-[68px] px-2 py-2.5 text-center sticky right-0 bg-slate-50/95">XEM</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -585,7 +585,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                 return (
                   <React.Fragment key={group.key}>
                     {/* Header Nhóm Kỳ */}
-                    <tr className="bg-slate-50/90 hover:bg-slate-100/90 text-slate-800 font-semibold border-t border-b border-slate-200/90 select-none h-[42px] transition-colors">
+                    <tr className="bg-slate-100/75 hover:bg-slate-200/50 text-slate-800 font-semibold border-t border-b border-slate-200/80 select-none h-[42px] transition-colors">
                       <td className="w-10 px-3 py-2 text-center" onClick={toggleGroup}>
                         <button type="button" className="text-slate-400 hover:text-teal-700 transition-colors flex items-center justify-center cursor-pointer">
                           {groupSelected ? <CheckSquare className="w-4 h-4 text-teal-700" /> : <Square className="w-4 h-4 text-slate-300" />}
@@ -593,18 +593,18 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                       </td>
                       <td colSpan={6} className="px-3.5 py-2">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3">
-                            <span className="font-bold text-slate-900 font-mono text-[14px]">
+                          <div className="flex items-center space-x-2.5">
+                            <span className="font-bold text-slate-900 font-mono text-[13px] bg-white px-2.5 py-0.5 rounded-md border border-slate-200 shadow-2xs">
                               ▼ {group.isNoPeriod ? group.label : `Kỳ ${group.label}`}
                             </span>
-                            <span className="text-slate-500 font-medium text-[12.5px]">
+                            <span className="text-slate-500 font-medium text-xs">
                               {group.filings.length} hồ sơ
                               {group.supplementalCount > 0 ? (
-                                <span className="text-amber-800 font-semibold ml-1.5 px-1.5 py-0.2 rounded bg-amber-50 border border-amber-200 text-[11.5px]">
+                                <span className="text-amber-800 font-semibold ml-1.5 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[11px]">
                                   Hiện hành: BS lần {group.supplementalCount}
                                 </span>
                               ) : (
-                                <span className="text-slate-600 font-semibold ml-1.5 px-1.5 py-0.2 rounded bg-slate-100 border border-slate-200 text-[11.5px]">
+                                <span className="text-slate-600 font-semibold ml-1.5 px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-[11px]">
                                   Hiện hành: Chính thức
                                 </span>
                               )}

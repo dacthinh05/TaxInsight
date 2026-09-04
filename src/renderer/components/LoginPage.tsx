@@ -264,12 +264,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4 select-none">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-100 via-slate-50 to-teal-50/25 p-4 select-none">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-floating border border-slate-200/90 overflow-hidden">
         
         {/* Header */}
         <div className="px-8 pt-8 pb-3 text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-slate-50 border border-slate-200 mb-3 shadow-2xs p-1">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-teal-950/85 border border-teal-600/30 mb-3 shadow-xs p-2.5">
             <img
               src={appIconUrl}
               alt="TaxInsight Logo"
@@ -278,10 +278,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             />
           </div>
           <div className="flex items-center justify-center space-x-2">
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 font-sans">TaxInsight</h1>
-            <span className="text-xs text-slate-400 font-normal">v{appVersion}</span>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900 font-sans">TaxInsight</h1>
+            <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-teal-50 text-teal-700 border border-teal-200">v{appVersion}</span>
           </div>
-          <p className="text-xs text-slate-500 font-normal mt-1">
+          <p className="text-xs text-slate-500 font-medium mt-1">
             Hệ Thống Soát Xét & Đối Chiếu Hồ Sơ Thuế Điện Tử
           </p>
         </div>
@@ -606,7 +606,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           <button
             type="submit"
             disabled={isSubmitting || isLoadingCaptcha || !captchaImg}
-            className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold rounded-lg text-sm shadow-xs transition-colors flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer"
+            className="w-full py-2.5 bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 active:from-teal-800 active:to-teal-700 text-white font-bold rounded-xl text-sm shadow-xs transition-all flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer btn-press border border-teal-700/40"
           >
             {isSubmitting ? (
               <>

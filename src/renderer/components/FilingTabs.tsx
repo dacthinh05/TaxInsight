@@ -41,9 +41,9 @@ export const FilingTabs: React.FC<FilingTabsProps> = ({
   }
 
   return (
-    <div className="flex items-center justify-between border-b border-slate-200/90 px-5 bg-slate-50/40 select-none">
-      {/* Segmented Underline Tabs - Kích thước lớn hơn, sang trọng và dễ bấm */}
-      <div className="flex items-center space-x-7 overflow-x-auto no-scrollbar">
+    <div className="flex items-center justify-between border-b border-slate-200/90 px-5 bg-slate-50/60 select-none">
+      {/* Segmented Underline Tabs - Kích thước chuẩn, sang trọng và dễ bấm */}
+      <div className="flex items-center space-x-6 overflow-x-auto no-scrollbar">
         {tabs.map(tab => {
           const isActive = selectedTab === tab.key;
           return (
@@ -51,30 +51,30 @@ export const FilingTabs: React.FC<FilingTabsProps> = ({
               key={tab.key}
               type="button"
               onClick={() => onTabChange(tab.key)}
-              className={`py-3.5 text-[13.5px] font-medium transition-colors relative flex items-center space-x-2 cursor-pointer shrink-0 ${
+              className={`py-3 text-[13px] font-semibold transition-all relative flex items-center space-x-2 cursor-pointer shrink-0 ${
                 isActive
-                  ? 'text-teal-900 font-bold'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/50'
+                  ? 'text-teal-900'
+                  : 'text-slate-500 hover:text-slate-800'
               }`}
             >
               <span className="tracking-tight">{tab.label}</span>
               {tab.count > 0 && (
                 <span
-                  className={`text-xs font-mono tabular-nums px-2 py-0.5 rounded-full ${
-                    isActive ? 'bg-teal-100/80 text-teal-900 font-bold' : 'bg-slate-200/70 text-slate-600 font-medium'
+                  className={`text-[11px] font-mono tabular-nums px-2 py-0.5 rounded-full transition-colors ${
+                    isActive
+                      ? 'bg-teal-100 text-teal-800 font-bold border border-teal-200/60'
+                      : 'bg-slate-200/70 text-slate-600 font-medium'
                   }`}
                 >
                   {tab.count}
                 </span>
               )}
               {isActive && (
-                <div className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-teal-700 rounded-full" />
+                <div className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-teal-700 rounded-full shadow-xs" />
               )}
             </button>
           );
         })}
-
-        {/* Core v2.0: Phân loại theo sắc thuế tờ khai */}
       </div>
     </div>
   );

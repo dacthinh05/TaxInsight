@@ -81,23 +81,28 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   }, [session.isLoggedIn]);
 
   return (
-    <header className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 z-40 select-none shrink-0">
+    <header className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 z-40 select-none shrink-0 shadow-xs">
       {/* 1. Left Branding: Logo + Tên ứng dụng + MST */}
       <div className="flex items-center space-x-2.5 shrink-0">
-        <img
-          src="/icon.svg"
-          alt="TaxInsight Logo"
-          className="w-7 h-7 rounded-lg shadow-xs shrink-0 object-contain"
-          onError={(e) => {
-            (e.currentTarget as HTMLElement).style.display = 'none';
-          }}
-        />
+        <div className="w-7 h-7 rounded-lg bg-teal-950/80 border border-teal-600/30 flex items-center justify-center p-1 shadow-xs shrink-0">
+          <img
+            src="/icon.svg"
+            alt="TaxInsight Logo"
+            className="w-full h-full object-contain"
+            onError={(e) => {
+              (e.currentTarget as HTMLElement).style.display = 'none';
+            }}
+          />
+        </div>
         <div className="flex items-center space-x-2 whitespace-nowrap">
           <div className="flex items-center space-x-1.5">
             <h1 className="text-sm font-bold text-white tracking-tight">TaxInsight</h1>
+            <span className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-teal-500/15 text-teal-300 border border-teal-500/25 tracking-wider uppercase">
+              Pro
+            </span>
             <span
               onClick={handleVersionClick}
-              className="text-xs text-slate-400 font-normal hover:text-teal-300 transition-colors cursor-pointer select-none"
+              className="text-xs text-slate-400 font-normal hover:text-teal-300 transition-colors cursor-pointer select-none ml-0.5"
               title="Nhấp 5 lần để mở API Inspector (Admin / Dev)"
             >
               v{appVersion}
@@ -110,14 +115,13 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               <button
                 type="button"
                 onClick={() => setIsSwitchMenuOpen(!isSwitchMenuOpen)}
-                className="text-[11.5px] font-mono flex items-center space-x-1 pl-2 pr-1.5 py-0.5 border-l border-slate-700/80 hover:bg-slate-800/80 rounded transition-colors cursor-pointer"
+                className="text-[11.5px] font-mono flex items-center space-x-1 px-2 py-0.5 border border-slate-700/80 hover:border-slate-600 hover:bg-slate-800/80 rounded-md transition-all cursor-pointer bg-slate-950/40"
                 title="Bấm để đổi nhanh sang Mã số thuế khác"
               >
                 <span className="text-slate-400 font-sans text-[10.5px]">MST:</span>
                 <span className="text-teal-400 font-bold tracking-wide">{session.taxCode}</span>
                 <span className="text-slate-400 text-[10px] ml-0.5">▾</span>
               </button>
-
               {/* Dropdown Menu Đổi Nhanh MST */}
               {isSwitchMenuOpen && (
                 <div
@@ -193,41 +197,41 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
 
       {/* Center Segmented View Switcher (Core v2.0: Tờ khai & Hồ sơ, Nghĩa vụ theo tờ khai) */}
       {session.isLoggedIn && (
-        <div className="flex items-center bg-slate-800/90 p-1 rounded-lg border border-slate-700/80 text-xs shrink-0 whitespace-nowrap">
+        <div className="flex items-center bg-slate-950/80 p-0.5 rounded-lg border border-slate-800 text-xs shrink-0 whitespace-nowrap shadow-inner">
           <button
             type="button"
             onClick={() => onViewModeChange('FILINGS')}
-            className={`px-3 py-1 rounded-md font-medium transition-all flex items-center space-x-1.5 cursor-pointer ${
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 cursor-pointer ${
               viewMode === 'FILINGS'
-                ? 'bg-[#087F74] text-white shadow-xs'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-teal-700 text-white shadow-xs'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            <FileText className="w-3.5 h-3.5" />
+            <FileText className="w-3.5 h-3.5 shrink-0" />
             <span>Tờ khai & Hồ sơ</span>
           </button>
           <button
             type="button"
             onClick={() => onViewModeChange('PAYMENT_SLIPS')}
-            className={`px-3 py-1 rounded-md font-medium transition-all flex items-center space-x-1.5 cursor-pointer ${
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 cursor-pointer ${
               viewMode === 'PAYMENT_SLIPS'
-                ? 'bg-[#087F74] text-white shadow-xs'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-teal-700 text-white shadow-xs'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            <CreditCard className="w-3.5 h-3.5" />
+            <CreditCard className="w-3.5 h-3.5 shrink-0" />
             <span>Giấy nộp tiền</span>
           </button>
           <button
             type="button"
             onClick={() => onViewModeChange('OBLIGATIONS')}
-            className={`px-3 py-1 rounded-md font-medium transition-all flex items-center space-x-1.5 cursor-pointer ${
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 cursor-pointer ${
               viewMode === 'OBLIGATIONS'
-                ? 'bg-[#087F74] text-white shadow-xs'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-teal-700 text-white shadow-xs'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            <Scale className="w-3.5 h-3.5" />
+            <Scale className="w-3.5 h-3.5 shrink-0" />
             <span>Nghĩa vụ theo tờ khai</span>
           </button>
         </div>

@@ -503,6 +503,7 @@ export class VatFlowEngine {
       let discrepancy: bigint | null = null;
       let flowNote = 'Dòng chuyển kỳ khớp đúng';
 
+      const prevPeriodCarryForward = runningPrevCarryForward;
       if (runningPrevCarryForward !== null) {
         const diff = fin.ct22_thueDauVaoKyTruoc - runningPrevCarryForward;
         if (diff === 0n) {
@@ -521,7 +522,6 @@ export class VatFlowEngine {
       }
 
       runningPrevCarryForward = fin.ct43_thueKhauTruChuyenKySau;
-
       const suppChanges: Array<{
         indicator: string;
         label: string;
@@ -583,7 +583,7 @@ export class VatFlowEngine {
         semanticState,
         flowCheck: {
           status: flowStatus,
-          previousCarryForward: runningPrevCarryForward !== null ? (fin.ct22_thueDauVaoKyTruoc - (discrepancy || 0n)) : null,
+          previousCarryForward: prevPeriodCarryForward,
           currentOpening: fin.ct22_thueDauVaoKyTruoc,
           discrepancy,
           note: flowNote
