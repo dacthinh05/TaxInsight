@@ -1,5 +1,5 @@
 # BÁO CÁO KIỂM TOÁN HỆ THỐNG, CẤU TRÚC VÀ SƠ ĐỒ XỬ LÝ MODULE
-# TAXINSIGHT (v3.1.0) — EVIDENCE-GRADE AUDIT REPORT
+# TAXINSIGHT (v3.1.1) — EVIDENCE-GRADE AUDIT REPORT
 
 **Thời điểm kiểm toán:** 2026-09-04  
 **Phạm vi:** Toàn bộ kiến trúc mã nguồn (`src/main`, `src/preload`, `src/renderer`, `src/shared`, `tests`)  
@@ -10,7 +10,7 @@
 ## 1. TỔNG QUAN KIỂM TOÁN & VERDICT HỆ THỐNG
 
 ### 1.1. Kết Quả Kiểm Thử Kỹ Thuật (Test & Build Status)
-- **Kiểm thử tự động (Vitest v3.2.7):** **55/55 Test Suites Passed (100%)** — **455/455 Test Cases Passed (100%)**, thời gian thực thi ~17.6s.
+- **Kiểm thử tự động (Vitest v3.2.7):** **58/58 Test Suites Passed (100%)** — **498/498 Test Cases Passed (100%)**, thời gian thực thi ~24.3s.
 - **Biên dịch TypeScript (`tsc --noEmit` & `tsc -p tsconfig.electron.json --noEmit`):** **0 Lỗi**, type-safe tuyệt đối trên cả 3 tầng (Main, Preload, Renderer).
 - **Đóng gói Production (`npm run build`):** Vite v6.4.3 build thành công toàn bộ bundle frontend và electron bundle.
 - **Độ tin cậy số liệu thuế:** Toàn bộ phép tính số học tiền tệ và nghĩa vụ thuế được thực thi trên kiểu dữ liệu `BigInt` và các hàm tiện ích trong `moneyUtils.ts`, triệt tiêu hoàn toàn rủi ro sai lệch số thập phân (floating-point precision issues).
