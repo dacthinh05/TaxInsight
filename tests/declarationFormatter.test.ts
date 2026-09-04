@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDeclarationValue } from '../src/shared/declarationFormatter';
+import { formatDeclarationValue, getTaxTypeLabel } from '../src/shared/declarationFormatter';
 
 describe('Declaration Formatter Presentation Layer', () => {
   it('1. Formats money in VND with dot separators and currency symbol', () => {
@@ -104,5 +104,122 @@ describe('Declaration Formatter Presentation Layer', () => {
       value: '20000000'
     });
     expect(vat1.group).toBe('HÀNG HÓA, DỊCH VỤ MUA VÀO (ĐẦU VÀO)');
+  });
+
+  it('5. Handles empty, null, or dash values gracefully', () => {
+    expect(formatDeclarationValue({ label: 'Mục 1', value: '' }).formattedValue).toBe('—');
+    expect(formatDeclarationValue({ label: 'Mục 2', value: '—' }).formattedValue).toBe('—');
+    expect(formatDeclarationValue({ label: 'Mục 3', value: '-' }).formattedValue).toBe('—');
+    expect(formatDeclarationValue({ label: 'Mục 4', value: undefined as unknown as string }).formattedValue).toBe('—');
+  });
+
+  it('6. Formats percentage values and checks anomaly (>100%)', () => {
+    const normal = formatDeclarationValue({
+      label: 'Tỷ lệ phân bổ',
+      value: '10',
+      unit: '%'
+    });
+    expect(normal.type).toBe('percentage');
+    expect(normal.formattedValue).toBe('10%');
+    expect(normal.isAnomaly).toBe(false);
+
+    const anomaly = formatDeclarationValue({
+      label: 'Tỷ lệ thuế',
+      value: '150',
+      type: 'percentage'
+    });
+    expect(anomaly.formattedValue).toBe('150%');
+    expect(anomaly.isAnomaly).toBe(true);
+  });
+
+  it('7. Formats integer values with custom unit or default', () => {
+    const intWithUnit = formatDeclarationValue({
+      code: 'COUNT',
+      label: 'Số lượng hóa đơn',
+      value: '1250',
+      type: 'integer',
+      unit: 'tờ'
+    });
+    expect(intWithUnit.formattedValue).toBe('1.250 tờ');
+    expect(intWithUnit.type).toBe('integer');
+  });
+
+  it('8. Infers groups for sales, tax obligations, and fallback', () => {
+    const sales = formatDeclarationValue({
+      code: '[34]',
+      label: 'Hàng hóa bán ra chịu thuế 10%',
+      value: '1000000'
+    });
+    expect(sales.group).toBe('HÀNG HÓA, DỊCH VỤ BÁN RA (ĐẦU RA)');
+
+    const obligation = formatDeclarationValue({
+      code: '[40]',
+      label: 'Thuế GTGT còn phải nộp',
+      value: '500000'
+    });
+    expect(obligation.group).toBe('NGHĨA VỤ THUẾ TRONG KỲ');
+
+    const fallback = formatDeclarationValue({
+      code: 'OTHER',
+      label: 'Chỉ tiêu phụ',
+      value: '123'
+    });
+    expect(fallback.group).toBe('CHỈ TIÊU KÊ KHAI CHÍNH');
+  });
+});
+
+describe('getTaxTypeLabel', () => {
+  it('classifies refund taxes', () => {
+    const refund = getTaxTypeLabel('REFUND', '01/HT-GTGT');
+    expect(refund.vietnameseName).toBe('Hoàn thuế GTGT');
+    expect(refund.shortLabel).toBe('Hoàn thuế');
+    expect(refund.badgeClass).toContain('teal');
+  });
+
+  it('classifies VAT declarations', () => {
+    const vat = getTaxTypeLabel('VAT', '01/GTGT');
+    expect(vat.vietnameseName).toBe('Thuế GTGT');
+    expect(vat.shortLabel).toBe('GTGT');
+    expect(vat.badgeClass).toContain('emerald');
+  });
+
+  it('classifies PIT declarations', () => {
+    const pit = getTaxTypeLabel('PIT', '05/KK-TNCN');
+    expect(pit.vietnameseName).toBe('Thuế TNCN');
+    expect(pit.shortLabel).toBe('TNCN');
+    expect(pit.badgeClass).toContain('blue');
+  });
+
+  it('classifies CIT declarations', () => {
+    const cit = getTaxTypeLabel('CIT', '03/TNDN');
+    expect(cit.vietnameseName).toBe('Thuế TNDN');
+    expect(cit.shortLabel).toBe('TNDN');
+    expect(cit.badgeClass).toContain('purple');
+  });
+
+  it('classifies FCT declarations', () => {
+    const fct = getTaxTypeLabel('FCT', '01/NTNN');
+    expect(fct.vietnameseName).toBe('Thuế Nhà thầu');
+    expect(fct.shortLabel).toBe('Nhà thầu');
+    expect(fct.badgeClass).toContain('rose');
+  });
+
+  it('classifies house and land taxes', () => {
+    const hl = getTaxTypeLabel('HOUSE_LAND', '01/SDĐPNN');
+    expect(hl.vietnameseName).toBe('Thuế Nhà đất');
+    expect(hl.shortLabel).toBe('Nhà đất');
+    expect(hl.badgeClass).toContain('amber');
+  });
+
+  it('classifies reports and invoices', () => {
+    const rpt = getTaxTypeLabel('REPORT', 'BC26/AC');
+    expect(rpt.vietnameseName).toBe('Báo cáo / Hóa đơn');
+    expect(rpt.shortLabel).toBe('Báo cáo');
+  });
+
+  it('falls back to default for unrecognized declaration', () => {
+    const def = getTaxTypeLabel('UNKNOWN', 'XYZ');
+    expect(def.vietnameseName).toBe('Thủ tục / Khác');
+    expect(def.shortLabel).toBe('Khác');
   });
 });
