@@ -377,13 +377,13 @@ export class DownloadManager extends EventEmitter {
 
       let payload: any = null;
       try {
-        // Hồ sơ thuế VAT/PIT/... thường do eTax phát hành dù vẫn xuất hiện
-        // trong bảng DVC; ưu tiên eTax để tránh validateIdTkhai=400 và HTTP 500.
-        const isLegacyFiling =
+        // Ưu tiên tải từ Cổng DVC trước cho tất cả các hồ sơ.
+        // Chỉ ưu tiên eTax trước khi hồ sơ đến trực tiếp từ nguồn tra cứu eTax hoặc đã có messageId sẵn.
+        const isDirectEtaxSource =
           item.filing.source === 'dvc-etax-html' ||
-          Boolean(item.filing.messageId) ||
-          ['VAT', 'PIT', 'CIT', 'FCT', 'OTHER'].includes(item.filing.taxType);
-        if (isLegacyFiling && this.legacyClient) {
+          Boolean(item.filing.messageId);
+
+        if (isDirectEtaxSource && this.legacyClient) {
           try {
             const legacyFile = item.filing.messageId
               ? await this.legacyClient.downloadFiling(item.filing.messageId, itemController.signal)
@@ -407,7 +407,6 @@ export class DownloadManager extends EventEmitter {
             console.warn(`[DownloadManager] Không tải được qua eTax (${etaxErr?.message}), chuyển sang Cổng DVC`);
           }
         }
-
         if (!payload) {
           try {
             payload = await this.client.downloadHoSo(
@@ -425,7 +424,7 @@ export class DownloadManager extends EventEmitter {
           } catch (dvcErr: unknown) {
             // Khi Cổng DVC báo lỗi (ví dụ HTTP 500 hoặc validateIdTkhai "400" do hồ sơ nộp qua eTax),
             // tự động fallback sang phân hệ eTax để lấy tệp XML/PDF gốc.
-            if (this.legacyClient && (item.filing.isThueDienTu || ['PIT', 'VAT', 'CIT', 'FCT', 'OTHER'].includes(item.filing.taxType))) {
+            if (this.legacyClient && !isDirectEtaxSource) {
               try {
                 const legacyFile = await this.legacyClient.resolveAndDownloadFiling(
                   this.taxCode,

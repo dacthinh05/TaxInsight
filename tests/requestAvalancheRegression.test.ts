@@ -200,9 +200,10 @@ describe('Request avalanche and missing-XML regressions', () => {
   it.each([
     ['VAT', VatAnalyticsEngine],
     ['PIT', PitAnalyticsEngine]
-  ] as const)('prefers eTax resolution for current %s declarations when DVC metadata is present', async (taxType, Engine) => {
+  ] as const)('prefers DVC download first and falls back to eTax %s when DVC fails', async (taxType, Engine) => {
+    const dvcBuffer = Buffer.from('<?xml version="1.0"?><HSoThueDTu><maTKhai>01</maTKhai></HSoThueDTu>');
     const currentClient = {
-      downloadHoSo: vi.fn()
+      downloadHoSo: vi.fn().mockRejectedValue(new Error('DVC validation 400'))
     };
     const legacyBuffer = Buffer.from('<?xml version="1.0"?><HSoThueDTu><maTKhai>01</maTKhai></HSoThueDTu>');
     const legacyClient = {
@@ -226,8 +227,8 @@ describe('Request avalanche and missing-XML regressions', () => {
     const result = await (engine as any).downloadHoSoWithRetry(filing);
 
     expect(Buffer.from(result.content, 'base64')).toEqual(legacyBuffer);
+    expect(currentClient.downloadHoSo).toHaveBeenCalledTimes(1);
     expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledWith('', filing);
-    expect(currentClient.downloadHoSo).not.toHaveBeenCalled();
   });
   it('keeps all PIT filings as explicit unavailable snapshots after a rate-limit stop', async () => {
     const rateLimitError = Object.assign(new Error('HTTP 429 Too Many Requests'), {
@@ -251,9 +252,9 @@ describe('Request avalanche and missing-XML regressions', () => {
   it.each([
     ['VAT', VatAnalyticsEngine],
     ['PIT', PitAnalyticsEngine]
-  ] as const)('does not fall back to DVC when eTax %s download throws RATE_LIMIT or 429', async (taxType, Engine) => {
+  ] as const)('does not repeat eTax fallback when eTax throws RATE_LIMIT or 429 after DVC failure', async (taxType, Engine) => {
     const currentClient = {
-      downloadHoSo: vi.fn()
+      downloadHoSo: vi.fn().mockRejectedValue(new Error('DVC 500 error'))
     };
     const rateLimitError = Object.assign(new Error('HTTP 429 Too Many Requests'), {
       code: 'RATE_LIMIT',
@@ -274,8 +275,8 @@ describe('Request avalanche and missing-XML regressions', () => {
     };
 
     await expect((engine as any).downloadHoSoWithRetry(filing)).rejects.toThrow('HTTP 429 Too Many Requests');
+    expect(currentClient.downloadHoSo).toHaveBeenCalledTimes(1);
     expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledWith('', filing);
-    expect(currentClient.downloadHoSo).not.toHaveBeenCalled();
   });
 
   it('VAT buildSummaryFromSnapshots picks the last valid XML snapshot as finalSnapshot when a supplemental filing failed', () => {

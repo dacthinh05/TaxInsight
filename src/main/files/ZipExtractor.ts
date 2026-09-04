@@ -182,7 +182,7 @@ export class ZipExtractor {
     }
 
     const prefixCode = (filing.declarationCode || filing.procedureCode || 'TKHAI').replace(/[\/\\]/g, '-');
-    const rawPeriodText = filing.period || filing.periodNormalized?.raw || 'KhongKy';
+    const rawPeriodText = filing.period || filing.periodNormalized?.raw || 'KhongTheoKy';
     const cleanPeriod = rawPeriodText
       .replace(/[\/\s:]/g, '-')
       .normalize('NFD')

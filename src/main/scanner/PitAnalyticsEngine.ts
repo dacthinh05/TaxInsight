@@ -448,10 +448,9 @@ export class PitAnalyticsEngine {
   }
   private async downloadHoSoWithRetry(filing: TaxFiling, maxRetries = 3): Promise<{ fileName: string; fileType: string; content: string }> {
     let lastErr: unknown;
-    const etaxTaxTypes: Record<string, true> = { VAT: true, PIT: true, CIT: true, FCT: true, OTHER: true };
     const shouldTryLegacyFirst = Boolean(
       this.legacyClient &&
-      (filing.source === 'dvc-etax-html' || Boolean(filing.messageId) || etaxTaxTypes[filing.taxType] === true)
+      (filing.source === 'dvc-etax-html' || Boolean(filing.messageId))
     );
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
