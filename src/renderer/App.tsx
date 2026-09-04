@@ -573,6 +573,12 @@ export const App: React.FC = () => {
         setFilingsByYear(prev => ({ ...prev, [selectedYear]: combinedFilings }));
         setMissingVat(res.data.missingVatCheck);
         setMissingPit(res.data.missingPitCheck);
+      } else if (res?.data?.filings && res.data.filings.length > 0) {
+        combinedFilings = [...res.data.filings];
+        setFilings(combinedFilings);
+        setFilingsByYear(prev => ({ ...prev, [selectedYear]: combinedFilings }));
+        setMissingVat(res.data.missingVatCheck);
+        setMissingPit(res.data.missingPitCheck);
       }
 
       // 2. Tiếp tục nạp phân hệ eTax và stream cập nhật ngay khi có kết quả

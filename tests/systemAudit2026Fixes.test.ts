@@ -107,4 +107,45 @@ describe('SYSTEM AUDIT 2026 — Regression Suite for Fixed Bugs', () => {
       expect(expectedTo).toBe(`31/12/${currentYear}`);
     });
   });
+
+  describe('Fix: PaginationResolver preserves collected filings on timeout', () => {
+    const range: DateRange = {
+      fromDate: '01/01/2026',
+      toDate: '31/12/2026',
+      label: 'Cả năm 2026',
+      level: 'YEAR'
+    };
+
+    it('returns collected filings and flags needSplitRange when page 2 times out', async () => {
+      const initialFilings: TaxFiling[] = [
+        { id: 'F1', title: 'Tờ khai 1', taxType: 'OTHER', filingType: 'ORIGINAL', downloadAvailable: true },
+        { id: 'F2', title: 'Tờ khai 2', taxType: 'OTHER', filingType: 'ORIGINAL', downloadAvailable: true }
+      ];
+
+      const timeoutError = new Error('Hết thời gian chờ phản hồi từ Cổng Thuế (Timeout)');
+      (timeoutError as unknown as { code: string }).code = 'ECONNABORTED';
+
+      const mockClient = {
+        searchFilings: () => Promise.reject(timeoutError)
+      };
+
+      const resolver = new PaginationResolver(mockClient as unknown as import('../src/main/portal/TaxPortalClient').TaxPortalClient, undefined, {
+        pageDelayMs: 0,
+        recoveryDelayMs: 0
+      });
+
+      const result = await resolver.resolveAllPagesForRange(
+        range,
+        'CAPTCHA_123',
+        initialFilings,
+        true,
+        {}
+      );
+
+      expect(result.isFullyRetrieved).toBe(false);
+      expect(result.filings).toHaveLength(2);
+      expect(result.filings[0].id).toBe('F1');
+      expect(result.needSplitRange).toBe(true);
+    });
+  });
 });
