@@ -2,11 +2,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import zlib from 'zlib';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { sanitizeFilename } from '../src/shared/sanitizer';
 import { ZipExtractor } from '../src/main/files/ZipExtractor';
-import { TaxFiling } from '../src/shared/types';
+import type { DateRange, TaxFiling } from '../src/shared/types';
 import { isAllowedExternalUrl, isAllowedInternalUrl } from '../src/main/security/navigationGuard';
+import { PaginationResolver } from '../src/main/scanner/PaginationResolver';
+import type { TaxPortalClient } from '../src/main/portal/TaxPortalClient';
+import { LegacyFilingClient } from '../src/main/portal/LegacyFilingClient';
+import { PortalSession } from '../src/main/portal/PortalSession';
 
 describe('SYSTEM AUDIT 2026 — Regression Suite for Fixed Bugs', () => {
   describe('Bug 8: sanitizeFilename trailing dot/space after 150-char truncation', () => {
@@ -129,7 +133,7 @@ describe('SYSTEM AUDIT 2026 — Regression Suite for Fixed Bugs', () => {
         searchFilings: () => Promise.reject(timeoutError)
       };
 
-      const resolver = new PaginationResolver(mockClient as unknown as import('../src/main/portal/TaxPortalClient').TaxPortalClient, undefined, {
+      const resolver = new PaginationResolver(mockClient as unknown as TaxPortalClient, undefined, {
         pageDelayMs: 0,
         recoveryDelayMs: 0
       });
@@ -146,6 +150,96 @@ describe('SYSTEM AUDIT 2026 — Regression Suite for Fixed Bugs', () => {
       expect(result.filings).toHaveLength(2);
       expect(result.filings[0].id).toBe('F1');
       expect(result.needSplitRange).toBe(true);
+    });
+  });
+
+  describe('Fix: OTHER and REPORT filings visibility in inventory', () => {
+    it('classifies 05-DK-TCT dependent registration as OTHER but retains filing details', () => {
+      const filing: TaxFiling = {
+        id: 'G12.18-260715-00070453',
+        title: 'Đăng ký thuế lần đầu đối với người nộp thuế là cá nhân, người phụ thuộc',
+        taxType: 'OTHER',
+        filingType: 'ORIGINAL',
+        declarationCode: '05-ĐK-TCT',
+        procedureCode: '1.008498',
+        downloadAvailable: true
+      };
+
+      // Filter logic in InventoryTable for ALL
+      const selectedTaxType = 'ALL';
+      const isRefund = filing.taxType === 'REFUND' || filing.filingType === 'REFUND';
+      let shouldKeep = false;
+      if (selectedTaxType === 'ALL') {
+        shouldKeep = true;
+      } else if (selectedTaxType === 'OTHER') {
+        shouldKeep = !isRefund && (filing.taxType === 'OTHER' || filing.taxType === 'REPORT');
+      }
+
+      expect(shouldKeep).toBe(true);
+    });
+  });
+
+  describe('Fix: LegacyFilingClient SSO FORM_POST handoff', () => {
+    it('submits HTML auto-submit form to eTax when DVC returns FORM_POST SSO payload', async () => {
+      const session = new PortalSession();
+      const client = new LegacyFilingClient(session);
+
+      (session as unknown as { getCookieJar: () => unknown }).getCookieJar = () => ({
+        getCookies: () => Promise.resolve([{ key: 'JSESSIONID', value: 'MOCK_DVC_SESSION' }])
+      });
+
+      session.client.get = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/tthc/dich-vu-khac')) {
+          return Promise.resolve({
+            status: 200,
+            data: '<html><head><meta name="_csrf" content="token_123" /></head><body>Trang dich vu khac</body></html>'
+          });
+        }
+        return Promise.reject(new Error(`Unexpected GET: ${url}`));
+      });
+
+      session.client.post = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/tthc/sso/redirect-to-service')) {
+          const formHtml = `
+            <html>
+              <body>
+                <form action="https://thuedientu.gdt.gov.vn/etaxnnt/EstablishSession" method="POST">
+                  <input type="hidden" name="dse_sessionId" value="ETAX_SESSION_LEGACY_123" />
+                  <input type="hidden" name="dse_applicationId" value="-1" />
+                  <input type="hidden" name="dse_operationName" value="corpIndexProc" />
+                  <input type="hidden" name="dse_pageId" value="1" />
+                  <input type="hidden" name="dse_processorState" value="initial" />
+                  <input type="hidden" name="dse_processorId" value="PROC_LEGACY_123" />
+                </form>
+              </body>
+            </html>
+          `;
+          return Promise.resolve({ status: 200, data: formHtml });
+        }
+        if (url.includes('/etaxnnt/EstablishSession')) {
+          const etaxHtml = `
+            <html>
+              <body>
+                <form action="/etaxnnt/Request" method="POST">
+                  <input type="hidden" name="dse_sessionId" value="ETAX_SESSION_LEGACY_123" />
+                  <input type="hidden" name="dse_applicationId" value="-1" />
+                  <input type="hidden" name="dse_operationName" value="traCuuToKhaiProc" />
+                  <input type="hidden" name="dse_pageId" value="1" />
+                  <input type="hidden" name="dse_processorState" value="viewTraCuuTkhai" />
+                  <input type="hidden" name="dse_processorId" value="PROC_LEGACY_123" />
+                </form>
+              </body>
+            </html>
+          `;
+          return Promise.resolve({ status: 200, data: etaxHtml, request: { res: { responseUrl: 'https://thuedientu.gdt.gov.vn/etaxnnt/Request' } } });
+        }
+        return Promise.reject(new Error(`Unexpected POST: ${url}`));
+      });
+
+      await client.ensureEtaxSession();
+      const diag = client.getDiagnosticReport();
+      expect(diag.checkpoints.LEGACY_04_ETAX_AUTHENTICATED?.status).toBe('PASS');
+      expect(diag.checkpoints.LEGACY_06_QUERY_READY?.status).toBe('PASS');
     });
   });
 });

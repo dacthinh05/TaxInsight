@@ -74,7 +74,7 @@
       "repo": "TaxInsight"
     },
     "directories": {
-      "output": "release-v308",
+      "output": "../TaxInsight-Releases-Update",
       "buildResources": "build"
     },
     "files": [

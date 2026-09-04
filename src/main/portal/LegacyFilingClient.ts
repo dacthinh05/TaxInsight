@@ -208,12 +208,30 @@ export class LegacyFilingClient {
       );
 
       let redirectUrl = '';
+      let ssoResponseHtml = '';
       const resData = ssoRes.data;
       const resDataStr = typeof resData === 'string' ? resData : JSON.stringify(resData || '');
       const finalUrl = (ssoRes.request as any)?.res?.responseUrl || '';
 
+      const ssoForm = this.extractMainForm(resDataStr);
       if (finalUrl && finalUrl.includes('thuedientu.gdt.gov.vn')) {
+        ssoResponseHtml = resDataStr;
         redirectUrl = finalUrl;
+      } else if (ssoForm && (ssoForm.action.includes('thuedientu.gdt.gov.vn') || ssoForm.action.includes('EstablishSession') || ssoForm.action.includes('/etaxnnt/'))) {
+        redirectUrl = this.resolveEtaxUrl(ssoForm.action.replace(/\\u0026/g, '&').replace(/&amp;/g, '&'), PORTAL_CONFIG.ETAX_BASE_URL);
+        const postParams = new URLSearchParams(ssoForm.fields);
+        const etaxPostRes = await this.session.client.post(redirectUrl, postParams.toString(), {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://dichvucong.gdt.gov.vn',
+            'Referer': 'https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+          },
+          timeout: 20000,
+          maxRedirects: 5
+        });
+        ssoResponseHtml = String(etaxPostRes.data || '');
+        redirectUrl = (etaxPostRes.request as any)?.res?.responseUrl || redirectUrl;
       } else {
         const match = resDataStr.match(/https?:\/\/[^\s"'<>]+thuedientu\.gdt\.gov\.vn[^\s"'<>]+/i);
         if (match) {
@@ -238,18 +256,24 @@ export class LegacyFilingClient {
       this.logCheckpoint('LEGACY_03_ETAX_ORIGIN_REACHED', 'PASS', 'Nhận URL điều hướng eTax');
 
       // ── CHECKPOINT 03 & 04: Đi theo chuỗi điều hướng SSO của eTax ───────
-      const etaxInitRes = await this.session.client.get(redirectUrl, {
-        headers: {
-          'Referer': 'https://dichvucong.gdt.gov.vn/',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
-        },
-        timeout: 20000,
-        maxRedirects: 5
-      });
-
-      const initHtml = String(etaxInitRes.data || '');
+      let initHtml = ssoResponseHtml;
+      if (!initHtml) {
+        const etaxInitRes = await this.session.client.get(redirectUrl, {
+          headers: {
+            'Referer': 'https://dichvucong.gdt.gov.vn/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+          },
+          timeout: 20000,
+          maxRedirects: 5
+        });
+        initHtml = String(etaxInitRes.data || '');
+      }
       await this.followRedirectChain(initHtml, redirectUrl, activeGeneration);
       this.assertGeneration(activeGeneration);
+
+      if (!this.isLookupReady() && this.currentFormState.dseSessionId) {
+        await this.openLookupModule(activeGeneration);
+      }
 
       if (!this.isLookupReady()) {
         if (this.currentFormState.dseSessionId) {
@@ -354,33 +378,45 @@ export class LegacyFilingClient {
         if (redirectTarget && !redirectTarget.toLowerCase().startsWith('javascript')) {
           nextUrl = this.resolveEtaxUrl(clean(redirectTarget), currentUrl);
           nextMethod = 'GET';
-        } else if (
-          this.currentFormState.dseSessionId &&
-          (this.currentFormState.actionUrl || Object.keys(this.currentFormState.hiddenFields).length > 0 || currentHtml.includes('dse_sessionId'))
-        ) {
-          // Form auto-submit
-          const fields = { ...this.currentFormState.hiddenFields };
-          // Kiểm tra xem script có đổi dse_operationName sang traCuuToKhaiProc không
-          const scriptOp = currentHtml.match(/dse_operationName(?:\.value)?\s*=\s*["']([^"']+)["']/i);
-          if (scriptOp) {
-            fields['dse_operationName'] = scriptOp[1];
+        } else {
+          const form = this.extractMainForm(currentHtml);
+          if (form && (form.autoSubmit || currentHtml.includes('dse_sessionId')) && Object.keys(form.fields).length > 0) {
+            const fields = { ...this.currentFormState.hiddenFields, ...form.fields };
+            const scriptOp = currentHtml.match(/dse_operationName(?:\.value)?\s*=\s*["']([^"']+)["']/i);
+            if (scriptOp) {
+              fields['dse_operationName'] = scriptOp[1];
+            }
+            const menuMatch = currentHtml.match(/goProc\s*\(\s*['"](traCuuToKhaiProc|corpTKhaiProc)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/i) ||
+              currentHtml.match(/dse_operationName=(traCuuToKhaiProc|corpTKhaiProc)[^&"'\s]*&dse_nextEventName=([^&"'\s]+)/i);
+            if (observedGoProc) {
+              fields['dse_operationName'] = observedGoProc[1];
+              fields['dse_nextEventName'] = observedGoProc[2];
+            } else if (menuMatch) {
+              fields['dse_operationName'] = menuMatch[1];
+              fields['dse_nextEventName'] = menuMatch[2];
+            } else if (op === 'corpIndexProc' || op === 'corporateHomeProc' || op === 'corpJumpProc') {
+              fields['dse_operationName'] = 'traCuuToKhaiProc';
+              fields['dse_nextEventName'] = 'viewTraCuuTkhai';
+            }
+            nextUrl = this.resolveEtaxUrl(form.action || this.currentFormState.actionUrl || '/etaxnnt/Request', currentUrl);
+            nextMethod = 'POST';
+            postBody = new URLSearchParams(fields).toString();
+          } else if (
+            this.currentFormState.dseSessionId &&
+            (this.currentFormState.actionUrl || Object.keys(this.currentFormState.hiddenFields).length > 0 || currentHtml.includes('dse_sessionId'))
+          ) {
+            const fields = { ...this.currentFormState.hiddenFields };
+            if (observedGoProc) {
+              fields['dse_operationName'] = observedGoProc[1];
+              fields['dse_nextEventName'] = observedGoProc[2];
+            } else if (op === 'corpIndexProc' || op === 'corporateHomeProc' || op === 'corpJumpProc') {
+              fields['dse_operationName'] = 'traCuuToKhaiProc';
+              fields['dse_nextEventName'] = 'viewTraCuuTkhai';
+            }
+            nextUrl = this.resolveEtaxUrl(this.currentFormState.actionUrl || '/etaxnnt/Request', currentUrl);
+            nextMethod = 'POST';
+            postBody = new URLSearchParams(fields).toString();
           }
-          // Tìm sự kiện điều hướng tra cứu tờ khai từ link menu hoặc script
-          const menuMatch = currentHtml.match(/goProc\s*\(\s*['"](traCuuToKhaiProc|corpTKhaiProc)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/i) ||
-            currentHtml.match(/dse_operationName=(traCuuToKhaiProc|corpTKhaiProc)[^&"'\s]*&dse_nextEventName=([^&"'\s]+)/i);
-          if (observedGoProc) {
-            fields['dse_operationName'] = observedGoProc[1];
-            fields['dse_nextEventName'] = observedGoProc[2];
-          } else if (menuMatch) {
-            fields['dse_operationName'] = menuMatch[1];
-            fields['dse_nextEventName'] = menuMatch[2];
-          } else if (op === 'corpIndexProc' || op === 'corporateHomeProc' || op === 'corpJumpProc') {
-            fields['dse_operationName'] = 'traCuuToKhaiProc';
-            fields['dse_nextEventName'] = 'viewTraCuuTkhai';
-          }
-          nextUrl = this.resolveEtaxUrl(this.currentFormState.actionUrl || '/etaxnnt/Request', currentUrl);
-          nextMethod = 'POST';
-          postBody = new URLSearchParams(fields).toString();
         }
       }
 
@@ -968,6 +1004,91 @@ export class LegacyFilingClient {
       throw error;
     }
     return resolved.toString();
+  }
+
+  private extractMainForm(html: string): { name: string; action: string; fields: Record<string, string>; autoSubmit: boolean } | null {
+    const formTag = html.match(/<form\b[^>]*>/i);
+    if (!formTag) return null;
+    const startIdx = formTag.index ?? 0;
+    const endIdx = html.toLowerCase().indexOf('</form', startIdx);
+    const formBody = endIdx === -1 ? html.slice(startIdx) : html.slice(startIdx, endIdx);
+
+    const action = formTag[0].match(/action=["']([^"']*)["']/i)?.[1] || '/etaxnnt/Request';
+    const name = formTag[0].match(/name=["']([^"']*)["']/i)?.[1]
+      || formTag[0].match(/id=["']([^"']*)["']/i)?.[1]
+      || '';
+
+    const fields: Record<string, string> = {};
+    const inputRe = /<input\b[^>]*>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = inputRe.exec(formBody))) {
+      const tag = m[0];
+      const fieldName = tag.match(/\bname=["']([^"']+)["']/i)?.[1];
+      if (!fieldName) continue;
+      const type = tag.match(/\btype=["']([^"']+)["']/i)?.[1]?.toLowerCase();
+      if (type === 'checkbox' || type === 'radio') {
+        if (!/\bchecked\b/i.test(tag)) continue;
+      }
+      if (type === 'button' || type === 'submit') continue;
+      fields[fieldName] = tag.match(/\bvalue=["']([^"']*)["']/i)?.[1]?.replace(/&amp;/g, '&') ?? '';
+    }
+
+    const autoSubmit = /\.submit\(\s*\)/i.test(html) || /forms\[0\]\.submit/i.test(html);
+    return { name, action, fields, autoSubmit };
+  }
+
+  private async openLookupModule(activeGeneration: number): Promise<void> {
+    this.assertGeneration(activeGeneration);
+    if (!this.currentFormState.dseSessionId) return;
+
+    const sid = encodeURIComponent(this.currentFormState.dseSessionId || '');
+    const variants: Array<{ label: string; url: string; post?: string }> = [
+      {
+        label: 'GET jump corpJumpProc->traCuuToKhaiProc',
+        url: `${PORTAL_CONFIG.ETAX_REQUEST_API}?dse_operationName=corpJumpProc&dse_nextEventName=start&toOpName=traCuuToKhaiProc&dse_sessionId=${sid}&dse_applicationId=-1`
+      },
+      {
+        label: 'POST jump corpJumpProc->traCuuToKhaiProc',
+        url: PORTAL_CONFIG.ETAX_REQUEST_API,
+        post: `dse_sessionId=${sid}&dse_applicationId=-1&dse_operationName=corpJumpProc&dse_nextEventName=start&toOpName=traCuuToKhaiProc`
+      },
+      {
+        label: 'GET direct traCuuToKhaiProc initial',
+        url: `${PORTAL_CONFIG.ETAX_REQUEST_API}?dse_operationName=traCuuToKhaiProc&dse_processorState=initial&dse_nextEventName=start&dse_sessionId=${sid}&dse_applicationId=-1&dse_pageId=1`
+      }
+    ];
+
+    for (const v of variants) {
+      try {
+        const res = v.post
+          ? await this.session.client.post(v.url, v.post, {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Origin': PORTAL_CONFIG.ETAX_BASE_URL,
+                'Referer': PORTAL_CONFIG.ETAX_REQUEST_API,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+              },
+              timeout: 20000
+            })
+          : await this.session.client.get(v.url, {
+              headers: {
+                'Referer': `${PORTAL_CONFIG.ETAX_BASE_URL}/etaxnnt/Request`,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+              },
+              timeout: 20000
+            });
+
+        const html = String(res.data || '');
+        const parsed = EtaxFormStateParser.parse(html);
+        this.mergeFormState(parsed);
+        if (this.currentFormState.dseOperationName === 'traCuuToKhaiProc' && this.currentFormState.dseProcessorId) {
+          if (parsed.formOptions?.length) {
+            this.availableFormOptions = parsed.formOptions;
+          }
+          return;
+        }
+      } catch {}
+    }
   }
 
   private validateMessageId(messageId: string): string {

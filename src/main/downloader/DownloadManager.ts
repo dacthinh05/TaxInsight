@@ -443,7 +443,12 @@ export class DownloadManager extends EventEmitter {
                 if (isRateLimit || isAuth || etaxFallbackErr?.code === 'CANCELLED') {
                   throw etaxFallbackErr;
                 }
-                throw dvcErr;
+                const dvcMsg = dvcErr instanceof Error ? dvcErr.message : String(dvcErr);
+                const etaxMsg = etaxFallbackErr instanceof Error ? etaxFallbackErr.message : String(etaxFallbackErr);
+                console.warn(`[DownloadManager] Fallback eTax thất bại cho ${item.filingId}: ${etaxMsg}`);
+                const combined = new Error(`${dvcMsg} (Fallback eTax: ${etaxMsg})`);
+                Object.assign(combined, dvcErr);
+                throw combined;
               }
             } else {
               throw dvcErr;
