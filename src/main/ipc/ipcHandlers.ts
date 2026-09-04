@@ -935,6 +935,15 @@ export function setupIpcHandlers(
                 const targetFromDate = ${JSON.stringify(targetFrom)};
                 const targetToDate = ${JSON.stringify(targetTo)};
 
+                // ─── 0. TỰ ĐỘNG ĐIỀU HƯỚNG KHI TRANG PHẢN HỒI SSO CHỨA URL THUẾ ĐIỆN TỬ ───
+                const ssoMatch = pageBody.match(/https?:\/\/[^\s"'<>]*thuedientu\.gdt\.gov\.vn[^\s"'<>]+/i) ||
+                  document.documentElement.innerHTML.match(/https?:\/\/[^\s"'<>]*thuedientu\.gdt\.gov\.vn[^\s"'<>]+/i);
+                if (ssoMatch && !isEtax) {
+                  const targetUrl = ssoMatch[0].replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+                  window.location.href = targetUrl;
+                  return { currentUrl: targetUrl, isAtEtax: false, redirectUrl: targetUrl };
+                }
+
                 // ─── 1. TỰ ĐỘNG CHUYỂN TIẾP SSO TỪ DVC SANG ETAX ────────────
                 if (isDvc && !isDvcLoginPage && !isDvcSsoEndpoint) {
                   let banner = document.getElementById('taxinsight-sync-banner');
@@ -952,8 +961,7 @@ export function setupIpcHandlers(
                     const lastKey = 'taxinsight_sso_last_at';
                     const attempts = Number(sessionStorage.getItem(attemptKey) || '0');
                     const lastAt = Number(sessionStorage.getItem(lastKey) || '0');
-                    if (now - lastAt < 5000 || (!manual && attempts >= 2)) {
-                      banner.innerHTML = '<span>TaxInsight đã tạm dừng tự chuyển tiếp để tránh gửi lặp. Vui lòng chờ 5 giây rồi bấm Chuyển ngay.</span><button id="taxinsight-btn-sso" disabled style="background:#e2e8f0;color:#64748b;border:none;padding:6px 14px;border-radius:6px;font-weight:bold;">Đang chờ...</button>';
+                    if (now - lastAt < 3000 || (!manual && attempts >= 3)) {
                       return;
                     }
                     sessionStorage.setItem(lastKey, String(now));
@@ -963,31 +971,65 @@ export function setupIpcHandlers(
                       button.setAttribute('disabled', 'true');
                       button.textContent = 'Đang chuyển...';
                     }
-                    const f = document.createElement('form');
-                    f.method = 'POST';
-                    f.action = '/tthc/sso/redirect-to-service?module=330410';
-                    f.target = '_self';
                     const csrfEl = document.querySelector('input[name="_csrf"]') || document.querySelector('meta[name="csrf-token"]') || document.querySelector('meta[name="_csrf"]');
                     const csrf = (csrfEl && (csrfEl.value || csrfEl.content)) || '';
-                    if (csrf) {
-                      const csrfInput = document.createElement('input');
-                      csrfInput.type = 'hidden';
-                      csrfInput.name = '_csrf';
-                      csrfInput.value = csrf;
-                      f.appendChild(csrfInput);
-                    }
-                    document.body.appendChild(f);
-                    f.submit();
+
+                    fetch('/tthc/sso/redirect-to-service?module=330410', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                        ...(csrf ? { 'X-XSRF-TOKEN': csrf } : {})
+                      },
+                      body: csrf ? ('_csrf=' + encodeURIComponent(csrf)) : ''
+                    })
+                    .then(r => r.text())
+                    .then(text => {
+                      const match = text.match(/https?:\/\/[^\s"'<>]*thuedientu\.gdt\.gov\.vn[^\s"'<>]+/i);
+                      if (match) {
+                        const targetUrl = match[0].replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+                        window.location.href = targetUrl;
+                      } else if (text.trim().startsWith('http')) {
+                        window.location.href = text.trim();
+                      } else {
+                        const f = document.createElement('form');
+                        f.method = 'POST';
+                        f.action = '/tthc/sso/redirect-to-service?module=330410';
+                        f.target = '_self';
+                        if (csrf) {
+                          const csrfInput = document.createElement('input');
+                          csrfInput.type = 'hidden';
+                          csrfInput.name = '_csrf';
+                          csrfInput.value = csrf;
+                          f.appendChild(csrfInput);
+                        }
+                        document.body.appendChild(f);
+                        f.submit();
+                      }
+                    })
+                    .catch(() => {
+                      const f = document.createElement('form');
+                      f.method = 'POST';
+                      f.action = '/tthc/sso/redirect-to-service?module=330410';
+                      f.target = '_self';
+                      if (csrf) {
+                        const csrfInput = document.createElement('input');
+                        csrfInput.type = 'hidden';
+                        csrfInput.name = '_csrf';
+                        csrfInput.value = csrf;
+                        f.appendChild(csrfInput);
+                      }
+                      document.body.appendChild(f);
+                      f.submit();
+                    });
                   };
 
                   document.getElementById('taxinsight-btn-sso')?.addEventListener('click', () => triggerSso(true));
 
                   if (!window._taxinsight_sso_triggered) {
                     window._taxinsight_sso_triggered = true;
-                    setTimeout(triggerSso, 600);
+                    setTimeout(triggerSso, 400);
                   }
                 }
-
                 // ─── 2. TỰ ĐỘNG ĐIỀU HƯỚNG & TRA CỨU TRÊN ETAX ───────────────
                 if (isEtax) {
                   let banner = document.getElementById('taxinsight-sync-banner');
@@ -1133,12 +1175,12 @@ export function setupIpcHandlers(
             `);
             const etaxCookies = await authWin.webContents.session.cookies.get({ domain: 'thuedientu.gdt.gov.vn' });
 
-            // JSESSIONID chỉ là cookie phiên HTTP, không phải dse_sessionId.
-            // Dùng nó làm DSE state khiến request query/detail gửi sai session,
-            // đặc biệt với GNT/TNCN sau khi cửa sổ eTax vừa mở.
+            if (res?.redirectUrl && !authWin.isDestroyed()) {
+              authWin.loadURL(res.redirectUrl).catch(() => {});
+            }
+
             const dseSessionId = res?.sessionId || '';
             const etaxJsession = etaxCookies.find(c => c.name.toLowerCase().includes('jsession'))?.value;
-
             const isManualStateAccepted = dseSessionId
               ? paymentSlipClient.setManualSessionState({
                   sessionId: dseSessionId,
