@@ -51,24 +51,20 @@ export class CaptchaSolver {
       return false;
     }
 
-    // Với engine ONNX chuyên dụng: chỉ auto-submit khi confidence >= 85%
-    if (result.reason === 'onnx_engine') {
+    // Với engine ONNX chuyên dụng: auto-submit khi confidence >= 85%
+    if (result.reason === 'onnx_engine' || result.reason.includes('onnx')) {
       return result.confidence >= 85;
-    }
-
-    if (result.confidence < 90) {
-      return false;
     }
 
     const fullCandidates = result.candidates.filter(
       candidate => /^[a-z0-9]{5}$/.test(candidate.text)
     );
-    if (fullCandidates.length < 5) return false;
+    if (fullCandidates.length < 2) return result.confidence >= 90;
 
     const exactSupport = fullCandidates.filter(
       candidate => candidate.text === result.text
     ).length;
-    return exactSupport >= 5 && exactSupport / fullCandidates.length >= 0.6;
+    return exactSupport >= 2 && exactSupport / fullCandidates.length >= 0.6;
   }
 
   /**
@@ -1080,6 +1076,15 @@ export class CaptchaSolver {
         };
         candidates.push(onnxCand);
 
+        if (onnxRes.confidence >= 75) {
+          return {
+            text: onnxRes.text,
+            confidence: onnxRes.confidence,
+            accepted: true,
+            reason: 'onnx_engine',
+            candidates: [onnxCand]
+          };
+        }
       }
     } catch (onnxErr: unknown) {
       const msg = onnxErr instanceof Error ? onnxErr.message : String(onnxErr);

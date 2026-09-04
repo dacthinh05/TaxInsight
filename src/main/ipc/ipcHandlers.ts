@@ -829,12 +829,12 @@ export function setupIpcHandlers(
     const authPromise = new Promise<any>(async (resolve) => {
       try {
         const isInteractive = Boolean(options?.forceInteractive);
-        const timeoutMs = isInteractive ? 120_000 : 20_000;
+        const timeoutMs = 90_000;
         const windowStartTime = Date.now();
         const authWin = new BrowserWindow({
           width: 1200,
           height: 800,
-          show: isInteractive,
+          show: true,
           center: true,
           autoHideMenuBar: true,
           title: 'Xác Thực Phiên Làm Việc eTax (Tra Cứu Giấy Nộp Tiền) - TaxInsight',

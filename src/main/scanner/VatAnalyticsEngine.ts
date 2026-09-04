@@ -1,6 +1,7 @@
 import AdmZip from 'adm-zip';
 import fs from 'fs';
 import path from 'path';
+import { ZipExtractor } from '../files/ZipExtractor';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
 import { LegacyFilingClient } from '../portal/LegacyFilingClient';
 import { TaxFiling } from '../../shared/types';
@@ -268,10 +269,9 @@ export class VatAnalyticsEngine {
 
             if (res.content) {
               const buffer = Buffer.from(res.content, 'base64');
-              const head = buffer.subarray(0, 4096).toString('utf-8').trim();
-              if (head.startsWith('<?xml') || (head.startsWith('<') && !head.toLowerCase().startsWith('<!doctype html') && !head.toLowerCase().startsWith('<html'))) {
-                const xml = buffer.toString('utf-8');
-                snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
+              const xmlCheck = ZipExtractor.cleanXmlBuffer(buffer);
+              if (xmlCheck.isXml) {
+                snapshot = VatXmlParser.parseVatXml(xmlCheck.text, filing, taxpayerId);
               } else {
                 const zip = new AdmZip(buffer);
                 // Cap giải nén: chặn zip-bomb (entry khai báo/giải nén > 50MB bỏ qua)
@@ -377,10 +377,9 @@ export class VatAnalyticsEngine {
   }
 
   /**
-   * Tải hồ sơ kèm retry có backoff cho các lỗi tạm thời (429/timeout/mạng).
-   * Phiên bị hết hạn (SESSION_EXPIRED) hoặc bị hủy sẽ ném ra ngay lập tức.
+   * Tải hồ sơ kèm retry và timeout 5s để đảm bảo phân tích KHÔNG BAO GIỜ bị treo.
    */
-  private async downloadHoSoWithRetry(filing: TaxFiling, maxRetries = 3): Promise<{ fileName: string; fileType: string; content: string }> {
+  private async downloadHoSoWithRetry(filing: TaxFiling, maxRetries = 2): Promise<{ fileName: string; fileType: string; content: string }> {
     let lastErr: any;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       if (this.isCancelled) {
@@ -389,51 +388,66 @@ export class VatAnalyticsEngine {
         throw cancelErr;
       }
       try {
-        if (this.legacyClient && (filing.source === 'dvc-etax-html' || Boolean(filing.messageId))) {
-          const legacyId = filing.messageId || filing.id;
-          if (legacyId) {
-            const legacyFile = await this.legacyClient.downloadFiling(legacyId);
-            return {
-              fileName: legacyFile.fileName,
-              fileType: legacyFile.contentType,
-              content: legacyFile.dataBuffer.toString('base64')
-            };
-          }
-        }
-        try {
-          return await this.client.downloadHoSo(filing.id, undefined, {
-            isThueDienTu: filing.isThueDienTu,
-            loaiTraCuu: filing.loaiTraCuu,
-            maTkhai: filing.maTkhai,
-            altIds: filing.altIds,
-            period: filing.period,
-            declarationCode: filing.declarationCode
-          });
-        } catch (dvcErr: any) {
-          // Khi Cổng DVC báo lỗi (HTTP 500 hoặc validateIdTkhai "400" do hồ sơ nộp qua eTax/TVAN),
-          // tự động fallback sang phân hệ eTax để lấy tệp XML/PDF gốc.
-          if (this.legacyClient && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
-            try {
-              const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
-              if (legacyFile?.dataBuffer && legacyFile.dataBuffer.length > 0) {
-                return {
-                  fileName: legacyFile.fileName,
-                  fileType: legacyFile.contentType,
-                  content: legacyFile.dataBuffer.toString('base64')
-                };
-              }
-            } catch (etaxErr: any) {
-              console.warn(`[VatAnalyticsEngine] eTax fallback thất bại cho ${filing.period}:`, etaxErr?.message);
+        const downloadAction = async () => {
+          if (this.legacyClient && (filing.source === 'dvc-etax-html' || Boolean(filing.messageId))) {
+            const legacyId = filing.messageId || filing.id;
+            if (legacyId) {
+              const legacyFile = await this.legacyClient.downloadFiling(legacyId);
+              return {
+                fileName: legacyFile.fileName,
+                fileType: legacyFile.contentType,
+                content: legacyFile.dataBuffer.toString('base64')
+              };
             }
           }
-          throw dvcErr;
+          try {
+            return await this.client.downloadHoSo(filing.id, undefined, {
+              isThueDienTu: filing.isThueDienTu,
+              loaiTraCuu: filing.loaiTraCuu,
+              maTkhai: filing.maTkhai,
+              altIds: filing.altIds,
+              period: filing.period,
+              declarationCode: filing.declarationCode
+            });
+          } catch (dvcErr: any) {
+            if (this.legacyClient && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
+              try {
+                const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
+                if (legacyFile?.dataBuffer && legacyFile.dataBuffer.length > 0) {
+                  return {
+                    fileName: legacyFile.fileName,
+                    fileType: legacyFile.contentType,
+                    content: legacyFile.dataBuffer.toString('base64')
+                  };
+                }
+              } catch (etaxErr: any) {
+                console.warn(`[VatAnalyticsEngine] eTax fallback thất bại cho ${filing.period}:`, etaxErr?.message);
+              }
+            }
+            throw dvcErr;
+          }
+        };
+
+        let timer: any;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            const err: any = new Error('Quá thời gian tải XML từ Cổng Thuế (5s)');
+            err.code = 'TIMEOUT';
+            reject(err);
+          }, 5000);
+        });
+
+        try {
+          return await Promise.race([downloadAction(), timeoutPromise]);
+        } finally {
+          clearTimeout(timer);
         }
       } catch (err: any) {
         lastErr = err;
         if (err?.code === 'CANCELLED' || err?.code === 'SESSION_EXPIRED') throw err;
         const isTransient = err?.code === 'TIMEOUT' || err?.code === 'NETWORK';
         if (isTransient && attempt < maxRetries) {
-          await new Promise(r => setTimeout(r, 2000 * attempt + Math.random() * 500));
+          await new Promise(r => setTimeout(r, 1000 * attempt));
           continue;
         }
         throw err;
