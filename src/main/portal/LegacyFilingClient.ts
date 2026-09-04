@@ -504,7 +504,7 @@ export class LegacyFilingClient {
     // `kieuKy` phải đến từ form HTML hiện hành hoặc mapping arrTKhai của chính
     // response đó. Không mặc định Q vì từng mẫu/năm có chu kỳ khác nhau.
     let kieuKy = options.kieuKy;
-    const requestedFormCode = options.maTKhai || this.currentFormState.formValues.maTKhai || '00';
+    const requestedFormCode = options.maTKhai || '00';
     if (!kieuKy && requestedFormCode !== '00') {
       const opt = this.availableFormOptions.find(o => o.value === requestedFormCode);
       if (opt?.kieuKy) kieuKy = opt.kieuKy;
@@ -770,49 +770,70 @@ export class LegacyFilingClient {
     const currentYear = new Date().getFullYear();
     const candidateKieuKys = targetKieuKy ? [targetKieuKy, targetKieuKy === 'Q' ? 'M' : 'Q', 'Y'] : ['Q', 'M', 'Y'];
 
+    // Tìm các mã tờ khai eTax khớp với declarationCode hoặc title để tra cứu đích danh
+    const matchingFormOptions = this.availableFormOptions.filter(o => {
+      const oText = o.text.toLowerCase();
+      const oVal = o.value;
+      if (cleanCode && (oVal === cleanCode || oText.includes(cleanCode))) return true;
+      if (filing.declarationCode && oText.includes(filing.declarationCode.toLowerCase())) return true;
+      if (cleanCode.includes('gtgt') && oText.includes('gtgt')) return true;
+      if (cleanCode.includes('tncn') && (oText.includes('tncn') || oText.includes('thu nhập cá nhân'))) return true;
+      if (cleanCode.includes('tndn') && (oText.includes('tndn') || oText.includes('thu nhập doanh nghiệp'))) return true;
+      return false;
+    });
+    const formCodesToTry = Array.from(new Set([
+      ...matchingFormOptions.map(o => o.value),
+      '00'
+    ]));
+
     // 3. Tìm kiếm lần lượt trong các năm
     for (const filingYear of yearsToSearch) {
       const qryToDate = filingYear < currentYear ? `31/03/${filingYear + 1}` : `31/12/${filingYear}`;
       let matched: TaxFiling | undefined;
 
-      for (const kKy of candidateKieuKys) {
-        const cacheKey = `${filingYear}_${kKy}`;
-        let etaxFilings = this.etaxFilingsCache.get(cacheKey);
-        if (!etaxFilings) {
-          try {
-            const queryResult = await this.queryFilings(filingYear, {
-              page: 1,
-              signal,
-              kieuKy: kKy,
-              toDate: qryToDate
-            });
-            const allFilings = [...queryResult.filings];
-            const totalPages = Math.min(queryResult.pagination.totalPages || 1, 10);
-            for (let p = 2; p <= totalPages; p++) {
-              try {
-                await new Promise(r => setTimeout(r, 150));
-                const nextPage = await this.queryFilings(filingYear, {
-                  page: p,
-                  signal,
-                  kieuKy: kKy,
-                  toDate: qryToDate
-                });
-                allFilings.push(...nextPage.filings);
-              } catch {}
+      for (const fCodeOption of formCodesToTry) {
+        if (matched) break;
+        for (const kKy of candidateKieuKys) {
+          if (matched) break;
+          const cacheKey = `${filingYear}_${fCodeOption}_${kKy}`;
+          let etaxFilings = this.etaxFilingsCache.get(cacheKey);
+          if (!etaxFilings) {
+            try {
+              const queryResult = await this.queryFilings(filingYear, {
+                page: 1,
+                signal,
+                maTKhai: fCodeOption,
+                kieuKy: kKy,
+                toDate: qryToDate
+              });
+              const allFilings = [...queryResult.filings];
+              const totalPages = Math.min(queryResult.pagination.totalPages || 1, 10);
+              for (let p = 2; p <= totalPages; p++) {
+                try {
+                  await new Promise(r => setTimeout(r, 150));
+                  const nextPage = await this.queryFilings(filingYear, {
+                    page: p,
+                    signal,
+                    maTKhai: fCodeOption,
+                    kieuKy: kKy,
+                    toDate: qryToDate
+                  });
+                  allFilings.push(...nextPage.filings);
+                } catch {}
+              }
+              etaxFilings = allFilings;
+              this.etaxFilingsCache.set(cacheKey, etaxFilings);
+            } catch (queryErr: unknown) {
+              const isRateLimit = (queryErr as any)?.status === 429 || (queryErr as any)?.code === 'RATE_LIMIT' || String((queryErr as any)?.message).includes('429');
+              const isAuth = (queryErr as any)?.code === 'SESSION_EXPIRED' || (queryErr as any)?.code === 'AUTH_REQUIRED';
+              if (isRateLimit || isAuth) {
+                throw queryErr;
+              }
+              const msg = queryErr instanceof Error ? queryErr.message : String(queryErr);
+              console.warn(`[LegacyFilingClient] Tra cứu eTax năm ${filingYear} (form=${fCodeOption}, kieuKy=${kKy}) thất bại: ${msg}`);
+              continue;
             }
-            etaxFilings = allFilings;
-            this.etaxFilingsCache.set(cacheKey, etaxFilings);
-          } catch (queryErr: unknown) {
-            const isRateLimit = (queryErr as any)?.status === 429 || (queryErr as any)?.code === 'RATE_LIMIT' || String((queryErr as any)?.message).includes('429');
-            const isAuth = (queryErr as any)?.code === 'SESSION_EXPIRED' || (queryErr as any)?.code === 'AUTH_REQUIRED';
-            if (isRateLimit || isAuth) {
-              throw queryErr;
-            }
-            const msg = queryErr instanceof Error ? queryErr.message : String(queryErr);
-            console.warn(`[LegacyFilingClient] Tra cứu eTax năm ${filingYear} (kieuKy=${kKy}) thất bại: ${msg}`);
-            continue;
           }
-        }
 
         // 4. Khớp hồ sơ eTax với filing hiện tại
         matched = etaxFilings.find(f => f.messageId && f.id === cleanId);
@@ -896,12 +917,16 @@ export class LegacyFilingClient {
           break;
         }
       }
-
       if (matched && matched.messageId) {
-        filing.messageId = matched.messageId;
-        return await this.downloadFiling(matched.messageId, signal);
+        break;
       }
     }
+
+    if (matched && matched.messageId) {
+      filing.messageId = matched.messageId;
+      return await this.downloadFiling(matched.messageId, signal);
+    }
+  }
 
     throw new Error(`Không tìm thấy file tờ khai tương ứng trên eTax cho hồ sơ: ${filing.id} (${filing.declarationCode || filing.title})`);
   }

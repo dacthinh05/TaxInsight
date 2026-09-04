@@ -475,12 +475,27 @@ export const App: React.FC = () => {
     setDownloadSummary(null);
 
     // ─── CHẾ ĐỘ QUÉT ĐA NĂM TỰ ĐỘNG (MULTI-YEAR BATCH SCAN) ───────────────
-    if (scanRangeMode === 'MULTI_3_YEARS' || scanRangeMode === 'MULTI_5_YEARS') {
+    if (scanRangeMode.startsWith('MULTI')) {
       const currentYear = new Date().getFullYear();
-      const yearsToScan = scanRangeMode === 'MULTI_3_YEARS'
-        ? [currentYear - 2, currentYear - 1, currentYear]
-        : [currentYear - 4, currentYear - 3, currentYear - 2, currentYear - 1, currentYear];
-
+      let yearsToScan: number[] = [];
+      if (scanRangeMode === 'MULTI_3_YEARS') {
+        yearsToScan = [currentYear - 2, currentYear - 1, currentYear];
+      } else if (scanRangeMode === 'MULTI_5_YEARS') {
+        yearsToScan = [currentYear - 4, currentYear - 3, currentYear - 2, currentYear - 1, currentYear];
+      } else {
+        const customMatch = scanRangeMode.match(/^MULTI_RANGE:(\d{4}):(\d{4})$/);
+        if (customMatch) {
+          const fromY = parseInt(customMatch[1], 10);
+          const toY = parseInt(customMatch[2], 10);
+          const minY = Math.min(fromY, toY);
+          const maxY = Math.max(fromY, toY);
+          for (let y = minY; y <= maxY; y++) {
+            yearsToScan.push(y);
+          }
+        } else {
+          yearsToScan = [currentYear - 2, currentYear - 1, currentYear];
+        }
+      }
       let combinedFilings: TaxFiling[] = [];
       const updatedByYear = { ...filingsByYear };
 
@@ -543,8 +558,10 @@ export const App: React.FC = () => {
 
       if (scanId === latestScanId.current) {
         setFilingsByYear(prev => ({ ...prev, ...updatedByYear }));
+        // Khi quét đa năm, duy trì hiển thị toàn bộ hồ sơ đã gộp (combinedFilings) trên bảng
+        // thay vì ép lọc về chỉ riêng selectedYear, giúp kế toán quan sát đủ dữ liệu các năm đã quét
+        setFilings([...combinedFilings]);
         const curYearFilings = updatedByYear[selectedYear] || combinedFilings;
-        setFilings(curYearFilings);
         setMissingVat(checkMissingPeriods(curYearFilings, selectedYear, 'VAT', true));
         setMissingPit(checkMissingPeriods(curYearFilings, selectedYear, 'PIT', true));
         setIsScanning(false);
@@ -880,9 +897,10 @@ export const App: React.FC = () => {
   const handleYearChange = (y: number) => {
     if (y === selectedYear) return;
 
-    // 1. Lưu lại filings của năm cũ trước khi đổi
-    setFilingsByYear(prev => ({ ...prev, [selectedYear]: filings }));
-
+    // 1. Lưu lại filings của năm cũ trước khi đổi (chỉ lưu nếu không phải đang ở chế độ xem gộp đa năm)
+    if (!scanRangeMode.startsWith('MULTI')) {
+      setFilingsByYear(prev => ({ ...prev, [selectedYear]: filings }));
+    }
     // 2. Chuyển sang năm mới — XÓA selection và analytics của năm cũ
     setSelectedYear(y);
     setSelectedIds(new Set());

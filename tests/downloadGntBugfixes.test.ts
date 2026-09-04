@@ -759,3 +759,51 @@ describe('BUGFIX F-007 — lỗi SESSION_EXPIRED từ attachment fallback phải
     await expect(client.downloadHoSo('G12.18-260720-00263029')).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
   });
 });
+
+describe('BUGFIX — validateIdTkhai "400" không chặn direct POST /downloadhoso', () => {
+  it('khi validateIdTkhai trả 400 và không có attachments, direct POST /downloadhoso vẫn tải thành công', async () => {
+    const session = new PortalSession();
+    const client = new TaxPortalClient(session);
+
+    const validXml = '<?xml version="1.0"?><HSoThue><TKhai>01/GTGT</TKhai></HSoThue>';
+    const validBase64 = Buffer.from(validXml, 'utf8').toString('base64');
+
+    const detailHtml = `
+      <html>
+        <head><meta name="_csrf" content="mock-token"/></head>
+        <body>
+          <button onclick="downloadHoSo(this)" data-mahoso="G12.18-260820-00005022" data-is-tdt="N"></button>
+          <div data-tai-lieu-dkem="true"></div>
+        </body>
+      </html>
+    `;
+
+    session.client.get = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/files/detail/')) {
+        return Promise.resolve({ status: 200, data: detailHtml, headers: { 'content-type': 'text/html' } });
+      }
+      if (url.includes('/validateIdTkhai')) {
+        return Promise.resolve({ status: 200, data: '400', headers: { 'content-type': 'text/plain' } });
+      }
+      return Promise.resolve({ status: 404, data: '' });
+    });
+
+    session.client.post = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/data-tai-lieu-dkem')) {
+        return Promise.resolve({ status: 200, data: [] });
+      }
+      if (url.includes('/tchs/downloadhoso')) {
+        return Promise.resolve({
+          status: 200,
+          data: { content: validBase64, fileName: '01_GTGT.xml' },
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      return Promise.resolve({ status: 404, data: '' });
+    });
+
+    const payload = await client.downloadHoSo('G12.18-260820-00005022');
+    expect(payload).toBeDefined();
+    expect(payload.content).toBe(validBase64);
+  });
+});

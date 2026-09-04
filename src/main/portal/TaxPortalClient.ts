@@ -1522,16 +1522,6 @@ export class TaxPortalClient {
           if (this.mustStopDownloadFallback(attErr)) throw attErr;
         }
 
-        // Nếu validateIdTkhai không đạt (kết quả khác 200) và không có tệp đính kèm hợp lệ:
-        // Cổng Thuế DVC không lưu trữ gói tệp cho hồ sơ này (thường do nộp qua eTax).
-        // Dừng ngay lập tức với FILING_VALIDATION_FAILED để caller kích hoạt fallback eTax,
-        // TUYỆT ĐỐI không tiếp tục bắn hàng chục POST /downloadhoso vô ích gây lỗi 500 và bão rate-limit 429.
-        const validationErrMsg = validationStatus !== 200
-          ? `validateIdTkhai trả HTTP ${validationStatus ?? 'không xác định'} (yêu cầu 200).`
-          : `Hồ sơ không vượt qua validateIdTkhai (kết quả nghiệp vụ: "${validationResult || 'rỗng'}" !== "200").`;
-        const valErr = this.createDownloadWorkflowError(validationErrMsg, 'FILING_VALIDATION_FAILED', validationStatus);
-        Object.assign(valErr, { validationResult, httpStatus: validationStatus });
-        throw valErr;
       }
       // Vẫn tiếp tục thực hiện POST direct download (phòng trường hợp Cổng Thuế vẫn mở file qua /downloadhoso)
       let hasRetried = false;

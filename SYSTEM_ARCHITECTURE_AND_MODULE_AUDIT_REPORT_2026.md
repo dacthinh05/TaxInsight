@@ -1,5 +1,5 @@
 # BÁO CÁO KIỂM TOÁN HỆ THỐNG, CẤU TRÚC VÀ SƠ ĐỒ XỬ LÝ MODULE
-# TAXINSIGHT (v3.0.11) — EVIDENCE-GRADE AUDIT REPORT
+# TAXINSIGHT (v3.1.0) — EVIDENCE-GRADE AUDIT REPORT
 
 **Thời điểm kiểm toán:** 2026-09-04  
 **Phạm vi:** Toàn bộ kiến trúc mã nguồn (`src/main`, `src/preload`, `src/renderer`, `src/shared`, `tests`)  
@@ -436,7 +436,7 @@ flowchart LR
 
 ## 7. KẾT LUẬN KIỂM TOÁN (FINAL CONCLUSION)
 
-Hệ thống **TaxInsight v3.0.11** đã giải quyết triệt để các rào cản kỹ thuật then chốt:
+Hệ thống **TaxInsight v3.1.0** đã giải quyết triệt để các rào cản kỹ thuật then chốt:
 1. **Cơ chế tải tờ khai Fallback eTax hoàn thiện:** Tự động nhận diện kỳ nộp (`targetKieuKy`: 'M' cho Tháng, 'Q' cho Quý, 'Y' cho Quyết toán), triệt tiêu lỗi lọc sai hồ sơ trên eTax; mở rộng dải ngày tìm kiếm đến 31/03 năm sau.
 2. **Bộ lọc thông báo chuẩn xác:** Phân định rõ ràng giữa Thông báo thuế và tờ khai Báo cáo hóa đơn BC26/AC, không chặn nhầm tệp hợp lệ.
 3. **Phân tích thuế 12 tháng trọn vẹn:** Thu thập đầy đủ tờ khai Tháng 12, Quý 4 nộp vào tháng 01 năm sau trong 1 lần quét duy nhất; tích hợp bộ chuyển đổi tần suất hiển thị 12 Tháng / 4 Quý trực tiếp trên UI.
