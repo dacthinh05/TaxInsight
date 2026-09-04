@@ -1,7 +1,7 @@
 import AdmZip from 'adm-zip';
 import * as cheerio from 'cheerio';
+import { ZipExtractor } from '../files/ZipExtractor';
 import { FilingMetricItem, FilingPreviewData, TaxFiling } from '../../shared/types';
-
 export class FilingPreviewParser {
   /**
    * Phân tích nội dung xem nhanh từ XML buffer hoặc HTML chi tiết (HOÀN TOÀN TRONG BỘ NHỚ RAM, KHÔNG GHI ĐĨA)
@@ -22,11 +22,11 @@ export class FilingPreviewParser {
     if (zipBase64) {
       try {
         const zipBuffer = Buffer.from(zipBase64, 'base64');
-        const head = zipBuffer.subarray(0, 4096).toString('utf-8').trim();
+        const xmlCheck = ZipExtractor.cleanXmlBuffer(zipBuffer);
 
-        if (head.startsWith('<?xml') || (head.startsWith('<') && !head.toLowerCase().startsWith('<!doctype html') && !head.toLowerCase().startsWith('<html'))) {
+        if (xmlCheck.isXml) {
           xmlFound = true;
-          const xmlContent = zipBuffer.toString('utf-8');
+          const xmlContent = xmlCheck.text;
           xmlSnippet = xmlContent.slice(0, 1500);
           this.extractXmlMetrics(filing, xmlContent, metrics);
         } else {

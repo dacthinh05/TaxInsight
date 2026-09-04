@@ -1,6 +1,7 @@
 import AdmZip from 'adm-zip';
 import fs from 'fs';
 import path from 'path';
+import { ZipExtractor } from '../files/ZipExtractor';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
 import { LegacyFilingClient } from '../portal/LegacyFilingClient';
 import { TaxFiling } from '../../shared/types';
@@ -260,10 +261,9 @@ export class PitAnalyticsEngine {
 
             if (res.content) {
               const buffer = Buffer.from(res.content, 'base64');
-              const head = buffer.subarray(0, 4096).toString('utf-8').trim();
-              if (head.startsWith('<?xml') || (head.startsWith('<') && !head.toLowerCase().startsWith('<!doctype html') && !head.toLowerCase().startsWith('<html'))) {
-                const xml = buffer.toString('utf-8');
-                snapshot = PitXmlParser.parsePitXml(xml, filing, taxpayerId);
+              const xmlCheck = ZipExtractor.cleanXmlBuffer(buffer);
+              if (xmlCheck.isXml) {
+                snapshot = PitXmlParser.parsePitXml(xmlCheck.text, filing, taxpayerId);
               } else {
                 const zip = new AdmZip(buffer);
                 // Cap giải nén: chặn zip-bomb (entry khai báo/giải nén > 50MB bỏ qua)

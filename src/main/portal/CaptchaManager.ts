@@ -56,7 +56,17 @@ export class CaptchaManager extends EventEmitter {
       }
     }
 
-    // 2. Fallback sang modal thủ công nếu chưa giải được tự động
+    // 2. Fallback sang modal thủ công nếu có listener giao diện, hoặc trả về best candidate nếu chạy headless
+    if (this.listenerCount('challenge') === 0) {
+      if (latestImageBase64) {
+        const fallbackResult = await CaptchaSolver.solveDetailed(latestImageBase64);
+        if (fallbackResult.text && fallbackResult.text.length === 5) {
+          return fallbackResult.text;
+        }
+      }
+      throw new Error('Không thể tự động giải CAPTCHA trong chế độ dòng lệnh.');
+    }
+
     const challenge: CaptchaChallenge = {
       challengeId,
       purpose,

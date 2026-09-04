@@ -2,6 +2,7 @@ import AdmZip from 'adm-zip';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 import { isSafeExtractionPath, sanitizeFilename } from '../../shared/sanitizer';
 import { TaxFiling } from '../../shared/types';
 
@@ -80,31 +81,66 @@ export class ZipExtractor {
   }
 
   /**
-   * Kiểm tra buffer có phải XML hồ sơ thuế thật sự hay không.
-   * Trước đây điều kiện "bắt đầu bằng '<' và chứa '>'" quá lỏng — trang HTML lỗi
-   * của portal (vd: "Hết phiên làm việc") bị lưu nhầm thành file .xml và đánh
-   * dấu COMPLETED, gây hỏng dữ liệu kho hồ sơ một cách âm thầm.
+   * Chuẩn hóa và bóc tách nội dung XML từ buffer bất kỳ (hỗ trợ UTF-8 BOM, UTF-16, leading comments).
    */
-  private static isRealXmlContent(zipBuffer: Buffer): boolean {
-    const head = zipBuffer.slice(0, Math.min(zipBuffer.length, 4096)).toString('utf-8').trim();
-    if (!head.startsWith('<')) return false;
-
-    const lowerHead = head.toLowerCase();
-    if (['<!doctype html', '<html', '<head', '<body', '<script', '<iframe'].some(m => lowerHead.includes(m))) {
-      return false;
+  public static cleanXmlBuffer(buffer: Buffer): { isXml: boolean; cleanBuffer: Buffer; text: string } {
+    if (!buffer || buffer.length === 0) {
+      return { isXml: false, cleanBuffer: buffer, text: '' };
     }
 
-    if (head.startsWith('<?xml')) return true;
+    let raw = '';
+    if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+      raw = buffer.slice(3).toString('utf-8');
+    } else if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+      raw = buffer.slice(2).toString('utf16le');
+    } else if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+      raw = buffer.slice(2).swap16().toString('utf16le');
+    } else {
+      raw = buffer.toString('utf-8');
+    }
 
-    // Thẻ gốc phải tồn tại thẻ đóng tương ứng và KHÔNG phải thẻ HTML phổ biến
-    // (chặn cả trang lỗi dạng fragment như <div>...</div>)
-    const rootMatch = head.match(/^<([A-Za-z][\w.:-]*)/);
-    if (!rootMatch) return false;
+    const trimmed = raw.replace(/^\uFEFF/, '').trimStart();
+    if (!trimmed.startsWith('<')) {
+      return { isXml: false, cleanBuffer: buffer, text: '' };
+    }
+
+    const lower = trimmed.slice(0, 4096).toLowerCase();
+    if (['<!doctype html', '<html', '<head', '<body', '<script', '<iframe'].some(m => lower.includes(m))) {
+      return { isXml: false, cleanBuffer: buffer, text: '' };
+    }
+
+    if (trimmed.startsWith('<?xml')) {
+      return { isXml: true, cleanBuffer: Buffer.from(trimmed, 'utf-8'), text: trimmed };
+    }
+
+    // Bỏ qua comment đầu (<!-- ... -->) nếu có
+    const stripComments = trimmed.replace(/^<!--[\s\S]*?-->\s*/, '');
+    const rootMatch = stripComments.match(/^<([A-Za-z][\w.:-]*)/);
+    if (!rootMatch) {
+      return { isXml: false, cleanBuffer: buffer, text: '' };
+    }
 
     const rootTagLower = rootMatch[1].toLowerCase();
-    if (ZipExtractor.HTML_ROOT_DENYLIST.has(rootTagLower)) return false;
+    if (ZipExtractor.HTML_ROOT_DENYLIST.has(rootTagLower)) {
+      return { isXml: false, cleanBuffer: buffer, text: '' };
+    }
 
-    return zipBuffer.toString('utf-8').includes(`</${rootMatch[1]}>`);
+    // Chấp nhận XML hợp lệ nếu có thẻ đóng hoặc là thẻ tự đóng hoặc thẻ gốc hồ sơ thuế
+    const hasClosingTag = stripComments.includes(`</${rootMatch[1]}>`) || stripComments.includes(`</${rootMatch[1].split(':').pop()}>`);
+    const isTaxRoot = /^(?:[a-zA-Z0-9]+:)?(?:HSoThue|HSoThueDTu|TKhai|HSo|ToKhai|TkhaiThue|BangKe|BKe)/i.test(rootMatch[1]);
+
+    if (hasClosingTag || isTaxRoot) {
+      return { isXml: true, cleanBuffer: Buffer.from(trimmed, 'utf-8'), text: trimmed };
+    }
+
+    return { isXml: false, cleanBuffer: buffer, text: '' };
+  }
+
+  /**
+   * Kiểm tra buffer có phải XML hồ sơ thuế thật sự hay không.
+   */
+  private static isRealXmlContent(zipBuffer: Buffer): boolean {
+    return this.cleanXmlBuffer(zipBuffer).isXml;
   }
 
   private static readonly HTML_ROOT_DENYLIST = new Set([
@@ -160,17 +196,17 @@ export class ZipExtractor {
       : (isQuyetToan ? 'QuyetToan' : 'ChinhThuc');
     const filingIdentity = this.buildFilingIdentity(filing, taxCode);
 
-    // ─── 1. KIỂM TRA TỆP XML ĐƠN LẺ (Không nén trong ZIP) ──────────────
-    const isDirectXml = this.isRealXmlContent(zipBuffer);
+    // ─── 1. KIỂM TRA TỆP XML ĐƠN LẺ (Không nén trong ZIP, hỗ trợ BOM / Comments) ──
+    const xmlCheck = this.cleanXmlBuffer(zipBuffer);
 
-    if (isDirectXml) {
+    if (xmlCheck.isXml) {
       const finalFileName = this.buildSafeFileName(
         `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}`,
         '.xml'
       );
-      const resolved = this.resolveCollisionSafePath(destDir, finalFileName, zipBuffer);
+      const resolved = this.resolveCollisionSafePath(destDir, finalFileName, xmlCheck.cleanBuffer);
       if (!resolved.isExisting) {
-        fs.writeFileSync(resolved.targetPath, zipBuffer);
+        fs.writeFileSync(resolved.targetPath, xmlCheck.cleanBuffer);
       }
       if (fs.statSync(resolved.targetPath).size === 0) {
         throw new Error(`Tệp XML đã lưu "${finalFileName}" có kích thước 0 byte`);
@@ -183,7 +219,6 @@ export class ZipExtractor {
         fileHashes: { [resolved.targetPath]: resolved.hash }
       };
     }
-
     // ─── 2. KIỂM TRA TỆP PDF ĐƠN LẺ (Không nén trong ZIP) ──────────────
     const headerSlice = zipBuffer.slice(0, 5).toString('utf-8').trim();
     const isDirectPdf = headerSlice.startsWith('%PDF');
@@ -209,20 +244,35 @@ export class ZipExtractor {
       };
     }
 
-    // ─── 3. GIẢI NÉN TỆP NÉN ZIP ──────────────────────────────────────
+    // ─── 3. KIỂM TRA GZIP / DEFLATE NÉN ĐƠN LẺ TRƯỚC KHI GỌI ADM-ZIP ───
+    if (zipBuffer.length >= 2 && zipBuffer[0] === 0x1f && zipBuffer[1] === 0x8b) {
+      try {
+        const uncompressed = zlib.gunzipSync(zipBuffer);
+        return this.extractBase64Zip(uncompressed.toString('base64'), destDir, filing, taxCode);
+      } catch {}
+    }
+    if (zipBuffer.length >= 2 && zipBuffer[0] === 0x78 && (zipBuffer[1] === 0x9c || zipBuffer[1] === 0x01 || zipBuffer[1] === 0xda)) {
+      try {
+        const uncompressed = zlib.inflateSync(zipBuffer);
+        return this.extractBase64Zip(uncompressed.toString('base64'), destDir, filing, taxCode);
+      } catch {}
+    }
+
+    // ─── 4. GIẢI NÉN TỆP NÉN ZIP ──────────────────────────────────────
     let zip: AdmZip;
     try {
       zip = new AdmZip(zipBuffer);
     } catch (err: any) {
-      // Fallback: nếu AdmZip thất bại nhưng buffer là XML hồ sơ hợp lệ
-      if (this.isRealXmlContent(zipBuffer)) {
+      // Fallback 1: Buffer là XML hồ sơ thuế (có thể do portal gửi raw XML thay vì ZIP)
+      const fbXml = this.cleanXmlBuffer(zipBuffer);
+      if (fbXml.isXml) {
         const finalFileName = this.buildSafeFileName(
           `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}`,
           '.xml'
         );
-        const resolved = this.resolveCollisionSafePath(destDir, finalFileName, zipBuffer);
+        const resolved = this.resolveCollisionSafePath(destDir, finalFileName, fbXml.cleanBuffer);
         if (!resolved.isExisting) {
-          fs.writeFileSync(resolved.targetPath, zipBuffer);
+          fs.writeFileSync(resolved.targetPath, fbXml.cleanBuffer);
         }
         if (fs.statSync(resolved.targetPath).size === 0) {
           throw new Error(`Tệp XML đã lưu "${finalFileName}" có kích thước 0 byte (AdmZip fallback)`);
@@ -235,6 +285,51 @@ export class ZipExtractor {
           fileHashes: { [resolved.targetPath]: resolved.hash }
         };
       }
+
+      // Fallback 2: Thử giải nén zlib unzip cho stream raw deflate
+      try {
+        const uncompressed = zlib.unzipSync(zipBuffer);
+        const uncompressedXml = this.cleanXmlBuffer(uncompressed);
+        if (uncompressedXml.isXml) {
+          const finalFileName = this.buildSafeFileName(
+            `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}`,
+            '.xml'
+          );
+          const resolved = this.resolveCollisionSafePath(destDir, finalFileName, uncompressedXml.cleanBuffer);
+          if (!resolved.isExisting) {
+            fs.writeFileSync(resolved.targetPath, uncompressedXml.cleanBuffer);
+          }
+          return {
+            isExisting: resolved.isExisting,
+            savedPaths: [resolved.targetPath],
+            xmlPath: resolved.targetPath,
+            sha256,
+            fileHashes: { [resolved.targetPath]: resolved.hash }
+          };
+        }
+      } catch {}
+
+      // Fallback 3: Kiểm tra PDF
+      if (zipBuffer.includes(Buffer.from('%PDF-'))) {
+        const pdfStart = zipBuffer.indexOf(Buffer.from('%PDF-'));
+        const pdfBuf = pdfStart > 0 ? zipBuffer.slice(pdfStart) : zipBuffer;
+        const finalFileName = this.buildSafeFileName(
+          `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}`,
+          '.pdf'
+        );
+        const resolved = this.resolveCollisionSafePath(destDir, finalFileName, pdfBuf);
+        if (!resolved.isExisting) {
+          fs.writeFileSync(resolved.targetPath, pdfBuf);
+        }
+        return {
+          isExisting: resolved.isExisting,
+          savedPaths: [resolved.targetPath],
+          pdfPath: resolved.targetPath,
+          sha256,
+          fileHashes: { [resolved.targetPath]: resolved.hash }
+        };
+      }
+
       throw new Error(`File không đúng định dạng ZIP: ${err.message}`);
     }
 
