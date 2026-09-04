@@ -12,8 +12,8 @@ interface FilingTabsProps {
     CIT: number;
     FCT: number;
     HOUSE_LAND: number;
-    REPORT: number;
-    OTHER: number;
+    REPORT?: number;
+    OTHER?: number;
   };
   gntCount?: number;
   onSwitchToGnt?: () => void;
@@ -27,15 +27,13 @@ export const FilingTabs: React.FC<FilingTabsProps> = ({
   onSwitchToGnt
 }) => {
   const tabs: { key: TaxType; label: string; count: number }[] = [
-    { key: 'ALL', label: 'Tất cả', count: counts.ALL },
+    { key: 'ALL', label: 'Tất cả tờ khai', count: counts.ALL },
     { key: 'VAT', label: 'GTGT', count: counts.VAT },
-    { key: 'REFUND', label: 'Hoàn thuế', count: counts.REFUND },
     { key: 'PIT', label: 'TNCN', count: counts.PIT },
     { key: 'CIT', label: 'TNDN', count: counts.CIT },
     { key: 'FCT', label: 'Nhà thầu (FCT)', count: counts.FCT },
-    { key: 'HOUSE_LAND', label: 'Nhà đất', count: counts.HOUSE_LAND },
-    { key: 'REPORT', label: 'Báo cáo / HĐ', count: counts.REPORT },
-    { key: 'OTHER', label: 'Khác', count: counts.OTHER }
+    { key: 'HOUSE_LAND', label: 'Thuê đất / Nhà đất', count: counts.HOUSE_LAND },
+    { key: 'REFUND', label: 'Hoàn thuế', count: counts.REFUND }
   ];
 
   return (

@@ -162,15 +162,13 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
             onChange={e => onTaxTypeChange(e.target.value as TaxType)}
             className="h-8 px-2.5 bg-slate-50 border border-slate-300 rounded-lg font-medium text-slate-700 text-xs focus-ring focus:bg-white transition-all cursor-pointer shadow-2xs"
           >
-            <option value="ALL">Tất cả loại hồ sơ</option>
+            <option value="ALL">Tất cả tờ khai thuế</option>
             <option value="VAT">Thuế GTGT</option>
-            <option value="REFUND">Hoàn thuế</option>
             <option value="PIT">Thuế TNCN</option>
             <option value="CIT">Thuế TNDN</option>
             <option value="FCT">Thuế Nhà Thầu (FCT)</option>
-            <option value="HOUSE_LAND">Thuế Nhà đất</option>
-            <option value="REPORT">Báo cáo / Hóa đơn</option>
-            <option value="OTHER">Thủ tục khác</option>
+            <option value="HOUSE_LAND">Thuê đất / Nhà đất</option>
+            <option value="REFUND">Hoàn thuế</option>
           </select>
         </div>
       )}

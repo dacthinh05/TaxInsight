@@ -124,17 +124,18 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
     const searchTokens = normalizedQuery ? normalizedQuery.split(/\s+/).filter(Boolean) : [];
 
     const result = filings.filter(f => {
-      // 1. Lọc theo Tab Loại thuế
-      if (selectedTaxType !== 'ALL') {
-        if (selectedTaxType === 'REFUND') {
-          const isRefund = f.taxType === 'REFUND' || f.filingType === 'REFUND' || f.procedureCode === '1.007037' || f.procedureCode === '1.007039';
-          if (!isRefund) return false;
-        } else if (selectedTaxType === 'VAT') {
-          const isRefund = f.taxType === 'REFUND' || f.filingType === 'REFUND' || f.procedureCode === '1.007037' || f.procedureCode === '1.007039';
-          if (isRefund || f.taxType !== 'VAT') return false;
-        } else {
-          if (f.taxType !== selectedTaxType) return false;
-        }
+      const isRefund = f.taxType === 'REFUND' || f.filingType === 'REFUND' || f.procedureCode === '1.007037' || f.procedureCode === '1.007039';
+      const isCoreTaxFiling = isRefund || f.taxType === 'VAT' || f.taxType === 'PIT' || f.taxType === 'CIT' || f.taxType === 'FCT' || f.taxType === 'HOUSE_LAND';
+
+      // 1. Lọc theo Tab Loại thuế (ALL = tất cả tờ khai thuế thực tế, không lấy thủ tục hành chính khác)
+      if (selectedTaxType === 'ALL') {
+        if (!isCoreTaxFiling) return false;
+      } else if (selectedTaxType === 'REFUND') {
+        if (!isRefund) return false;
+      } else if (selectedTaxType === 'VAT') {
+        if (isRefund || f.taxType !== 'VAT') return false;
+      } else {
+        if (f.taxType !== selectedTaxType) return false;
       }
 
       // 2. Lọc theo Search đa từ khóa
@@ -197,7 +198,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
 
   const counts = useMemo(() => {
     const res: Record<TaxType, number> = {
-      ALL: filings.length,
+      ALL: 0,
       VAT: 0,
       REFUND: 0,
       PIT: 0,
@@ -208,10 +209,15 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
       OTHER: 0
     };
     for (const f of filings) {
-      if (f.taxType === 'REFUND' || f.filingType === 'REFUND' || f.procedureCode === '1.007037' || f.procedureCode === '1.007039') {
+      const isRefund = f.taxType === 'REFUND' || f.filingType === 'REFUND' || f.procedureCode === '1.007037' || f.procedureCode === '1.007039';
+      if (isRefund) {
         res.REFUND++;
-      } else if (res[f.taxType] !== undefined && f.taxType !== 'ALL') {
+        res.ALL++;
+      } else if (f.taxType === 'VAT' || f.taxType === 'PIT' || f.taxType === 'CIT' || f.taxType === 'FCT' || f.taxType === 'HOUSE_LAND') {
         res[f.taxType]++;
+        res.ALL++;
+      } else if (f.taxType === 'REPORT') {
+        res.REPORT++;
       } else {
         res.OTHER++;
       }
@@ -475,20 +481,20 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
         {/* Summary status line thanh lịch phía trên table */}
         <div className="px-4 py-2 bg-slate-50/70 border-t border-slate-200/80 flex items-center justify-between text-[12.5px] text-slate-600 font-sans">
           <div className="flex items-center space-x-2">
-            <span className="font-semibold text-slate-800">{filings.length} hồ sơ</span>
+            <span className="font-semibold text-slate-800">{filteredFilings.length} tờ khai</span>
             <span className="text-slate-300">·</span>
             <span className="text-emerald-700 font-semibold">
-              {filings.filter(f => (f.status || '').toLowerCase().includes('chấp nhận')).length} đã chấp nhận
+              {filteredFilings.filter(f => (f.status || '').toLowerCase().includes('chấp nhận')).length} đã chấp nhận
             </span>
             <span className="text-slate-300">·</span>
             <span className="text-slate-600">
-              {filings.filter(f => f.downloadStatus === 'COMPLETED' || f.downloadStatus === 'EXISTING').length} đã tải về máy
+              {filteredFilings.filter(f => f.downloadStatus === 'COMPLETED' || f.downloadStatus === 'EXISTING').length} đã tải về máy
             </span>
           </div>
 
-          {filteredFilings.length !== filings.length && (
+          {selectedTaxType !== 'ALL' && (
             <div className="text-[12px] text-teal-800 font-medium bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-              Đang lọc hiển thị {filteredFilings.length} / {filings.length} hồ sơ
+              Đang xem {filteredFilings.length} / {counts.ALL} tờ khai
             </div>
           )}
         </div>
