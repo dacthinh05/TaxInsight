@@ -169,6 +169,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
             <option value="FCT">Thuế Nhà Thầu (FCT)</option>
             <option value="HOUSE_LAND">Thuê đất / Nhà đất</option>
             <option value="REFUND">Hoàn thuế</option>
+            <option value="OTHER">Hồ sơ khác</option>
           </select>
         </div>
       )}

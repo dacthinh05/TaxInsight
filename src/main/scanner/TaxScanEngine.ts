@@ -291,7 +291,9 @@ export class TaxScanEngine extends EventEmitter {
             type: 'ERROR',
             action: `Dừng quét ${qRange.label}: ${qErr.message || 'lỗi hạ tầng Cổng Thuế'}`
           });
-          throw qErr;
+          if (qErr?.code === 'RATE_LIMIT' || Number(qErr?.httpStatus) === 429) {
+            throw qErr;
+          }
         }
 
         // Nếu quý bị đầy (>= 20 bản ghi) → Tự động quét chi tiết 3 tháng của quý đó
@@ -330,7 +332,9 @@ export class TaxScanEngine extends EventEmitter {
                 type: 'ERROR',
                 action: `Dừng quét ${mRange.label}: ${mErr.message || 'lỗi hạ tầng Cổng Thuế'}`
               });
-              throw mErr;
+              if (mErr?.code === 'RATE_LIMIT' || Number(mErr?.httpStatus) === 429) {
+                throw mErr;
+              }
             }
 
             // Nếu 1 tháng có >= 20 bản ghi → Tự động quét sâu theo 3 khoảng 10 ngày
@@ -358,7 +362,9 @@ export class TaxScanEngine extends EventEmitter {
                     type: 'ERROR',
                     action: `Dừng quét ${subRange.label}: ${subErr.message || 'lỗi hạ tầng Cổng Thuế'}`
                   });
-                  throw subErr;
+                  if (subErr?.code === 'RATE_LIMIT' || Number(subErr?.httpStatus) === 429) {
+                    throw subErr;
+                  }
                 }
 
                 // Nếu 1 khoảng 10 ngày vẫn bị tràn (>= 20 bản ghi) → Phân rã tiếp thành 5 ngày & từng ngày
@@ -386,7 +392,9 @@ export class TaxScanEngine extends EventEmitter {
                         type: 'ERROR',
                         action: `Dừng quét ${fiveDayRange.label}: ${fiveDayErr.message || 'lỗi hạ tầng Cổng Thuế'}`
                       });
-                      throw fiveDayErr;
+                      if (fiveDayErr?.code === 'RATE_LIMIT' || Number(fiveDayErr?.httpStatus) === 429) {
+                        throw fiveDayErr;
+                      }
                     }
 
                     // Nếu 5 ngày vẫn >= 20 bản ghi → Phân rã tới từng ngày đơn lẻ (Daily level)
@@ -410,7 +418,9 @@ export class TaxScanEngine extends EventEmitter {
                             type: 'ERROR',
                             action: `Dừng quét ${dailyRange.label}: ${dailyErr.message || 'lỗi hạ tầng Cổng Thuế'}`
                           });
-                          throw dailyErr;
+                          if (dailyErr?.code === 'RATE_LIMIT' || Number(dailyErr?.httpStatus) === 429) {
+                            throw dailyErr;
+                          }
                         }
                       }
                     }

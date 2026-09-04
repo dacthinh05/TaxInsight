@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const readline = require('readline');
-const { execSync, spawn } = require('child_process');
+const { execSync } = require('child_process');
 
 console.log('====================================================================');
 console.log('  HE THONG PHAT HANH BAN CAP NHAT TU DONG - TAXINSIGHT (GITHUB)');
@@ -13,16 +13,14 @@ const pkgPath = path.join(__dirname, '..', 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 
 async function getToken() {
-  // 1. Ưu tiên biến môi trường (không để lại dấu vết trên đĩa)
   if (process.env.GH_TOKEN && process.env.GH_TOKEN.trim()) {
     return process.env.GH_TOKEN.trim();
   }
 
-  // 2. File local đã gitignore (từ phiên trước)
   if (fs.existsSync(tokenPath)) {
     const token = fs.readFileSync(tokenPath, 'utf-8').trim();
     if (token) {
-      console.log('[*] Su dung token tu file .github_token (khuyen dung: dat GH_TOKEN trong moi truong).');
+      console.log('[*] Su dung token tu file .github_token.');
       return token;
     }
   }
@@ -41,11 +39,64 @@ async function getToken() {
         console.error('\n[!] Loi: Ma Token khong duoc de trong!');
         process.exit(1);
       }
-      // KHONG tu ghi token ra file — ai muon luu thi tu luu, hoac dung env GH_TOKEN
-      console.log('[OK] Su dung token cho phien nay (khong luu vao dia).\n');
       resolve(token);
     });
   });
+}
+
+function githubApiRequest(url, method, token, data = null, contentType = 'application/json') {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const headers = {
+      'User-Agent': 'TaxInsight-Publisher',
+      'Authorization': `token ${token}`,
+      'Accept': 'application/vnd.github+json'
+    };
+    if (data) {
+      headers['Content-Type'] = contentType;
+      headers['Content-Length'] = Buffer.isBuffer(data) ? data.length : Buffer.byteLength(data);
+    }
+
+    const req = https.request({
+      hostname: parsed.hostname,
+      path: parsed.pathname + parsed.search,
+      method,
+      headers
+    }, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf-8');
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            resolve(JSON.parse(body));
+          } catch {
+            resolve(body);
+          }
+        } else {
+          reject(new Error(`GitHub API HTTP ${res.statusCode}: ${body}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+async function uploadAsset(uploadUrlTemplate, token, filePath) {
+  const fileName = path.basename(filePath);
+  const uploadUrl = uploadUrlTemplate.replace(/\{.*?\}$/, '') + `?name=${encodeURIComponent(fileName)}`;
+  const stats = fs.statSync(filePath);
+  const sizeMb = (stats.size / (1024 * 1024)).toFixed(1);
+
+  console.log(`  -> Dang upload ${fileName} (${stats.size > 1024 * 1024 ? sizeMb + ' MB' : stats.size + ' bytes'})...`);
+  const fileBuffer = fs.readFileSync(filePath);
+  const contentType = fileName.endsWith('.yml') ? 'application/x-yaml' : 'application/octet-stream';
+
+  await githubApiRequest(uploadUrl, 'POST', token, fileBuffer, contentType);
+  console.log(`  ✓ Upload thanh cong ${fileName}!`);
 }
 
 async function main() {
@@ -53,107 +104,96 @@ async function main() {
   process.env.GH_TOKEN = token;
   const currentPkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
   const version = currentPkg.version;
+  const owner = currentPkg.build?.publish?.owner || 'dacthinh05';
+  const repo = currentPkg.build?.publish?.repo || 'TaxInsight';
+  const outputDirName = currentPkg.build?.directories?.output || 'release-dist';
+  const outputDir = path.resolve(__dirname, '..', outputDirName);
 
   console.log(`[*] Phien ban hien tai trong package.json: v${version}`);
-  console.log('\n[*] Dang build va phat hanh ban cai dat moi len GitHub Releases...');
-  console.log('[*] Qua trinh nay mat khoang 1-2 phut, vui long doi...\n');
+  console.log(`[*] Thu muc chua file build: ${outputDirName}`);
 
-  try {
-    execSync('npm run dist -- -p always', {
-      stdio: 'inherit',
-      shell: true,
-      env: { ...process.env, GH_TOKEN: token }
-    });
-  } catch (err) {
-    console.error('\n[!] Co loi xay ra trong qua trinh dong goi build.');
-    return;
+  // 1. Kiem tra xem file cai dat da duoc build san chua
+  const setupFile = path.join(outputDir, `TaxInsight-Setup-${version}.exe`);
+  const latestYml = path.join(outputDir, 'latest.yml');
+  const blockmapFile = path.join(outputDir, `TaxInsight-Setup-${version}.exe.blockmap`);
+  const portableFile = path.join(outputDir, `TaxInsight-${version}-portable.exe`);
+
+  const hasBuiltAssets = fs.existsSync(setupFile) && fs.existsSync(latestYml);
+
+  if (!hasBuiltAssets) {
+    console.log('\n[*] Chua tim thay bo cai da dong goi san. Dang tien hanh build moi...');
+    try {
+      execSync('taskkill /F /IM electron.exe /IM TaxInsight.exe 2>nul || exit 0', { shell: true });
+      execSync('npm run build && npx electron-builder --win -p never', {
+        stdio: 'inherit',
+        shell: true
+      });
+    } catch (err) {
+      console.error('\n[!] Co loi xay ra trong qua trinh build:', err.message);
+      process.exit(1);
+    }
+  } else {
+    console.log('\n[*] Tim thay bo cai dat hop le san co trong thu muc build!');
   }
 
-  console.log('\n[*] Dang kich hoat ban Release thanh cong khai (Public Live)...');
+  // 2. Tao hoac cap nhat Release tren GitHub
+  console.log(`\n[*] Dang kiem tra / tao ban Release v${version} tren GitHub...`);
+  let release;
+  try {
+    release = await githubApiRequest(`https://api.github.com/repos/${owner}/${repo}/releases/tags/v${version}`, 'GET', token);
+    console.log(`  -> Tim thay Release v${version} (ID: ${release.id}).`);
+  } catch (err) {
+    // Neu chua co thi tao moi
+    console.log(`  -> Dang tao Release moi v${version}...`);
+    release = await githubApiRequest(`https://api.github.com/repos/${owner}/${repo}/releases`, 'POST', token, JSON.stringify({
+      tag_name: `v${version}`,
+      target_commitish: 'master',
+      name: `TaxInsight v${version}`,
+      body: `Bản phát hành cập nhật tự động TaxInsight v${version}`,
+      draft: false,
+      prerelease: false
+    }));
+    console.log(`  ✓ Da tao Release moi thanh cong (ID: ${release.id})!`);
+  }
 
+  // 3. Upload cac file len Release
+  console.log(`\n[*] Dang upload cac file cap nhat len GitHub Releases...`);
+  const filesToUpload = [latestYml, blockmapFile, setupFile, portableFile].filter(f => fs.existsSync(f));
+
+  // Xoa cac asset cu trung ten neu co
+  const existingAssets = release.assets || [];
+  for (const f of filesToUpload) {
+    const fName = path.basename(f);
+    const existing = existingAssets.find(a => a.name === fName);
+    if (existing) {
+      console.log(`  -> Xoa asset cu trung ten: ${fName}...`);
       try {
-        await new Promise((patchResolve) => {
-          const req = https.request('https://api.github.com/repos/dacthinh05/TaxInsight/releases', {
-            headers: {
-              'User-Agent': 'NodeJS-Publisher',
-              'Authorization': `token ${token}`
-            }
-          }, (res) => {
-            let data = '';
-            res.on('data', d => data += d);
-            res.on('end', () => {
-              try {
-                const releases = JSON.parse(data);
-                const r = releases.find(rel => rel.tag_name === 'v' + version);
-                if (r && r.draft) {
-                  const doPatch = (onDone) => {
-                    const updateData = JSON.stringify({
-                      draft: false,
-                      name: 'TaxInsight v' + version,
-                      body: 'Bản phát hành cập nhật tự động TaxInsight v' + version
-                    });
-                    const patchReq = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/releases/${r.id}`, {
-                      method: 'PATCH',
-                      headers: {
-                        'User-Agent': 'NodeJS-Publisher',
-                        'Authorization': `token ${token}`,
-                        'Content-Type': 'application/json'
-                      }
-                    }, (patchRes) => {
-                      if (patchRes.statusCode === 422) {
-                        // Xóa tag xung đột trên remote rồi thử lại 1 lần
-                        const delTagReq = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/git/refs/tags/v${version}`, {
-                          method: 'DELETE',
-                          headers: { 'User-Agent': 'NodeJS-Publisher', 'Authorization': `token ${token}` }
-                        }, () => {
-                          const retryPatch = https.request(`https://api.github.com/repos/dacthinh05/TaxInsight/releases/${r.id}`, {
-                            method: 'PATCH',
-                            headers: { 'User-Agent': 'NodeJS-Publisher', 'Authorization': `token ${token}`, 'Content-Type': 'application/json' }
-                          }, (rRes) => {
-                            console.log('    -> Trang thai Public Release (sau khi clear tag):', rRes.statusCode === 200 ? 'THANH CONG (200 OK)' : rRes.statusCode);
-                            onDone();
-                          });
-                          retryPatch.write(updateData);
-                          retryPatch.end();
-                        });
-                        delTagReq.end();
-                      } else {
-                        console.log('    -> Trang thai Public Release:', patchRes.statusCode === 200 ? 'THANH CONG (200 OK)' : patchRes.statusCode);
-                        onDone();
-                      }
-                    });
-                    patchReq.write(updateData);
-                    patchReq.end();
-                  };
-                  doPatch(patchResolve);
-                } else {
-                  patchResolve();
-                }
-              } catch (e) {
-                patchResolve();
-              }
-            });
-          });
-
-          req.on('error', () => patchResolve());
-          req.end();
-        });
-      } catch (err) {
-        console.warn('[!] Loi kich hoat Release:', err.message);
-      }
-
-      printSuccess();
+        await githubApiRequest(`https://api.github.com/repos/${owner}/${repo}/releases/assets/${existing.id}`, 'DELETE', token);
+      } catch {}
     }
+    await uploadAsset(release.upload_url, token, f);
+  }
 
-function printSuccess() {
+  // 4. Kich hoat public live release
+  if (release.draft) {
+    console.log('\n[*] Dang chuyen Release sang trang thai cong khai (Public Live)...');
+    await githubApiRequest(`https://api.github.com/repos/${owner}/${repo}/releases/${release.id}`, 'PATCH', token, JSON.stringify({
+      draft: false
+    }));
+  }
+
+  printSuccess(version);
+}
+
+function printSuccess(version) {
   console.log('\n====================================================================');
-  console.log('  [THANH CONG] DA PHAT HANH BAN CAP NHAT MOI LEN GITHUB!');
-  console.log('  - Ma nguon da duoc dong bo len nhanh main tren Git.');
-  console.log('  - Ban cai dat da LIVE tren GitHub Releases.');
-  console.log('  - Tat ca may khach hang dang mo app se nhan thong bao cap nhat ngay.');
+  console.log(`  [THANH CONG] DA PHAT HANH BAN CAP NHAT v${version} LEN GITHUB!`);
+  console.log('  - Link Release: https://github.com/dacthinh05/TaxInsight/releases');
+  console.log('  - Tat ca may client dang mo ung dung se nhan duoc thong bao cap nhat.');
   console.log('====================================================================\n');
 }
 
 main().catch(err => {
-  console.error('[!] Loi:', err.message);
+  console.error('\n[!] Loi:', err.message);
+  process.exit(1);
 });

@@ -131,9 +131,7 @@ export class PaginationResolver {
               }
               throw retryError;
             }
-          } else if (pageError?.code !== 'CAPTCHA_INVALID' || !this.captchaManager) {
-            throw pageError;
-          } else {
+          } else if (pageError?.code === 'CAPTCHA_INVALID' && this.captchaManager) {
             serverRequiresFreshCaptchaPerPage = true;
             currentCaptcha = await this.captchaManager.requestCaptcha(
               'SEARCH',
@@ -145,10 +143,38 @@ export class PaginationResolver {
               ...searchOptions,
               page: currentPage
             });
+          } else {
+            const isTimeoutOrNetwork =
+              pageError?.code === 'TIMEOUT' ||
+              pageError?.code === 'ECONNABORTED' ||
+              pageError?.code === 'ETIMEDOUT' ||
+              pageError?.code === 'NETWORK' ||
+              /timeout|hết thời gian chờ/i.test(String(pageError?.message || ''));
+            if (isTimeoutOrNetwork) {
+              console.warn(`[PaginationResolver] Trang ${currentPage} gặp lỗi timeout/kết nối, tạm dừng 2s và thử lại...`);
+              await new Promise(r => setTimeout(r, 2000));
+              try {
+                nextResult = await this.client.searchFilings(range, currentCaptcha, {
+                  ...searchOptions,
+                  page: currentPage
+                });
+              } catch (retryTimeoutErr: any) {
+                console.warn(`[PaginationResolver] Thử lại trang ${currentPage} thất bại (${retryTimeoutErr?.message}). Bảo lưu ${allFilings.length} hồ sơ đã thu thập.`);
+                return {
+                  isFullyRetrieved: false,
+                  filings: allFilings,
+                  totalPages: currentPage - 1,
+                  needSplitRange: true,
+                  splitReason: 'HARD_RESULT_CAP_HIT'
+                };
+              }
+            } else {
+              throw pageError;
+            }
           }
         }
 
-        if (nextResult.filings.length === 0) {
+        if (!nextResult || nextResult.filings.length === 0) {
           hasMore = false;
         } else {
           const newFilings = nextResult.filings.filter(f => !seenIds.has(f.id));

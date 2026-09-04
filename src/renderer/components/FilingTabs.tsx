@@ -26,6 +26,7 @@ export const FilingTabs: React.FC<FilingTabsProps> = ({
   gntCount = 0,
   onSwitchToGnt
 }) => {
+  const otherCount = (counts.REPORT || 0) + (counts.OTHER || 0);
   const tabs: { key: TaxType; label: string; count: number }[] = [
     { key: 'ALL', label: 'Tất cả tờ khai', count: counts.ALL },
     { key: 'VAT', label: 'GTGT', count: counts.VAT },
@@ -35,6 +36,9 @@ export const FilingTabs: React.FC<FilingTabsProps> = ({
     { key: 'HOUSE_LAND', label: 'Thuê đất / Nhà đất', count: counts.HOUSE_LAND },
     { key: 'REFUND', label: 'Hoàn thuế', count: counts.REFUND }
   ];
+  if (otherCount > 0) {
+    tabs.push({ key: 'OTHER', label: 'Hồ sơ khác', count: otherCount });
+  }
 
   return (
     <div className="flex items-center justify-between border-b border-slate-200/90 px-5 bg-slate-50/40 select-none">

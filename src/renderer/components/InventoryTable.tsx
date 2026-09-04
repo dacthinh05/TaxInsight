@@ -127,13 +127,15 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
       const isRefund = f.taxType === 'REFUND' || f.filingType === 'REFUND' || f.procedureCode === '1.007037' || f.procedureCode === '1.007039';
       const isCoreTaxFiling = isRefund || f.taxType === 'VAT' || f.taxType === 'PIT' || f.taxType === 'CIT' || f.taxType === 'FCT' || f.taxType === 'HOUSE_LAND';
 
-      // 1. Lọc theo Tab Loại thuế (ALL = tất cả tờ khai thuế thực tế, không lấy thủ tục hành chính khác)
+      // 1. Lọc theo Tab Loại thuế
       if (selectedTaxType === 'ALL') {
-        if (!isCoreTaxFiling) return false;
+        // "Tất cả tờ khai": hiển thị toàn bộ hồ sơ đã quét được từ Cổng Thuế
       } else if (selectedTaxType === 'REFUND') {
         if (!isRefund) return false;
       } else if (selectedTaxType === 'VAT') {
         if (isRefund || f.taxType !== 'VAT') return false;
+      } else if (selectedTaxType === 'OTHER') {
+        if (isRefund || (f.taxType !== 'OTHER' && f.taxType !== 'REPORT')) return false;
       } else {
         if (f.taxType !== selectedTaxType) return false;
       }
@@ -198,7 +200,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
 
   const counts = useMemo(() => {
     const res: Record<TaxType, number> = {
-      ALL: 0,
+      ALL: filings.length,
       VAT: 0,
       REFUND: 0,
       PIT: 0,
@@ -212,12 +214,11 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
       const isRefund = f.taxType === 'REFUND' || f.filingType === 'REFUND' || f.procedureCode === '1.007037' || f.procedureCode === '1.007039';
       if (isRefund) {
         res.REFUND++;
-        res.ALL++;
       } else if (f.taxType === 'VAT' || f.taxType === 'PIT' || f.taxType === 'CIT' || f.taxType === 'FCT' || f.taxType === 'HOUSE_LAND') {
         res[f.taxType]++;
-        res.ALL++;
       } else if (f.taxType === 'REPORT') {
         res.REPORT++;
+        res.OTHER++;
       } else {
         res.OTHER++;
       }

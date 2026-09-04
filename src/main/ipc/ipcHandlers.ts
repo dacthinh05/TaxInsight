@@ -5,6 +5,7 @@ import { PORTAL_CONFIG } from '../../shared/constants';
 import { sanitizeFilename } from '../../shared/sanitizer';
 import { isValidTaxCode } from '../../shared/taxCodeUtils';
 import { DateRange, PaymentSlipRecord, TaxFiling, TaxType } from '../../shared/types';
+import { checkMissingPeriods } from '../../shared/dateUtils';
 import { DownloadManager } from '../downloader/DownloadManager';
 import { LegacyFilingDownloader } from '../downloader/LegacyFilingDownloader';
 import { ExcelExporter } from '../exporter/ExcelExporter';
@@ -481,6 +482,23 @@ export function setupIpcHandlers(
       return { success: true, data: result };
     } catch (err: any) {
       auditLogger.log('ERROR', `Lỗi khi quét hồ sơ năm ${year}`, err.message);
+      const partialFilings = scanEngine.getFilings();
+      if (partialFilings && partialFilings.length > 0) {
+        const sessionInfo = session.getSessionInfo();
+        const safeYear = Number(year) || new Date().getFullYear();
+        if (sessionInfo.taxCode) {
+          checkpointStore.saveCheckpoint(sessionInfo.taxCode, safeYear, partialFilings);
+        }
+        return {
+          success: true,
+          data: {
+            filings: partialFilings,
+            missingVatCheck: checkMissingPeriods(partialFilings, safeYear, 'VAT'),
+            missingPitCheck: checkMissingPeriods(partialFilings, safeYear, 'PIT')
+          },
+          partialError: err.message
+        };
+      }
       return {
         success: false,
         error: err.message,
