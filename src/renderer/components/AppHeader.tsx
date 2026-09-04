@@ -1,6 +1,7 @@
 import React from 'react';
 import { Activity, ArrowUpCircle, Clock, CreditCard, FileText, FolderOpen, History, KeyRound, LogOut, RotateCcw, Scale, ShieldCheck } from 'lucide-react';
 import { AppViewMode, SavedAccountInfo, UserSessionInfo } from '../../shared/types';
+import appIconUrl from '/icon.png?url';
 
 interface AppHeaderProps {
   session: UserSessionInfo;
@@ -84,13 +85,16 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
     <header className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 z-40 select-none shrink-0 shadow-xs">
       {/* 1. Left Branding: Logo + Tên ứng dụng + MST */}
       <div className="flex items-center space-x-2.5 shrink-0">
-        <div className="w-7 h-7 rounded-lg bg-teal-950/80 border border-teal-600/30 flex items-center justify-center p-1 shadow-xs shrink-0">
+        <div className="w-7 h-7 rounded-lg bg-teal-950/80 border border-teal-600/30 flex items-center justify-center p-0.5 shadow-xs shrink-0 overflow-hidden">
           <img
-            src="/icon.svg"
+            src={appIconUrl}
             alt="TaxInsight Logo"
             className="w-full h-full object-contain"
             onError={(e) => {
-              (e.currentTarget as HTMLElement).style.display = 'none';
+              const target = e.currentTarget;
+              if (!target.src.endsWith('icon.svg')) {
+                target.src = './icon.svg';
+              }
             }}
           />
         </div>
