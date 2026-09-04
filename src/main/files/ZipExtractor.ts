@@ -497,7 +497,8 @@ export class ZipExtractor {
         }
       }
       if (entryData.length === 0) {
-        throw new Error(`Tệp "${entryName}" trong ZIP có kích thước 0 byte`);
+        console.warn(`[ZipExtractor] Bỏ qua entry rỗng 0 byte: "${entryName}"`);
+        continue;
       }
       const resolved = this.resolveCollisionSafePath(destDir, finalFileName, entryData);
       if (!resolved.isExisting) {
@@ -515,7 +516,7 @@ export class ZipExtractor {
     }
 
     if (savedPaths.length === 0) {
-      throw new Error('Tệp ZIP không chứa bất kỳ tệp dữ liệu hợp lệ nào');
+      throw new Error('Tệp ZIP không chứa bất kỳ tệp dữ liệu hợp lệ nào (kích thước 0 byte)');
     }
 
     return {
