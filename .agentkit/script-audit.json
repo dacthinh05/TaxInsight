@@ -1,0 +1,298 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-04T13:25:24Z",
+  "report": {
+    "schema_version": 1,
+    "roots": [
+      "D:\\Desktop\\TaxRecord"
+    ],
+    "summary": {
+      "total": 12,
+      "by_risk": {
+        "caution": 2,
+        "risky": 3,
+        "safe": 7
+      },
+      "by_language": {
+        "javascript": 9,
+        "typescript": 3
+      },
+      "findings": 11,
+      "executable_only": 0
+    },
+    "scripts": [
+      {
+        "rel_path": "scripts/admin_keygen_server.js",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\admin_keygen_server.js",
+        "kind": "skill-script",
+        "language": "javascript",
+        "executable": false,
+        "size_bytes": 28828,
+        "risk_level": "risky",
+        "entrypoint": "node",
+        "dependencies": [
+          "child_process",
+          "crypto",
+          "fs",
+          "http",
+          "os",
+          "path"
+        ],
+        "findings": [
+          {
+            "code": "exec-call",
+            "level": "risky",
+            "message": "dynamic exec can execute generated code",
+            "line": 637,
+            "evidence": "exec(`${startCmd} http://localhost:${PORT}`);"
+          },
+          {
+            "code": "child-process",
+            "level": "risky",
+            "message": "child process execution requires review",
+            "line": 6,
+            "evidence": "const { exec } = require('child_process');"
+          },
+          {
+            "code": "absolute-write",
+            "level": "risky",
+            "message": "absolute filesystem writes require review",
+            "line": 469,
+            "evidence": "\u003cscript\u003e"
+          },
+          {
+            "code": "env-access",
+            "level": "caution",
+            "message": "environment or secret access is advisory risk",
+            "line": 107,
+            "evidence": "const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');"
+          },
+          {
+            "code": "network-client",
+            "level": "caution",
+            "message": "network client usage is advisory risk",
+            "line": 474,
+            "evidence": "const res = await fetch(pathname, {"
+          }
+        ]
+      },
+      {
+        "rel_path": "scripts/build-icon-assets.cjs",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\build-icon-assets.cjs",
+        "kind": "skill-script",
+        "language": "javascript",
+        "executable": false,
+        "size_bytes": 3846,
+        "risk_level": "safe",
+        "entrypoint": "node",
+        "dependencies": [
+          "electron",
+          "fs",
+          "path"
+        ],
+        "findings": null
+      },
+      {
+        "rel_path": "scripts/generate-icons.js",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\generate-icons.js",
+        "kind": "skill-script",
+        "language": "javascript",
+        "executable": false,
+        "size_bytes": 3418,
+        "risk_level": "safe",
+        "entrypoint": "node",
+        "dependencies": [
+          "fs",
+          "path",
+          "url"
+        ],
+        "findings": null
+      },
+      {
+        "rel_path": "scripts/generate-key.js",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\generate-key.js",
+        "kind": "skill-script",
+        "language": "javascript",
+        "shebang": "#!/usr/bin/env node",
+        "executable": false,
+        "size_bytes": 6824,
+        "risk_level": "safe",
+        "entrypoint": "#!/usr/bin/env node",
+        "dependencies": [
+          "crypto",
+          "fs",
+          "path"
+        ],
+        "findings": null
+      },
+      {
+        "rel_path": "scripts/inspect-login.js",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\inspect-login.js",
+        "kind": "skill-script",
+        "language": "javascript",
+        "executable": false,
+        "size_bytes": 1272,
+        "risk_level": "risky",
+        "entrypoint": "node",
+        "dependencies": [
+          "axios",
+          "axios-cookiejar-support",
+          "tough-cookie"
+        ],
+        "findings": [
+          {
+            "code": "absolute-write",
+            "level": "risky",
+            "message": "absolute filesystem writes require review",
+            "line": 19,
+            "evidence": "const metas = html.match(/\u003cmeta[^\u003e]+\u003e/gi) || [];"
+          },
+          {
+            "code": "network-client",
+            "level": "caution",
+            "message": "network client usage is advisory risk",
+            "line": 1,
+            "evidence": "const axios = require('axios');"
+          }
+        ]
+      },
+      {
+        "rel_path": "scripts/keygen.ts",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\keygen.ts",
+        "kind": "skill-script",
+        "language": "typescript",
+        "executable": false,
+        "size_bytes": 5195,
+        "risk_level": "safe",
+        "entrypoint": "ts-node",
+        "dependencies": [
+          "crypto",
+          "fs",
+          "path"
+        ],
+        "findings": null
+      },
+      {
+        "rel_path": "scripts/live-gnt-electron.cjs",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\live-gnt-electron.cjs",
+        "kind": "skill-script",
+        "language": "javascript",
+        "executable": false,
+        "size_bytes": 8960,
+        "risk_level": "caution",
+        "entrypoint": "node",
+        "dependencies": [
+          "electron",
+          "fs",
+          "path"
+        ],
+        "findings": [
+          {
+            "code": "env-access",
+            "level": "caution",
+            "message": "environment or secret access is advisory risk",
+            "line": 10,
+            "evidence": "const taxCode = String(process.env.TAXINSIGHT_LIVE_TAX_CODE || '').trim();"
+          }
+        ]
+      },
+      {
+        "rel_path": "scripts/portal-poc.ts",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\portal-poc.ts",
+        "kind": "skill-script",
+        "language": "typescript",
+        "executable": false,
+        "size_bytes": 5455,
+        "risk_level": "safe",
+        "entrypoint": "ts-node",
+        "dependencies": [
+          "readline"
+        ],
+        "findings": null
+      },
+      {
+        "rel_path": "scripts/publish.js",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\publish.js",
+        "kind": "skill-script",
+        "language": "javascript",
+        "executable": false,
+        "size_bytes": 7605,
+        "risk_level": "risky",
+        "entrypoint": "node",
+        "dependencies": [
+          "child_process",
+          "fs",
+          "https",
+          "path",
+          "readline"
+        ],
+        "findings": [
+          {
+            "code": "child-process",
+            "level": "risky",
+            "message": "child process execution requires review",
+            "line": 5,
+            "evidence": "const { execSync } = require('child_process');"
+          },
+          {
+            "code": "env-access",
+            "level": "caution",
+            "message": "environment or secret access is advisory risk",
+            "line": 16,
+            "evidence": "if (process.env.GH_TOKEN \u0026\u0026 process.env.GH_TOKEN.trim()) {"
+          }
+        ]
+      },
+      {
+        "rel_path": "scripts/sign.js",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\sign.js",
+        "kind": "skill-script",
+        "language": "javascript",
+        "executable": false,
+        "size_bytes": 138,
+        "risk_level": "safe",
+        "entrypoint": "node",
+        "dependencies": [],
+        "findings": null
+      },
+      {
+        "rel_path": "scripts/test-csrf-login.js",
+        "abs_path": "D:\\Desktop\\TaxRecord\\scripts\\test-csrf-login.js",
+        "kind": "skill-script",
+        "language": "javascript",
+        "executable": false,
+        "size_bytes": 2742,
+        "risk_level": "caution",
+        "entrypoint": "node",
+        "dependencies": [
+          "axios",
+          "axios-cookiejar-support",
+          "tough-cookie"
+        ],
+        "findings": [
+          {
+            "code": "network-client",
+            "level": "caution",
+            "message": "network client usage is advisory risk",
+            "line": 1,
+            "evidence": "const axios = require('axios');"
+          }
+        ]
+      },
+      {
+        "rel_path": "src/renderer/hooks/useGntReconciliation.ts",
+        "abs_path": "D:\\Desktop\\TaxRecord\\src\\renderer\\hooks\\useGntReconciliation.ts",
+        "kind": "hook",
+        "language": "typescript",
+        "executable": false,
+        "size_bytes": 8936,
+        "risk_level": "safe",
+        "entrypoint": "ts-node",
+        "dependencies": [
+          "react"
+        ],
+        "findings": null
+      }
+    ]
+  }
+}

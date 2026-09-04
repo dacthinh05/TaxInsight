@@ -104,13 +104,17 @@ export class ZipExtractor {
       return { isXml: false, cleanBuffer: buffer, text: '' };
     }
 
-    const lower = trimmed.slice(0, 4096).toLowerCase();
-    if (['<!doctype html', '<html', '<head', '<body', '<script', '<iframe'].some(m => lower.includes(m))) {
-      return { isXml: false, cleanBuffer: buffer, text: '' };
+    if (trimmed.startsWith('<?xml')) {
+      const lower = trimmed.slice(0, 4096).toLowerCase();
+      if (lower.includes('<!doctype html') || /<html[\s>]/i.test(lower)) {
+        return { isXml: false, cleanBuffer: buffer, text: '' };
+      }
+      return { isXml: true, cleanBuffer: Buffer.from(trimmed, 'utf-8'), text: trimmed };
     }
 
-    if (trimmed.startsWith('<?xml')) {
-      return { isXml: true, cleanBuffer: Buffer.from(trimmed, 'utf-8'), text: trimmed };
+    const lower = trimmed.slice(0, 4096).toLowerCase();
+    if (/(?:<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]|<script[\s>]|<iframe[\s>])/i.test(lower)) {
+      return { isXml: false, cleanBuffer: buffer, text: '' };
     }
 
     // Bỏ qua comment đầu (<!-- ... -->) nếu có
@@ -260,10 +264,19 @@ export class ZipExtractor {
     }
 
     // ─── 4. GIẢI NÉN TỆP NÉN ZIP ──────────────────────────────────────
+    const eocdSig = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+    let activeZipBuffer = zipBuffer;
+    if (!zipBuffer.includes(eocdSig)) {
+      const repaired = ZipExtractor.repairZipMissingEocd(zipBuffer);
+      if (repaired) {
+        activeZipBuffer = Buffer.from(repaired);
+      }
+    }
+
     let zip: AdmZip;
     try {
-      zip = new AdmZip(zipBuffer);
-    } catch (err: any) {
+      zip = new AdmZip(activeZipBuffer);
+    } catch (err: unknown) {
       // Fallback 1: Buffer là XML hồ sơ thuế (có thể do portal gửi raw XML thay vì ZIP)
       const fbXml = this.cleanXmlBuffer(zipBuffer);
       if (fbXml.isXml) {
@@ -355,8 +368,24 @@ export class ZipExtractor {
           }
         } catch {}
       }
+      // Fallback 5: Cứu hộ tệp XML hồ sơ thuế nhúng trực tiếp trong buffer
+      const embeddedXml = this.extractEmbeddedXml(
+        zipBuffer,
+        destDir,
+        filing,
+        taxCode,
+        sha256,
+        prefixCode,
+        cleanPeriod,
+        filingSuffix,
+        filingIdentity
+      );
+      if (embeddedXml && embeddedXml.savedPaths.length > 0) {
+        return embeddedXml;
+      }
 
-      throw new Error(`File không đúng định dạng ZIP: ${err.message}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`File không đúng định dạng ZIP: ${msg}`);
     }
 
     const entries = zip.getEntries();
@@ -441,7 +470,32 @@ export class ZipExtractor {
       }
       usedTargetNames.add(finalFileName.toLowerCase());
 
-      const entryData = entry.getData();
+      let entryData: Buffer;
+      try {
+        entryData = entry.getData();
+      } catch (entryErr: unknown) {
+        let rawCompressed: unknown = undefined;
+        if (entry && typeof entry === 'object') {
+          if ('getCompressedData' in entry && typeof entry.getCompressedData === 'function') {
+            rawCompressed = entry.getCompressedData();
+          } else if ('compressedData' in entry) {
+            rawCompressed = entry.compressedData;
+          }
+        }
+        if (Buffer.isBuffer(rawCompressed) && rawCompressed.length > 0) {
+          try {
+            entryData = zlib.inflateRawSync(rawCompressed);
+          } catch {
+            try {
+              entryData = zlib.inflateSync(rawCompressed);
+            } catch {
+              throw entryErr;
+            }
+          }
+        } else {
+          throw entryErr;
+        }
+      }
       if (entryData.length === 0) {
         throw new Error(`Tệp "${entryName}" trong ZIP có kích thước 0 byte`);
       }
@@ -472,6 +526,110 @@ export class ZipExtractor {
       sha256,
       fileHashes
     };
+  }
+
+  /**
+   * Phục hồi tệp ZIP bị thiếu EOCD (PK\x05\x06) khi Central Directory (PK\x01\x02) vẫn còn nguyên.
+   * Tự động tính toán số entry, kích thước và offset của Central Directory để tổng hợp header EOCD chuẩn 22 byte.
+   */
+  public static repairZipMissingEocd(zipBuffer: Buffer): Buffer | null {
+    const cdSig = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+    const cdOffset = zipBuffer.indexOf(cdSig);
+    if (cdOffset === -1) return null;
+
+    let cdEntriesCount = 0;
+    let curOffset = cdOffset;
+    while (curOffset !== -1 && curOffset + 46 <= zipBuffer.length) {
+      const next = zipBuffer.indexOf(cdSig, curOffset);
+      if (next === -1 || next + 46 > zipBuffer.length) break;
+      cdEntriesCount++;
+      const fnLen = zipBuffer.readUInt16LE(next + 28);
+      const extraLen = zipBuffer.readUInt16LE(next + 30);
+      const commentLen = zipBuffer.readUInt16LE(next + 32);
+      curOffset = next + 46 + fnLen + extraLen + commentLen;
+    }
+
+    if (cdEntriesCount === 0) return null;
+    const cdSize = Math.max(0, curOffset - cdOffset);
+
+    const synthEocd = Buffer.alloc(22);
+    synthEocd.write('PK\x05\x06', 0, 4, 'ascii');
+    synthEocd.writeUInt16LE(0, 4); // disk number
+    synthEocd.writeUInt16LE(0, 6); // disk with CD
+    synthEocd.writeUInt16LE(cdEntriesCount, 8); // entries on this disk
+    synthEocd.writeUInt16LE(cdEntriesCount, 10); // total entries
+    synthEocd.writeUInt32LE(cdSize, 12); // size of CD
+    synthEocd.writeUInt32LE(cdOffset, 16); // offset of CD
+    synthEocd.writeUInt16LE(0, 20); // comment length
+
+    return Buffer.concat([zipBuffer.subarray(0, curOffset), synthEocd]);
+  }
+
+  /**
+   * Tìm vị trí header ZIP tiếp theo (PK\x03\x04, PK\x07\x08, PK\x01\x02, PK\x05\x06) để xác định
+   * ranh giới chính xác của stream dữ liệu nén trong các tệp ZIP streaming (Data Descriptor).
+   */
+  private static findNextZipSignature(buf: Buffer, startOffset: number): number {
+    for (let i = startOffset; i + 4 <= buf.length; i++) {
+      if (buf[i] === 0x50 && buf[i + 1] === 0x4b) {
+        const b2 = buf[i + 2];
+        const b3 = buf[i + 3];
+        if (
+          (b2 === 0x03 && b3 === 0x04) ||
+          (b2 === 0x07 && b3 === 0x08) ||
+          (b2 === 0x01 && b3 === 0x02) ||
+          (b2 === 0x05 && b3 === 0x06)
+        ) {
+          return i;
+        }
+      }
+    }
+    return buf.length;
+  }
+
+  /**
+   * Tìm kiếm và giải cứu tệp XML hồ sơ thuế nhúng trực tiếp trong buffer (kể cả khi ZIP hỏng hoàn toàn)
+   */
+  private static extractEmbeddedXml(
+    zipBuffer: Buffer,
+    destDir: string,
+    filing: TaxFiling,
+    taxCode: string,
+    sha256: string,
+    prefixCode: string,
+    cleanPeriod: string,
+    filingSuffix: string,
+    filingIdentity: string
+  ): ExtractedZipResult | null {
+    const xmlMarkers = ['<?xml', '<HSoThueDTu', '<HSoThue', '<TKhaiThue', '<HSoKhaiThue', '<HSo'];
+    for (const marker of xmlMarkers) {
+      const markerBuf = Buffer.from(marker, 'utf8');
+      const idx = zipBuffer.indexOf(markerBuf);
+      if (idx !== -1) {
+        const candidate = zipBuffer.subarray(idx);
+        const check = this.cleanXmlBuffer(candidate);
+        if (check.isXml) {
+          const finalFileName = this.buildSafeFileName(
+            `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}_recovered`,
+            '.xml'
+          );
+          const resolved = this.resolveCollisionSafePath(destDir, finalFileName, check.cleanBuffer);
+          if (!resolved.isExisting) {
+            fs.writeFileSync(resolved.targetPath, check.cleanBuffer);
+          }
+          if (fs.existsSync(resolved.targetPath) && fs.statSync(resolved.targetPath).size > 0) {
+            return {
+              isExisting: resolved.isExisting,
+              savedPaths: [resolved.targetPath],
+              xmlPath: resolved.targetPath,
+              sha256,
+              fileHashes: { [resolved.targetPath]: resolved.hash }
+            };
+          }
+        }
+      }
+    }
+    return null;
   }
 
   /**
@@ -518,32 +676,41 @@ export class ZipExtractor {
       let decompressedData: Buffer | null = null;
       let nextOffset = dataStart;
 
+      // Bỏ qua entry là thư mục
+      const isDirectory = entryName.endsWith('/') || entryName.endsWith('\\');
+      if (isDirectory) {
+        offset = Math.max(dataStart, idx + 4);
+        continue;
+      }
+
       if (method === 8) {
         // Raw Deflate
+        const dataEnd = compressedSize > 0 && dataStart + compressedSize <= zipBuffer.length
+          ? dataStart + compressedSize
+          : this.findNextZipSignature(zipBuffer, dataStart);
+        const slice = zipBuffer.subarray(dataStart, dataEnd);
+        nextOffset = dataEnd;
+
         try {
-          const slice = compressedSize > 0 && dataStart + compressedSize <= zipBuffer.length
-            ? zipBuffer.subarray(dataStart, dataStart + compressedSize)
-            : zipBuffer.subarray(dataStart);
           decompressedData = zlib.inflateRawSync(slice);
-          nextOffset = compressedSize > 0 ? dataStart + compressedSize : dataStart + 1;
         } catch {
           try {
-            const slice = compressedSize > 0 && dataStart + compressedSize <= zipBuffer.length
-              ? zipBuffer.subarray(dataStart, dataStart + compressedSize)
-              : zipBuffer.subarray(dataStart);
             decompressedData = zlib.inflateSync(slice);
-            nextOffset = compressedSize > 0 ? dataStart + compressedSize : dataStart + 1;
-          } catch {}
+          } catch {
+            try {
+              decompressedData = zlib.unzipSync(slice);
+            } catch {}
+          }
         }
       } else if (method === 0) {
         // Stored uncompressed
-        if (compressedSize > 0 && dataStart + compressedSize <= zipBuffer.length) {
-          decompressedData = zipBuffer.subarray(dataStart, dataStart + compressedSize);
-          nextOffset = dataStart + compressedSize;
-        } else if (uncompressedSize > 0 && dataStart + uncompressedSize <= zipBuffer.length) {
-          decompressedData = zipBuffer.subarray(dataStart, dataStart + uncompressedSize);
-          nextOffset = dataStart + uncompressedSize;
-        }
+        const dataEnd = compressedSize > 0 && dataStart + compressedSize <= zipBuffer.length
+          ? dataStart + compressedSize
+          : (uncompressedSize > 0 && dataStart + uncompressedSize <= zipBuffer.length
+            ? dataStart + uncompressedSize
+            : this.findNextZipSignature(zipBuffer, dataStart));
+        decompressedData = zipBuffer.subarray(dataStart, dataEnd);
+        nextOffset = dataEnd;
       }
 
       if (decompressedData && decompressedData.length > 0) {

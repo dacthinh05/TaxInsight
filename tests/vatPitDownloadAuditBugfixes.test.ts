@@ -9,7 +9,7 @@ import { PitAnalyticsSummary, PitDeclarationSnapshot } from '../src/shared/pitAn
 import { VatAnalyticsSummary, VatDeclarationSnapshot } from '../src/shared/vatAnalyticsTypes';
 import { TaxPortalClient } from '../src/main/portal/TaxPortalClient';
 import { PortalSession } from '../src/main/portal/PortalSession';
-
+import { generateQuarterRanges, resolveScanDateRange } from '../src/shared/dateUtils';
 describe('VAT & PIT Audit & Download Bugfixes Regression Suite', () => {
   // ─── 1. PHẦN TẢI TỜ KHAI: GIẢI MÃ DIRECT XML BUFFER TRONG PREVIEW & PARSER ───
   describe('Phần Tải Tờ Khai: Xử lý Direct XML Base64 không nén ZIP', () => {
@@ -313,6 +313,121 @@ describe('VAT & PIT Audit & Download Bugfixes Regression Suite', () => {
 
       const { globalPortalRequestScheduler } = await import('../src/main/portal/PortalRequestScheduler');
       globalPortalRequestScheduler.reset();
+    });
+  });
+
+  // ─── 5. PHẦN KIỂM TOÁN 12 THÁNG & TẢI TỜ KHAI ──────────────────────────────
+  describe('Phần Kiểm Toán: Phân tích 12 tháng & Sửa lỗi tải tờ khai', () => {
+    it('VatFlowEngine.normalizeYearFlow cho phép chuyển đổi chế độ xem 12 tháng (preferredViewMode = MONTH) khi khai Quý', () => {
+      const mockSummary: VatAnalyticsSummary = {
+        taxpayerId: '0101234567',
+        totalFilingsCount: 4,
+        totalPeriodsCount: 4,
+        periodsWithSupplementalCount: 0,
+        periodsWithWarningCount: 0,
+        totalXmlAvailableCount: 4,
+        failedXmlCount: 0,
+        periodGroups: [
+          {
+            periodKey: '2025-Q1',
+            periodLabel: 'Quý 1/2025',
+            periodType: 'QUARTER',
+            year: 2025,
+            quarter: 1,
+            filings: [],
+            snapshots: [],
+            finalSnapshot: {
+              taxpayerId: '0101234567',
+              submissionId: 'SUB_Q1',
+              formCode: '01/GTGT',
+              period: { type: 'QUARTER', value: 'Quý 1/2025', normalizedKey: '2025-Q1' },
+              declarationType: 'ORIGINAL',
+              supplementalNo: 0,
+              sequenceSource: 'API',
+              status: 'Đã chấp nhận',
+              ct22_thueDauVaoKyTruoc: 0n,
+              ct23_giaTriMuaVao: 100000000n,
+              ct24_thueMuaVao: 10000000n,
+              ct25_thueKhauTruKyNay: 10000000n,
+              ct34_doanhThuBanRa: 200000000n,
+              ct35_thueBanRa: 20000000n,
+              ct37_dChinhGiamThueKTru: 0n,
+              ct38_dChinhTangThueKTru: 0n,
+              ct40_thuePhaiNop: 10000000n,
+              ct42_thueDeNghiHoanKyNay: 0n,
+              ct43_thueKhauTruChuyenKySau: 0n,
+              allIndicators: {},
+              warnings: [],
+              parseStatus: 'SUCCESS',
+              xmlAvailable: true
+            },
+            hasSupplemental: false,
+            supplementalCount: 0,
+            warnings: [],
+            xmlAvailableCount: 1,
+            coverageStatus: 'COMPLETE',
+            hasValueDelta: false,
+            deltas: []
+          }
+        ],
+        analyzedAt: new Date().toISOString()
+      };
+
+      // Chế độ AUTO: Nhận diện theo Quý (4 slots)
+      const autoFlow = VatFlowEngine.normalizeYearFlow(mockSummary, 2025, 'COMPLETE', 'AUTO');
+      expect(autoFlow.flows).toHaveLength(4);
+      expect(autoFlow.flows[0].shortLabel).toBe('Q1');
+
+      // Chế độ MONTH: Bắt buộc mở đủ 12 tháng (12 slots), Quý 1 nằm tại Tháng 3
+      const monthFlow = VatFlowEngine.normalizeYearFlow(mockSummary, 2025, 'COMPLETE', 'MONTH');
+      expect(monthFlow.flows).toHaveLength(12);
+      expect(monthFlow.flows[0].shortLabel).toBe('T1');
+      expect(monthFlow.flows[0].versionLabel).toBe('Kê khai quý');
+      expect(monthFlow.flows[2].shortLabel).toBe('T3');
+      expect(monthFlow.flows[2].effectiveSnapshot).toBeDefined();
+      expect(monthFlow.flows[2].taxPayableCt40).toBe(10000000n);
+    });
+
+    it('TaxPortalClient verifyXmlPayloadIdentity không từ chối nhầm file BC26 có chứa thẻ <tBaoCao>', () => {
+      const session = new PortalSession();
+      const client = new TaxPortalClient(session);
+
+      const bc26Xml = `<?xml version="1.0" encoding="UTF-8"?>
+      <HSoThueDTu>
+        <TTinChung>
+          <mst>0101234567</mst>
+          <maTKhai>BC26/AC</maTKhai>
+          <kyKKhai>2025</kyKKhai>
+        </TTinChung>
+        <NDungTKhai>
+          <tBaoCaoHDon>
+            <soLuong>100</soLuong>
+          </tBaoCaoHDon>
+        </NDungTKhai>
+      </HSoThueDTu>`;
+      const base64 = Buffer.from(bc26Xml, 'utf-8').toString('base64');
+
+      // Gọi verifyXmlPayloadIdentity (thông qua private method)
+      const isValid = (client as any).verifyXmlPayloadIdentity(base64, {
+        taxCode: '0101234567',
+        period: '2025',
+        declarationCode: 'BC26/AC'
+      });
+      expect(isValid).toBe(true);
+    });
+
+    it('generateQuarterRanges cho năm đã qua (2025) mở rộng Quý 4 toDate đến 31/01 năm sau', () => {
+      const quarters = generateQuarterRanges(2025);
+      expect(quarters).toHaveLength(4);
+      // 2025 < 2026 => Q4 toDate phải là 31/01/2026 để bắt trọn T12 và Q4
+      expect(quarters[3].toDate).toBe('31/01/2026');
+    });
+
+    it('resolveScanDateRange cho FULL_YEAR của năm đã qua mở rộng toDate đến 31/03 năm sau', () => {
+      const range = resolveScanDateRange(2025, 'FULL_YEAR');
+      expect(range.fromDate).toBe('01/01/2025');
+      expect(range.toDate).toBe('31/03/2026');
+      expect(range.level).toBe('YEAR');
     });
   });
 });

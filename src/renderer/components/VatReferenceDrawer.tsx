@@ -80,7 +80,7 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<TabMode>('RECONCILIATION');
   const [selectedYear, setSelectedYear] = useState<number>(targetYear);
-
+  const [viewFrequency, setViewFrequency] = useState<'AUTO' | 'MONTH' | 'QUARTER'>('AUTO');
   React.useEffect(() => {
     if (targetYear) setSelectedYear(targetYear);
   }, [targetYear]);
@@ -179,11 +179,26 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
 
   // ── Normalize Dữ Liệu Thuế Chuẩn Hóa Theo Năm ─────────────────────────
   const yearFlowSummary = useMemo(() => {
-    return VatFlowNormalizer.normalizeYearFlow(summary, selectedYear, coverageEvaluation.status);
-  }, [summary, selectedYear, coverageEvaluation.status]);
+    return VatFlowNormalizer.normalizeYearFlow(summary, selectedYear, coverageEvaluation.status, viewFrequency);
+  }, [summary, selectedYear, coverageEvaluation.status, viewFrequency]);
+
+  // Lọc các tờ khai bị lỗi XML thuộc chính năm đang xem
+  const failedXmlForSelectedYear = useMemo(() => {
+    if (!summary?.failedXmlDetails) return [];
+    return summary.failedXmlDetails.filter(d => {
+      const p = String(d.periodLabel || '').trim();
+      return p.includes(String(selectedYear)) || p.endsWith(`/${selectedYear}`) || p.includes(`${selectedYear}`);
+    });
+  }, [summary, selectedYear]);
+
+  // Đếm số lượng tờ khai của năm đang chọn
+  const filingsForSelectedYearCount = useMemo(() => {
+    if (!summary?.periodGroups) return 0;
+    const groups = summary.periodGroups.filter(g => g.year === selectedYear || g.periodLabel?.includes(String(selectedYear)));
+    return groups.reduce((sum, g) => sum + (g.filings?.length || g.snapshots?.length || 1), 0);
+  }, [summary, selectedYear]);
 
   if (!isOpen) return null;
-
   const handlePrevYear = () => {
     setSelectedYear(prev => prev - 1);
     setExpandedPeriodKey(null);
@@ -212,21 +227,6 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
   // Đếm tổng số phiên bản BS trong năm
   const totalBsVersionsCount = yearFlowSummary.flows.reduce((sum, f) => sum + f.supplementaryCount, 0);
 
-  // Lọc các tờ khai bị lỗi XML thuộc chính năm đang xem
-  const failedXmlForSelectedYear = useMemo(() => {
-    if (!summary?.failedXmlDetails) return [];
-    return summary.failedXmlDetails.filter(d => {
-      const p = String(d.periodLabel || '').trim();
-      return p.includes(String(selectedYear)) || p.endsWith(`/${selectedYear}`) || p.includes(`${selectedYear}`);
-    });
-  }, [summary, selectedYear]);
-
-  // Đếm số lượng tờ khai của năm đang chọn
-  const filingsForSelectedYearCount = useMemo(() => {
-    if (!summary?.periodGroups) return 0;
-    const groups = summary.periodGroups.filter(g => g.year === selectedYear || g.periodLabel?.includes(String(selectedYear)));
-    return groups.reduce((sum, g) => sum + (g.filings?.length || g.snapshots?.length || 1), 0);
-  }, [summary, selectedYear]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs select-none animate-fadeIn">
       <div className="w-[98vw] max-w-[1580px] h-[95vh] bg-white rounded-2xl flex flex-col shadow-2xl border border-slate-200 overflow-hidden relative font-sans text-slate-800">
@@ -373,8 +373,48 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
             </button>
           </div>
 
-          <div className="text-[11px] text-slate-400 italic">
-            Đơn vị: đồng
+          <div className="flex items-center space-x-3 py-1.5">
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-[11px] font-medium border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setViewFrequency('AUTO')}
+                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                  viewFrequency === 'AUTO'
+                    ? 'bg-white text-teal-800 font-bold shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Tự động nhận diện theo tần suất nộp của hồ sơ"
+              >
+                Tự động
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewFrequency('MONTH')}
+                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                  viewFrequency === 'MONTH'
+                    ? 'bg-white text-teal-800 font-bold shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Xem chi tiết 12 tháng trong năm"
+              >
+                12 Tháng
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewFrequency('QUARTER')}
+                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                  viewFrequency === 'QUARTER'
+                    ? 'bg-white text-teal-800 font-bold shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Xem tổng hợp theo 4 quý"
+              >
+                4 Quý
+              </button>
+            </div>
+            <div className="text-[11px] text-slate-400 italic">
+              Đơn vị: đồng
+            </div>
           </div>
         </div>
 

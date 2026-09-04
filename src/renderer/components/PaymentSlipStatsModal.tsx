@@ -22,12 +22,12 @@ const fmt = (n: number) => n.toLocaleString('vi-VN');
 export const PaymentSlipStatsModal: React.FC<PaymentSlipStatsModalProps> = ({
   isOpen, loading, stats, error, year, onClose, onExportExcel
 }) => {
-  if (!isOpen) return null;
-
   const buckets = useMemo(
     () => (stats ? (stats.activeBuckets.length ? stats.activeBuckets : []) : []),
     [stats]
   );
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-2xs">
@@ -43,9 +43,9 @@ export const PaymentSlipStatsModal: React.FC<PaymentSlipStatsModalProps> = ({
               <p className="text-[11px] text-slate-500">Theo tháng nộp × loại thuế · Năm {year} · Đơn vị VND</p>
             </div>
           </div>
-          <div className="flex items-center space-x-2">
-            {!loading && stats && stats.cells.length > 0 && (
-              <button
+           <div className="flex items-center space-x-2">
+            {!loading && stats && (stats.cells?.length ?? 0) > 0 && (
+               <button
                 type="button"
                 onClick={onExportExcel}
                 className="h-8 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-medium flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"

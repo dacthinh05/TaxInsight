@@ -566,19 +566,23 @@ export const App: React.FC = () => {
       if (scanId !== latestScanId.current) return;
 
       let combinedFilings: TaxFiling[] = [];
-      if (res.success && res.data) {
-        combinedFilings = [...res.data.filings];
-        // Stream ngay kết quả DVC ra bảng để người dùng nhìn thấy ngay lập tức
+      const rawFilings = res.success && res.data ? res.data.filings : (res?.data?.filings || []);
+      if (rawFilings.length > 0) {
+        combinedFilings = [...rawFilings];
         setFilings(combinedFilings);
-        setFilingsByYear(prev => ({ ...prev, [selectedYear]: combinedFilings }));
-        setMissingVat(res.data.missingVatCheck);
-        setMissingPit(res.data.missingPitCheck);
-      } else if (res?.data?.filings && res.data.filings.length > 0) {
-        combinedFilings = [...res.data.filings];
-        setFilings(combinedFilings);
-        setFilingsByYear(prev => ({ ...prev, [selectedYear]: combinedFilings }));
-        setMissingVat(res.data.missingVatCheck);
-        setMissingPit(res.data.missingPitCheck);
+        const grouped: Record<number, TaxFiling[]> = { [selectedYear]: combinedFilings };
+        for (const f of combinedFilings) {
+          const y = f.periodNormalized?.year;
+          if (y && y >= 2000 && y <= 2099) {
+            if (!grouped[y]) grouped[y] = [];
+            if (!grouped[y].some(item => item.id === f.id)) {
+              grouped[y].push(f);
+            }
+          }
+        }
+        setFilingsByYear(prev => ({ ...prev, ...grouped }));
+        if (res.data?.missingVatCheck) setMissingVat(res.data.missingVatCheck);
+        if (res.data?.missingPitCheck) setMissingPit(res.data.missingPitCheck);
       }
 
       // 2. Tiếp tục nạp phân hệ eTax và stream cập nhật ngay khi có kết quả

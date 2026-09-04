@@ -92,4 +92,109 @@ describe('ZipExtractor — Phục hồi giải nén tệp ZIP thiếu END header
     const savedContent = fs.readFileSync(result.xmlPath!, 'utf-8');
     expect(savedContent).toBe(xmlText);
   });
+
+  it('giải nén thành công tệp ZIP bị mất EOCD bằng cơ chế tổng hợp EOCD chuẩn khi Central Directory còn nguyên', () => {
+    const xmlText = '<?xml version="1.0"?><HSoThue><TKhai>01/GTGT</TKhai><Tien>9999999</Tien></HSoThue>';
+    const xmlBuf = Buffer.from(xmlText, 'utf-8');
+    const deflated = zlib.deflateRawSync(xmlBuf);
+    const fn = Buffer.from('01_GTGT.xml', 'utf-8');
+    const realCrc = zlib.crc32(xmlBuf);
+    // LFH
+    const lfh = Buffer.alloc(30);
+    lfh.write('PK\x03\x04', 0, 4, 'ascii');
+    lfh.writeUInt16LE(20, 4);
+    lfh.writeUInt16LE(0, 6);
+    lfh.writeUInt16LE(8, 8);
+    lfh.writeUInt32LE(realCrc, 14);
+    lfh.writeUInt32LE(deflated.length, 18);
+    lfh.writeUInt32LE(xmlBuf.length, 22);
+    lfh.writeUInt16LE(fn.length, 26);
+    lfh.writeUInt16LE(0, 28);
+
+    // CDH (Central Directory Header)
+    const cdh = Buffer.alloc(46);
+    cdh.write('PK\x01\x02', 0, 4, 'ascii');
+    cdh.writeUInt16LE(20, 4);
+    cdh.writeUInt16LE(20, 6);
+    cdh.writeUInt16LE(0, 8);
+    cdh.writeUInt16LE(8, 10);
+    cdh.writeUInt32LE(realCrc, 16);
+    cdh.writeUInt32LE(deflated.length, 20);
+    cdh.writeUInt32LE(xmlBuf.length, 24);
+    cdh.writeUInt16LE(fn.length, 28);
+    cdh.writeUInt16LE(0, 30);
+    cdh.writeUInt16LE(0, 32);
+    cdh.writeUInt32LE(0, 42); // relative offset of local header = 0
+
+    // Ghép ZIP có Central Directory nhưng KHÔNG CÓ EOCD (PK\x05\x06)
+    const zipMissingEocd = Buffer.concat([lfh, fn, deflated, cdh, fn]);
+    const base64Content = zipMissingEocd.toString('base64');
+
+    const filing = makeMockFiling('000.701.18.G12-260319-27110000158143');
+    const result = ZipExtractor.extractBase64Zip(base64Content, tempDir, filing, '3700776724');
+
+    expect(result).toBeDefined();
+    expect(result.savedPaths.length).toBeGreaterThan(0);
+    expect(result.xmlPath).toBeDefined();
+    const savedContent = fs.readFileSync(result.xmlPath!, 'utf-8');
+    expect(savedContent).toBe(xmlText);
+  });
+
+  it('giải nén thành công tệp ZIP streaming có compressedSize=0 và Data Descriptor (PK\\x07\\x08)', () => {
+    const xmlText = '<?xml version="1.0"?><HSoThue><TKhai>01/GTGT</TKhai><Period>Thang 01/2026</Period></HSoThue>';
+    const xmlBuf = Buffer.from(xmlText, 'utf-8');
+    const deflated = zlib.deflateRawSync(xmlBuf);
+    const fn = Buffer.from('Thang01.xml', 'utf-8');
+
+    // LFH với compressedSize=0, uncompressedSize=0, flags=8 (Data Descriptor)
+    const lfh = Buffer.alloc(30);
+    lfh.write('PK\x03\x04', 0, 4, 'ascii');
+    lfh.writeUInt16LE(20, 4);
+    lfh.writeUInt16LE(8, 6); // flags: bit 3 set
+    lfh.writeUInt16LE(8, 8); // method 8
+    lfh.writeUInt32LE(0, 14); // crc = 0
+    lfh.writeUInt32LE(0, 18); // compSize = 0!
+    lfh.writeUInt32LE(0, 22); // uncompSize = 0!
+    lfh.writeUInt16LE(fn.length, 26);
+    lfh.writeUInt16LE(0, 28);
+
+    // Data descriptor
+    const dd = Buffer.alloc(16);
+    dd.write('PK\x07\x08', 0, 4, 'ascii');
+    dd.writeUInt32LE(0xabcdef01, 4);
+    dd.writeUInt32LE(deflated.length, 8);
+    dd.writeUInt32LE(xmlBuf.length, 12);
+
+    // Truncated streaming zip: LFH + fn + deflated + dd (không có Central Directory hay EOCD)
+    const streamingZip = Buffer.concat([lfh, fn, deflated, dd]);
+    const base64Content = streamingZip.toString('base64');
+
+    const filing = makeMockFiling('000.701.18.G12-260211-27110000127279');
+    const result = ZipExtractor.extractBase64Zip(base64Content, tempDir, filing, '3700776724');
+
+    expect(result).toBeDefined();
+    expect(result.savedPaths.length).toBeGreaterThan(0);
+    expect(result.xmlPath).toBeDefined();
+    const savedContent = fs.readFileSync(result.xmlPath!, 'utf-8');
+    expect(savedContent).toBe(xmlText);
+  });
+
+  it('cứu hộ XML khi buffer bị lỗi header ZIP nhưng chứa nội dung XML hồ sơ thuế hợp lệ', () => {
+    const xmlText = '<?xml version="1.0" encoding="UTF-8"?><HSoThueDTu><TKhai>01/GTGT</TKhai><Msg>Recovered</Msg></HSoThueDTu>';
+    // Buffer bắt đầu bằng PK rác hoặc hỏng, nhưng sau đó chứa XML hợp lệ
+    const corruptedZipWithXml = Buffer.concat([
+      Buffer.from([0x50, 0x4b, 0x99, 0x99, 0x00, 0x11, 0x22]),
+      Buffer.from(xmlText, 'utf-8')
+    ]);
+    const base64Content = corruptedZipWithXml.toString('base64');
+
+    const filing = makeMockFiling('000.701.18.G12-260319-27110000158143');
+    const result = ZipExtractor.extractBase64Zip(base64Content, tempDir, filing, '3700776724');
+
+    expect(result).toBeDefined();
+    expect(result.savedPaths.length).toBeGreaterThan(0);
+    expect(result.xmlPath).toBeDefined();
+    const savedContent = fs.readFileSync(result.xmlPath!, 'utf-8');
+    expect(savedContent).toContain('<TKhai>01/GTGT</TKhai>');
+  });
 });

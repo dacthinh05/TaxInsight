@@ -1073,7 +1073,9 @@ export class TaxPortalClient {
     const lower = xmlText.toLowerCase();
     return (
       lower.includes('<thongbao') ||
-      lower.includes('<tbao') ||
+      lower.includes('<tbao>') ||
+      lower.includes('<tbao ') ||
+      lower.includes('<tbaoloi') ||
       lower.includes('<mauso>01-1/tb-tdt') ||
       lower.includes('<mauso>07-gd/t-van') ||
       lower.includes('<mauso>01-2/tb-tdt') ||
@@ -1319,12 +1321,24 @@ export class TaxPortalClient {
       if (longMatch) {
         list.add(`${longMatch[2]}.${longMatch[1]}-${longMatch[3]}`);
         list.add(`${longMatch[2]}-${longMatch[3]}`);
+
+        // Rút gọn mã cơ quan thuế 4 số: G12.18-260319-27110000158143 -> G12.18-260319-00158143
+        const subSeqMatch = longMatch[3].match(/^(\d{6})-\d{4}(\d{6,10})$/);
+        if (subSeqMatch) {
+          list.add(`${longMatch[2]}.${longMatch[1]}-${subSeqMatch[1]}-${subSeqMatch[2]}`);
+          list.add(`${longMatch[2]}-${subSeqMatch[1]}-${subSeqMatch[2]}`);
+        }
       }
 
       // Ngắn -> Rút gọn TDT: G12.18-260327-27110000205136 -> G12-260327-27110000205136
       const shortMatch = id.match(/^([A-Za-z0-9]+)\.(\d{2})-(.+)$/);
       if (shortMatch) {
         list.add(`${shortMatch[1]}-${shortMatch[3]}`);
+        const subSeqMatch = shortMatch[3].match(/^(\d{6})-\d{4}(\d{6,10})$/);
+        if (subSeqMatch) {
+          list.add(`${shortMatch[1]}.${shortMatch[2]}-${subSeqMatch[1]}-${subSeqMatch[2]}`);
+          list.add(`${shortMatch[1]}-${subSeqMatch[1]}-${subSeqMatch[2]}`);
+        }
       }
     }
 

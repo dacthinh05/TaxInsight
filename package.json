@@ -1,6 +1,6 @@
 {
   "name": "tax-insight",
-  "version": "3.0.10",
+  "version": "3.0.11",
   "description": "Tải và quản lý hồ sơ, tờ khai thuế điện tử",
   "main": "dist-electron/main/main.js",
   "scripts": {
@@ -74,7 +74,7 @@
       "repo": "TaxInsight"
     },
     "directories": {
-      "output": "../TaxInsight-Releases-Update",
+      "output": "../TaxInsight-Releases-Final",
       "buildResources": "build"
     },
     "files": [

@@ -162,11 +162,13 @@ export function generateYearRange(year: number, limitToToday = false): DateRange
  * Tạo Range Level 2: 4 Quý trong năm
  */
 export function generateQuarterRanges(year: number): DateRange[] {
+  const currentYear = new Date().getFullYear();
+  const q4ToDate = year < currentYear ? `31/01/${year + 1}` : `31/12/${year}`;
   return [
     { fromDate: `01/01/${year}`, toDate: `31/03/${year}`, label: `Quý 1/${year}`, level: 'QUARTER' },
     { fromDate: `01/04/${year}`, toDate: `30/06/${year}`, label: `Quý 2/${year}`, level: 'QUARTER' },
     { fromDate: `01/07/${year}`, toDate: `30/09/${year}`, label: `Quý 3/${year}`, level: 'QUARTER' },
-    { fromDate: `01/10/${year}`, toDate: `31/12/${year}`, label: `Quý 4/${year}`, level: 'QUARTER' }
+    { fromDate: `01/10/${year}`, toDate: q4ToDate, label: `Quý 4/${year}`, level: 'QUARTER' }
   ];
 }
 
@@ -324,7 +326,7 @@ export function resolveScanDateRange(year: number, mode: string): DateRange {
 
   if (mode === 'FULL_YEAR') {
     // Để bắt trọn tờ khai Tháng 12, Quý 4 và Quyết toán năm (nộp vào T01, T02, T03 năm sau):
-    const toDate = year < currentYear ? `31/03/${year + 1}` : (year === currentYear ? todayStr : `31/12/${year}`);
+    const toDate = year < currentYear ? `31/03/${year + 1}` : `31/12/${year}`;
     return {
       fromDate: `01/01/${year}`,
       toDate,

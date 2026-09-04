@@ -318,7 +318,8 @@ export class VatFlowEngine {
   public static normalizeYearFlow(
     summary: VatAnalyticsSummary | null,
     targetYear: number,
-    coverageStatus: 'COMPLETE' | 'PARTIAL' | 'NOT_SCANNED' | 'UNKNOWN' = 'COMPLETE'
+    coverageStatus: 'COMPLETE' | 'PARTIAL' | 'NOT_SCANNED' | 'UNKNOWN' = 'COMPLETE',
+    preferredViewMode: 'AUTO' | 'MONTH' | 'QUARTER' = 'AUTO'
   ): VatFlowSummaryYear {
     const allGroups = summary?.periodGroups || [];
     const crossAdjustments = this.extractCrossPeriodAdjustments(allGroups);
@@ -332,7 +333,12 @@ export class VatFlowEngine {
       if (g.periodType === 'QUARTER' || (g.quarter && g.quarter >= 1 && g.quarter <= 4)) quarterCount++;
       else if (g.periodType === 'MONTH' || (g.month && g.month >= 1 && g.month <= 12)) monthCount++;
     }
-    const isQuarterMode = quarterCount >= monthCount && quarterCount > 0;
+    const detectedQuarterMode = quarterCount >= monthCount && quarterCount > 0;
+    const isQuarterMode = preferredViewMode === 'QUARTER'
+      ? true
+      : preferredViewMode === 'MONTH'
+        ? false
+        : detectedQuarterMode;
 
     const totalSlots = isQuarterMode ? 4 : 12;
     const flows: TaxPeriodFlow[] = [];
@@ -414,7 +420,14 @@ export class VatFlowEngine {
         let note: string;
         let narrative: string;
 
-        if (isFuturePeriod) {
+        const isQuarterInterMonth = !isQuarterMode && detectedQuarterMode && (slot % 3 !== 0);
+
+        if (isQuarterInterMonth) {
+          defaultVerLabel = 'Kê khai quý';
+          semanticState = 'NORMAL';
+          note = `Doanh nghiệp kê khai quý (số liệu ở Tháng ${Math.ceil(slot / 3) * 3})`;
+          narrative = `${periodLabel}: Doanh nghiệp thực hiện kê khai thuế theo quý. Toàn bộ số liệu quý ${Math.ceil(slot / 3)} được phản ánh tập trung tại kỳ Tháng ${String(Math.ceil(slot / 3) * 3).padStart(2, '0')}/${targetYear}.`;
+        } else if (isFuturePeriod) {
           defaultVerLabel = 'Chưa đến kỳ';
           semanticState = 'NORMAL';
           note = 'Chưa đến kỳ kê khai';
@@ -430,7 +443,6 @@ export class VatFlowEngine {
           note = 'Chưa quét đầy đủ dữ liệu ngày nộp của năm';
           narrative = `${periodLabel} chưa được xác minh do chưa quét đầy đủ phạm vi ngày nộp năm ${targetYear}.`;
         }
-
         flows.push({
           periodKey,
           periodLabel,

@@ -19,6 +19,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DownloadManager } from '../src/main/downloader/DownloadManager';
 import { FileOrganizer } from '../src/main/files/FileOrganizer';
+import { LegacyFilingClient } from '../src/main/portal/LegacyFilingClient';
 import { PortalSession } from '../src/main/portal/PortalSession';
 import { TaxPortalClient } from '../src/main/portal/TaxPortalClient';
 import { TaxFiling } from '../src/shared/types';
@@ -390,5 +391,41 @@ describe('Batch Download Integration — Tải Hàng Loạt Toàn Diện', () =>
     expect(s.existing).toBe(2);
     expect(s.completed).toBe(6);
     expect(s.total).toBe(s.completed + s.existing + s.failed + s.downloading + s.pending);
+  });
+
+  // ── 11. Fallback sang eTax khi gói file từ DVC bị lỗi giải nén ZIP ────────
+  it('11. Khi Cổng DVC trả file ZIP hỏng/không giải nén được → tự động fallback sang eTax và lưu file thành công', async () => {
+    const filing = makeFiling('GTGT_CORRUPTED_DVC');
+    const session = new PortalSession();
+    const client = new TaxPortalClient(session);
+    client.checkSession = vi.fn().mockResolvedValue(true);
+
+    // DVC trả về payload có base64 là dữ liệu ZIP hỏng (không thể giải nén)
+    client.downloadHoSo = vi.fn().mockResolvedValue({
+      fileName: 'corrupted.zip',
+      fileType: 'application/zip',
+      content: Buffer.from([0x50, 0x4b, 0x99, 0x99, 0x00, 0x00]).toString('base64')
+    });
+
+    // Legacy Client (eTax) có sẵn tệp XML chuẩn
+    const legacyClient = new LegacyFilingClient(session);
+    legacyClient.resolveAndDownloadFiling = vi.fn().mockResolvedValue({
+      fileName: '01_GTGT_eTax.xml',
+      contentType: 'application/xml',
+      dataBuffer: Buffer.from('<?xml version="1.0"?><HSoThueDTu><TKhai>01/GTGT</TKhai></HSoThueDTu>', 'utf8')
+    });
+
+    const organizer = new FileOrganizer(tempDir);
+    const dm = new DownloadManager(client, organizer, legacyClient);
+
+    dm.enqueueFilings([filing], '3702735709', 2026);
+    const completedPromise = new Promise<void>(resolve => dm.once('completed', resolve));
+    await dm.start();
+    await completedPromise;
+
+    expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledTimes(1);
+    const s = dm.getSummary();
+    expect(s.completed).toBe(1);
+    expect(s.failed).toBe(0);
   });
 });

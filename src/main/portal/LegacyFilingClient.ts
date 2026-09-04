@@ -51,7 +51,7 @@ export class LegacyFilingClient {
     }
   };
 
-  private etaxFilingsCache = new Map<number, TaxFiling[]>();
+  private etaxFilingsCache = new Map<string, TaxFiling[]>();
 
   constructor(session: PortalSession) {
     this.session = session;
@@ -757,111 +757,144 @@ export class LegacyFilingClient {
     const isExplicitKk = cleanCode.includes('05kk') || cleanCode.includes('02kk') || cleanCode.includes('06kk') || (filing.declarationCode || '').includes('KK');
     const isQtt = !isExplicitKk && (cleanCode.includes('qtt') || cleanCode.includes('quyettoan') || cleanCode.includes('quyết toán') || (filing.title || '').toLowerCase().includes('quyết toán'));
 
+    // Xác định kỳ nộp mục tiêu (kieuKy: 'M' cho Tháng, 'Q' cho Quý, 'Y' cho Quyết toán/Năm)
+    let targetKieuKy: string | undefined;
+    if (filing.periodNormalized?.type === 'MONTH' || (periodText && /(?:tháng|t|m)\s*\d{1,2}|^\d{1,2}\/\d{4}$/i.test(periodText))) {
+      targetKieuKy = 'M';
+    } else if (filing.periodNormalized?.type === 'QUARTER' || (periodText && /(?:quý|q)\s*[1-4]/i.test(periodText))) {
+      targetKieuKy = 'Q';
+    } else if (filing.periodNormalized?.type === 'YEAR' || isQtt || (periodText && /năm|\b20\d{2}\b/i.test(periodText))) {
+      targetKieuKy = 'Y';
+    }
+
+    const currentYear = new Date().getFullYear();
+    const candidateKieuKys = targetKieuKy ? [targetKieuKy, targetKieuKy === 'Q' ? 'M' : 'Q', 'Y'] : ['Q', 'M', 'Y'];
+
     // 3. Tìm kiếm lần lượt trong các năm
     for (const filingYear of yearsToSearch) {
-      let etaxFilings = this.etaxFilingsCache.get(filingYear);
-      if (!etaxFilings) {
-        try {
-          const queryResult = await this.queryFilings(filingYear, { page: 1, signal });
-          const allFilings = [...queryResult.filings];
-          const totalPages = Math.min(queryResult.pagination.totalPages || 1, 10);
-          for (let p = 2; p <= totalPages; p++) {
-            try {
-              await new Promise(r => setTimeout(r, 150));
-              const nextPage = await this.queryFilings(filingYear, { page: p, signal });
-              allFilings.push(...nextPage.filings);
-            } catch {}
-          }
-          etaxFilings = allFilings;
-          this.etaxFilingsCache.set(filingYear, etaxFilings);
-        } catch (queryErr: unknown) {
-          const isRateLimit = (queryErr as any)?.status === 429 || (queryErr as any)?.code === 'RATE_LIMIT' || String((queryErr as any)?.message).includes('429');
-          const isAuth = (queryErr as any)?.code === 'SESSION_EXPIRED' || (queryErr as any)?.code === 'AUTH_REQUIRED';
-          if (isRateLimit || isAuth) {
-            throw queryErr;
-          }
-          const msg = queryErr instanceof Error ? queryErr.message : String(queryErr);
-          console.warn(`[LegacyFilingClient] Tra cứu eTax năm ${filingYear} thất bại: ${msg}`);
-          continue;
-        }
-      }
+      const qryToDate = filingYear < currentYear ? `31/03/${filingYear + 1}` : `31/12/${filingYear}`;
+      let matched: TaxFiling | undefined;
 
-      // 4. Khớp hồ sơ eTax với filing hiện tại
-      let matched = etaxFilings.find(f => f.messageId && f.id === cleanId);
-      if (!matched && filing.altIds && filing.altIds.length > 0) {
-        matched = etaxFilings.find(f => f.messageId && filing.altIds?.some((alt: string) => alt === f.id || f.altIds?.includes(alt)));
-      }
-      if (!matched) {
-        matched = etaxFilings.find(f => {
-          if (!f.messageId) return false;
-          const fPeriod = (f.period || f.periodNormalized?.raw || '').trim().toLowerCase().replace(/[\s\-_/]/g, '');
-          const fPeriodDigits = (f.period || f.periodNormalized?.raw || '').match(/\b(20\d{2})\b/)?.[1] || '';
-          const fCode = (f.declarationCode || f.procedureCode || f.title || '').trim().toLowerCase().replace(/[\s\-_/]/g, '');
-          const fIsExplicitKk = fCode.includes('05kk') || fCode.includes('02kk') || fCode.includes('06kk') || (f.declarationCode || '').includes('KK');
-          const fIsQtt = !fIsExplicitKk && (fCode.includes('qtt') || fCode.includes('quyettoan') || (f.title || '').toLowerCase().includes('quyết toán'));
-
-          // Khớp kỳ tính thuế
-          let periodMatches = false;
-          const keyA = (() => {
-            const t = (f.period || f.periodNormalized?.raw || '').toLowerCase().replace(/[\s\-_/]/g, ' ');
-            const mm = t.match(/(?:thang|tháng|t|m)?\s*0?(\d{1,2})\s*(?:nam|năm)?\s*(20\d{2})/i);
-            if (mm && parseInt(mm[1], 10) >= 1 && parseInt(mm[1], 10) <= 12) return `M_${parseInt(mm[1], 10)}_${mm[2]}`;
-            const qm = t.match(/(?:quy|quý|q)\s*0?([1-4])\s*(?:nam|năm)?\s*(20\d{2})/i);
-            if (qm) return `Q_${qm[1]}_${qm[2]}`;
-            const ym = t.match(/(20\d{2})/);
-            return ym ? `Y_${ym[1]}` : t;
-          })();
-          const keyB = (() => {
-            const t = periodText.toLowerCase().replace(/[\s\-_/]/g, ' ');
-            const mm = t.match(/(?:thang|tháng|t|m)?\s*0?(\d{1,2})\s*(?:nam|năm)?\s*(20\d{2})/i);
-            if (mm && parseInt(mm[1], 10) >= 1 && parseInt(mm[1], 10) <= 12) return `M_${parseInt(mm[1], 10)}_${mm[2]}`;
-            const qm = t.match(/(?:quy|quý|q)\s*0?([1-4])\s*(?:nam|năm)?\s*(20\d{2})/i);
-            if (qm) return `Q_${qm[1]}_${qm[2]}`;
-            const ym = t.match(/(20\d{2})/);
-            return ym ? `Y_${ym[1]}` : t;
-          })();
-
-          if (keyA && keyB && keyA === keyB) {
-            periodMatches = true;
-          } else if (fPeriod && cleanPeriod && (fPeriod === cleanPeriod || fPeriod.includes(cleanPeriod) || cleanPeriod.includes(fPeriod))) {
-            periodMatches = true;
-          } else if (cleanPeriodDigits && fPeriodDigits && cleanPeriodDigits === fPeriodDigits) {
-            // Cùng năm quyết toán (ví dụ 'Năm 2025' vs '2025' vs '00/2025')
-            if (isQtt || fIsQtt || cleanPeriod.includes('nam') || fPeriod.includes('nam')) {
-              periodMatches = true;
+      for (const kKy of candidateKieuKys) {
+        const cacheKey = `${filingYear}_${kKy}`;
+        let etaxFilings = this.etaxFilingsCache.get(cacheKey);
+        if (!etaxFilings) {
+          try {
+            const queryResult = await this.queryFilings(filingYear, {
+              page: 1,
+              signal,
+              kieuKy: kKy,
+              toDate: qryToDate
+            });
+            const allFilings = [...queryResult.filings];
+            const totalPages = Math.min(queryResult.pagination.totalPages || 1, 10);
+            for (let p = 2; p <= totalPages; p++) {
+              try {
+                await new Promise(r => setTimeout(r, 150));
+                const nextPage = await this.queryFilings(filingYear, {
+                  page: p,
+                  signal,
+                  kieuKy: kKy,
+                  toDate: qryToDate
+                });
+                allFilings.push(...nextPage.filings);
+              } catch {}
             }
+            etaxFilings = allFilings;
+            this.etaxFilingsCache.set(cacheKey, etaxFilings);
+          } catch (queryErr: unknown) {
+            const isRateLimit = (queryErr as any)?.status === 429 || (queryErr as any)?.code === 'RATE_LIMIT' || String((queryErr as any)?.message).includes('429');
+            const isAuth = (queryErr as any)?.code === 'SESSION_EXPIRED' || (queryErr as any)?.code === 'AUTH_REQUIRED';
+            if (isRateLimit || isAuth) {
+              throw queryErr;
+            }
+            const msg = queryErr instanceof Error ? queryErr.message : String(queryErr);
+            console.warn(`[LegacyFilingClient] Tra cứu eTax năm ${filingYear} (kieuKy=${kKy}) thất bại: ${msg}`);
+            continue;
           }
+        }
 
-          // Khớp loại tờ khai
-          let codeMatches = false;
-          // Nếu một bên là Quyết toán (QTT) và một bên là Khấu trừ / Kê khai kỳ (KK) -> TUYỆT ĐỐI KHÔNG KHỚP
-          if (isQtt !== fIsQtt) {
-            codeMatches = false;
-          } else if (isQtt && fIsQtt) {
-            codeMatches = true;
-          } else if (fCode && cleanCode && (
-            fCode === cleanCode ||
-            fCode.includes(cleanCode) ||
-            cleanCode.includes(fCode) ||
-            (fCode.includes('05') && cleanCode.includes('05')) ||
-            (fCode.includes('tncn') && cleanCode.includes('tncn')) ||
-            (fCode.includes('gtgt') && cleanCode.includes('gtgt')) ||
-            (fCode.includes('01') && cleanCode.includes('01')) ||
-            (fCode.includes('02') && cleanCode.includes('02')) ||
-            (fCode.includes('03') && cleanCode.includes('03')) ||
-            (fCode.includes('04') && cleanCode.includes('04')) ||
-            (fCode.includes('tndn') && cleanCode.includes('tndn')) ||
-            (fCode.includes('bc26') && cleanCode.includes('bc26')) ||
-            (fCode.includes('hoa don') && cleanCode.includes('hoa don'))
-          )) {
-            codeMatches = true;
-          } else if (f.taxType && filing.taxType && f.taxType === filing.taxType) {
-            codeMatches = true;
-          }
+        // 4. Khớp hồ sơ eTax với filing hiện tại
+        matched = etaxFilings.find(f => f.messageId && f.id === cleanId);
+        if (!matched && filing.altIds && filing.altIds.length > 0) {
+          matched = etaxFilings.find(f => f.messageId && filing.altIds?.some((alt: string) => alt === f.id || f.altIds?.includes(alt)));
+        }
+        if (!matched) {
+          matched = etaxFilings.find(f => {
+            if (!f.messageId) return false;
+            const fPeriod = (f.period || f.periodNormalized?.raw || '').trim().toLowerCase().replace(/[\s\-_/]/g, '');
+            const fPeriodDigits = (f.period || f.periodNormalized?.raw || '').match(/\b(20\d{2})\b/)?.[1] || '';
+            const fCode = (f.declarationCode || f.procedureCode || f.title || '').trim().toLowerCase().replace(/[\s\-_/]/g, '');
+            const fIsExplicitKk = fCode.includes('05kk') || fCode.includes('02kk') || fCode.includes('06kk') || (f.declarationCode || '').includes('KK');
+            const fIsQtt = !fIsExplicitKk && (fCode.includes('qtt') || fCode.includes('quyettoan') || fCode.includes('quyết toán') || (f.title || '').toLowerCase().includes('quyết toán'));
 
-          const suppMatches = Number(f.supplementalNo || 0) === Number(filing.supplementalNo || 0);
-          return periodMatches && codeMatches && suppMatches;
-        });
+            // Khớp kỳ tính thuế
+            let periodMatches = false;
+            const keyA = (() => {
+              const t = (f.period || f.periodNormalized?.raw || '').toLowerCase().replace(/[\s\-_/]/g, ' ');
+              const mm = t.match(/(?:thang|tháng|t|m)?\s*0?(\d{1,2})\s*(?:nam|năm)?\s*(20\d{2})/i);
+              if (mm && parseInt(mm[1], 10) >= 1 && parseInt(mm[1], 10) <= 12) return `M_${parseInt(mm[1], 10)}_${mm[2]}`;
+              const qm = t.match(/(?:quy|quý|q)\s*0?([1-4])\s*(?:nam|năm)?\s*(20\d{2})/i);
+              if (qm) return `Q_${qm[1]}_${qm[2]}`;
+              const ym = t.match(/(20\d{2})/);
+              return ym ? `Y_${ym[1]}` : t;
+            })();
+            const keyB = (() => {
+              const t = periodText.toLowerCase().replace(/[\s\-_/]/g, ' ');
+              const mm = t.match(/(?:thang|tháng|t|m)?\s*0?(\d{1,2})\s*(?:nam|năm)?\s*(20\d{2})/i);
+              if (mm && parseInt(mm[1], 10) >= 1 && parseInt(mm[1], 10) <= 12) return `M_${parseInt(mm[1], 10)}_${mm[2]}`;
+              const qm = t.match(/(?:quy|quý|q)\s*0?([1-4])\s*(?:nam|năm)?\s*(20\d{2})/i);
+              if (qm) return `Q_${qm[1]}_${qm[2]}`;
+              const ym = t.match(/(20\d{2})/);
+              return ym ? `Y_${ym[1]}` : t;
+            })();
+
+            if (keyA && keyB && keyA === keyB) {
+              periodMatches = true;
+            } else if (fPeriod && cleanPeriod && (fPeriod === cleanPeriod || fPeriod.includes(cleanPeriod) || cleanPeriod.includes(fPeriod))) {
+              periodMatches = true;
+            } else if (cleanPeriodDigits && fPeriodDigits && cleanPeriodDigits === fPeriodDigits) {
+              // Cùng năm quyết toán (ví dụ 'Năm 2025' vs '2025' vs '00/2025')
+              if (isQtt || fIsQtt || cleanPeriod.includes('nam') || fPeriod.includes('nam')) {
+                periodMatches = true;
+              }
+            }
+
+            // Khớp loại tờ khai
+            let codeMatches = false;
+            // Nếu một bên là Quyết toán (QTT) và một bên là Khấu trừ / Kê khai kỳ (KK) -> TUYỆT ĐỐI KHÔNG KHỚP
+            if (isQtt !== fIsQtt) {
+              codeMatches = false;
+            } else if (isQtt && fIsQtt) {
+              codeMatches = true;
+            } else if (fCode && cleanCode && (
+              fCode === cleanCode ||
+              fCode.includes(cleanCode) ||
+              cleanCode.includes(fCode) ||
+              (fCode.includes('05') && cleanCode.includes('05')) ||
+              (fCode.includes('tncn') && cleanCode.includes('tncn')) ||
+              (fCode.includes('gtgt') && cleanCode.includes('gtgt')) ||
+              (fCode.includes('01') && cleanCode.includes('01')) ||
+              (fCode.includes('02') && cleanCode.includes('02')) ||
+              (fCode.includes('03') && cleanCode.includes('03')) ||
+              (fCode.includes('04') && cleanCode.includes('04')) ||
+              (fCode.includes('tndn') && cleanCode.includes('tndn')) ||
+              (fCode.includes('bc26') && cleanCode.includes('bc26')) ||
+              (fCode.includes('hoa don') && cleanCode.includes('hoa don'))
+            )) {
+              codeMatches = true;
+            } else if (f.taxType && filing.taxType && f.taxType === filing.taxType) {
+              codeMatches = true;
+            }
+
+            const suppMatches = Number(f.supplementalNo || 0) === Number(filing.supplementalNo || 0);
+            return periodMatches && codeMatches && suppMatches;
+          });
+        }
+
+        if (matched && matched.messageId) {
+          break;
+        }
       }
 
       if (matched && matched.messageId) {

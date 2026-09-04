@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { PORTAL_CONFIG } from '../../shared/constants';
 import { DownloadQueueItem, DownloadState, DownloadSummary, TaxFiling } from '../../shared/types';
 import { FileOrganizer } from '../files/FileOrganizer';
+import { ExtractedZipResult } from '../files/ZipExtractor';
 import { LegacyFilingClient } from '../portal/LegacyFilingClient';
 import { TaxPortalClient } from '../portal/TaxPortalClient';
 
@@ -376,13 +377,13 @@ export class DownloadManager extends EventEmitter {
       }, ITEM_DEADLINE_MS);
 
       let payload: any = null;
+      const isDirectEtaxSource =
+        item.filing.source === 'dvc-etax-html' ||
+        Boolean(item.filing.messageId);
+
       try {
         // Ưu tiên tải từ Cổng DVC trước cho tất cả các hồ sơ.
         // Chỉ ưu tiên eTax trước khi hồ sơ đến trực tiếp từ nguồn tra cứu eTax hoặc đã có messageId sẵn.
-        const isDirectEtaxSource =
-          item.filing.source === 'dvc-etax-html' ||
-          Boolean(item.filing.messageId);
-
         if (isDirectEtaxSource && this.legacyClient) {
           try {
             const legacyFile = item.filing.messageId
@@ -467,12 +468,45 @@ export class DownloadManager extends EventEmitter {
       this.consecutiveInfrastructureFailures = 0;
 
       // 3. Tầng 2: Giải nén an toàn & kiểm tra integrity SHA-256
-      const saveResult = this.fileOrganizer.saveExtractedFiling(
-        payload.content,
-        item.filing,
-        this.taxCode,
-        this.year
-      );
+      let saveResult: ExtractedZipResult;
+      try {
+        saveResult = this.fileOrganizer.saveExtractedFiling(
+          payload.content,
+          item.filing,
+          this.taxCode,
+          this.year
+        );
+      } catch (extractErr: unknown) {
+        // Nếu gói tệp từ DVC bị lỗi giải nén (ví dụ ZIP hỏng/thiếu header/không đúng định dạng),
+        // và chưa thử nguồn eTax -> tự động fallback sang eTax để lấy tệp XML/PDF gốc từ CQT!
+        if (this.legacyClient && !isDirectEtaxSource) {
+          const extractMsg = extractErr instanceof Error ? extractErr.message : String(extractErr);
+          console.warn(`[DownloadManager] Giải nén file DVC thất bại (${extractMsg}) -> tự động fallback sang eTax cho ${item.filingId}`);
+          try {
+            const legacyFile = await this.legacyClient.resolveAndDownloadFiling(
+              this.taxCode,
+              item.filing,
+              itemController.signal
+            );
+            payload = {
+              fileName: legacyFile.fileName,
+              fileType: legacyFile.contentType,
+              content: legacyFile.dataBuffer.toString('base64'),
+              fileCount: 1
+            };
+            saveResult = this.fileOrganizer.saveExtractedFiling(
+              payload.content,
+              item.filing,
+              this.taxCode,
+              this.year
+            );
+          } catch (etaxFallbackErr: unknown) {
+            throw extractErr;
+          }
+        } else {
+          throw extractErr;
+        }
+      }
 
       item.status = saveResult.isExisting ? 'EXISTING' : 'COMPLETED';
       item.progressPercent = 100;

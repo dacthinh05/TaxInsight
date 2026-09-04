@@ -237,7 +237,8 @@ export class TaxScanEngine extends EventEmitter {
 
         // Với năm cũ (y < currentYear), nếu không phải chế độ đa năm (vì đa năm sẽ quét năm tiếp theo ngay sau đó),
         // bổ sung thêm Quý 1 năm sau để đón bắt trọn tờ khai Quyết toán TNDN (03/TNDN), QTT TNCN và T12 nộp vào T01-T03 năm sau
-        if (y < currentYear && options.customRange?.level !== 'MULTI_YEAR') {
+        const isLastInMultiYear = allYearsToScan[allYearsToScan.length - 1] === y;
+        if (y < currentYear && (options.customRange?.level !== 'MULTI_YEAR' || isLastInMultiYear)) {
           allScanRanges.push({
             range: {
               fromDate: `01/01/${y + 1}`,
