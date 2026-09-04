@@ -526,8 +526,7 @@ describe('Batch Download Integration — Tải Hàng Loạt Toàn Diện', () =>
     const dm = new DownloadManager(client, organizer, legacyClient);
 
     dm.enqueueFilings([filing], '3702735709', 2026);
-    const { promise: completedPromise, resolve } = Promise.withResolvers<void>();
-    dm.once('completed', () => resolve());
+    const completedPromise = new Promise<void>(resolve => dm.once('completed', () => resolve()));
     await dm.start();
     await completedPromise;
 
