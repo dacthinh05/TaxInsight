@@ -1,6 +1,6 @@
 {
   "name": "tax-insight",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "description": "Tải và quản lý hồ sơ, tờ khai thuế điện tử",
   "main": "dist-electron/main/main.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "icons": "node scripts/generate-icons.js && npx electron scripts/build-icon-assets.cjs",
     "keygen": "node scripts/generate-key.js",
-    "dist": "npm run build && electron-builder --win",
+    "dist": "npm run build && electron-builder --win -p never",
     "electron:dev": "vite",
     "electron:build": "npm run dist"
   },
@@ -74,7 +74,7 @@
       "repo": "TaxInsight"
     },
     "directories": {
-      "output": "build-release-v303",
+      "output": "dist-release-v304",
       "buildResources": "build"
     },
     "files": [

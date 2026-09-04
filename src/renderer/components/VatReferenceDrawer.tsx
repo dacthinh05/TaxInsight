@@ -47,14 +47,14 @@ type TabMode = 'RECONCILIATION' | 'TAX_FLOW' | 'SUPPLEMENTAL_HISTORY';
 
 // Helper format tiền tệ chuẩn kế toán: số dương "1.234.567", số âm "(250.000.000)", zero/null là "-"
 function formatWorkingPaperMoney(
-  amount: bigint | number | undefined | null,
+  amount: bigint | number | string | undefined | null,
   options: { isNegativeParenthesis?: boolean; showDashForZero?: boolean } = {
     isNegativeParenthesis: true,
     showDashForZero: true
   }
 ): string {
-  if (amount === undefined || amount === null) return '-';
-  const val = typeof amount === 'bigint' ? amount : BigInt(amount);
+  if (amount === undefined || amount === null || amount === '') return '-';
+  const val = typeof amount === 'bigint' ? amount : typeof amount === 'number' ? (Number.isFinite(amount) ? BigInt(Math.round(amount)) : 0n) : 0n;
   if (val === 0n) return options.showDashForZero ? '-' : '0';
 
   if (val < 0n) {

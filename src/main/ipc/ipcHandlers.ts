@@ -829,12 +829,14 @@ export function setupIpcHandlers(
     const authPromise = new Promise<any>(async (resolve) => {
       try {
         const isInteractive = Boolean(options?.forceInteractive);
-        const timeoutMs = 90_000;
+        // Chế độ tự động chỉ là một lần đồng bộ nền; không được giữ IPC 90s
+        // khi eTax không cấp DSE state. Cửa sổ vẫn tự hiện nếu cần thao tác.
+        const timeoutMs = isInteractive ? 120_000 : 45_000;
         const windowStartTime = Date.now();
         const authWin = new BrowserWindow({
           width: 1200,
           height: 800,
-          show: true,
+          show: isInteractive,
           center: true,
           autoHideMenuBar: true,
           title: 'Xác Thực Phiên Làm Việc eTax (Tra Cứu Giấy Nộp Tiền) - TaxInsight',
@@ -931,6 +933,10 @@ export function setupIpcHandlers(
                 const isDvc = currentUrl.includes('dichvucong.gdt.gov.vn');
                 const isEtax = currentUrl.includes('thuedientu.gdt.gov.vn');
                 const isDvcLoginPage = /\\/tthc\\/(?:home)?login(?:[/?#]|$)/i.test(currentUrl);
+                const isPluginGatePage = pageBody.includes('kiểm tra bản cập nhật') ||
+                  pageBody.includes('ứng dụng ký điện tử') ||
+                  currentUrl.includes('retailIndexProc') ||
+                  pageBody.includes('checkInstall');
                 const isDvcSsoEndpoint = currentUrl.includes('/tthc/sso/redirect-to-service');
                 const targetFromDate = ${JSON.stringify(targetFrom)};
                 const targetToDate = ${JSON.stringify(targetTo)};
@@ -1167,6 +1173,8 @@ export function setupIpcHandlers(
                   processorId: procInput ? (procInput.value || '') : '',
                   errorPage: errorInput ? (errorInput.value || '') : '',
                   currentUrl,
+                  isDvcLoginPage,
+                  pluginGate: isPluginGatePage,
                   isGntFormPresent: pageBody.includes('Tra cứu giấy nộp tiền'),
                   tableHtml,
                   isAtEtax: isEtax
@@ -1344,13 +1352,24 @@ export function setupIpcHandlers(
       const results = await paymentSlipClient.searchPaymentSlips(safeRange, options || {});
       auditLogger.log('SUCCESS', `Tìm thấy ${results.length} Giấy Nộp Tiền trên eTax`);
       return { success: true, paymentSlips: results };
-    } catch (err: any) {
-      // Tự động xác thực ngầm và retry nếu eTax yêu cầu phiên duyệt
+    } catch (err: unknown) {
+      const errorCode = err && typeof err === 'object' && 'errorCode' in err && typeof err.errorCode === 'string'
+        ? err.errorCode
+        : undefined;
+      const code = err && typeof err === 'object' && 'code' in err && typeof err.code === 'string'
+        ? err.code
+        : undefined;
+      const message = err instanceof Error ? err.message : String(err);
+
+      // PaymentSlipClient trả về các mã phiên/DSE thực tế này. Chỉ mở lại
+      // cửa sổ xác thực cho lỗi phiên; không biến 429/5xx thành vòng lặp login.
       if (
-        err?.errorCode === 'AUTH_REQUIRED' ||
-        err?.code === 'SSO_INTERACTIVE_REQUIRED' ||
-        err?.errorCode === 'ETAX_SESSION_EXPIRED' ||
-        (err?.message && err.message.includes('xác thực tương tác'))
+        errorCode === 'AUTH_REQUIRED' ||
+        errorCode === 'SESSION_EXPIRED' ||
+        errorCode === 'ETAX_QUERY_BLOCKED' ||
+        errorCode === 'ETAX_FORM_CHANGED' ||
+        code === 'SSO_INTERACTIVE_REQUIRED' ||
+        message.includes('xác thực tương tác')
       ) {
         try {
           auditLogger.log('INFO', 'Tự động xác thực phiên eTax ngầm và thử lại tra cứu GNT...');
@@ -1368,8 +1387,8 @@ export function setupIpcHandlers(
             auditLogger.log('SUCCESS', `Tìm thấy ${retryResults.length} Giấy Nộp Tiền sau khi tự động xác thực`);
             return { success: true, paymentSlips: retryResults };
           }
-        } catch (autoErr: any) {
-          console.warn('[paymentSlips:scan] Tự động xác thực ngầm thất bại:', autoErr?.message);
+        } catch (autoErr: unknown) {
+          console.warn('[paymentSlips:scan] Tự động xác thực ngầm thất bại:', String(autoErr));
         }
       }
 
@@ -1377,12 +1396,12 @@ export function setupIpcHandlers(
       auditLogger.log(
         'ERROR',
         `Tra cứu Giấy Nộp Tiền thất bại [MST: ${sessionInfo.taxCode || 'N/A'}]`,
-        `${err.errorCode || 'UNKNOWN'} | ${err.message}`
+        `${errorCode || code || 'UNKNOWN'} | ${message}`
       );
       return {
         success: false,
-        error: err.message,
-        errorCode: err.errorCode || 'ETAX_ERROR',
+        error: message,
+        errorCode: errorCode || code || 'ETAX_ERROR',
         paymentSlips: []
       };
     }

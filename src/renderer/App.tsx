@@ -28,7 +28,6 @@ import { buildSlipReconciliationIndex, filterPaymentSlips, isPaidSuccessSlip, Sl
 import { FilingQuickPreviewDrawer } from './components/FilingQuickPreviewDrawer';
 import { InventoryTable } from './components/InventoryTable';
 import { LoginPage } from './components/LoginPage';
-import { MetricCardsRibbon } from './components/MetricCardsRibbon';
 import { PaymentSlipStatsModal } from './components/PaymentSlipStatsModal';
 import { PaymentSlipTable } from './components/PaymentSlipTable';
 import { ScanCommandBar } from './components/ScanCommandBar';
@@ -1474,15 +1473,6 @@ export const App: React.FC = () => {
           onExportGntExcel={() => handleExportSlipsExcel(filteredPaymentSlips)}
         />
 
-        {/* Contextual Shortcut Cards: Phân tích GTGT & TNCN */}
-        {viewMode !== 'PAYMENT_SLIPS' && (
-          <MetricCardsRibbon
-            filings={filings}
-            onAnalyzeVat={handleAnalyzeVat}
-            onAnalyzePit={handleAnalyzePit}
-            onOpenFolder={handleOpenFolder}
-          />
-        )}
 
         {/* Workspace Table Container */}
         <div className="flex-1 min-h-0">

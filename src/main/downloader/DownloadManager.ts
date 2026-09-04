@@ -377,10 +377,12 @@ export class DownloadManager extends EventEmitter {
 
       let payload: any = null;
       try {
-        // Chỉ hồ sơ được phát hiện từ luồng legacy mới dùng eTax cũ.
-        // Hồ sơ hiện hành (kể cả TNCN) phải tải chính trên DVC.
-        const isLegacyFiling = item.filing.source === 'dvc-etax-html';
-
+        // Hồ sơ thuế VAT/PIT/... thường do eTax phát hành dù vẫn xuất hiện
+        // trong bảng DVC; ưu tiên eTax để tránh validateIdTkhai=400 và HTTP 500.
+        const isLegacyFiling =
+          item.filing.source === 'dvc-etax-html' ||
+          Boolean(item.filing.messageId) ||
+          ['VAT', 'PIT', 'CIT', 'FCT', 'OTHER'].includes(item.filing.taxType);
         if (isLegacyFiling && this.legacyClient) {
           try {
             const legacyFile = item.filing.messageId
@@ -397,6 +399,11 @@ export class DownloadManager extends EventEmitter {
               fileCount: 1
             };
           } catch (etaxErr: any) {
+            const isRateLimit = etaxErr?.code === 'RATE_LIMIT' || etaxErr?.status === 429 || String(etaxErr?.message).includes('429');
+            const isAuth = etaxErr?.code === 'SESSION_EXPIRED' || etaxErr?.code === 'AUTH_REQUIRED';
+            if (isRateLimit || isAuth || etaxErr?.code === 'CANCELLED') {
+              throw etaxErr;
+            }
             console.warn(`[DownloadManager] Không tải được qua eTax (${etaxErr?.message}), chuyển sang Cổng DVC`);
           }
         }
@@ -431,7 +438,12 @@ export class DownloadManager extends EventEmitter {
                   content: legacyFile.dataBuffer.toString('base64'),
                   fileCount: 1
                 };
-              } catch {
+              } catch (etaxFallbackErr: any) {
+                const isRateLimit = etaxFallbackErr?.code === 'RATE_LIMIT' || etaxFallbackErr?.status === 429 || String(etaxFallbackErr?.message).includes('429');
+                const isAuth = etaxFallbackErr?.code === 'SESSION_EXPIRED' || etaxFallbackErr?.code === 'AUTH_REQUIRED';
+                if (isRateLimit || isAuth || etaxFallbackErr?.code === 'CANCELLED') {
+                  throw etaxFallbackErr;
+                }
                 throw dvcErr;
               }
             } else {

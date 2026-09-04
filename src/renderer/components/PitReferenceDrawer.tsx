@@ -88,9 +88,9 @@ export const PitReferenceDrawer: React.FC<PitReferenceDrawerProps> = ({
     setCollapsedQuarters(next);
   };
 
-  const formatMoney = (val: bigint | number | undefined | null) => {
-    if (val === undefined || val === null) return '—';
-    const num = typeof val === 'bigint' ? Number(val) : val;
+  const formatMoney = (val: bigint | number | string | undefined | null) => {
+    if (val === undefined || val === null || val === '') return '—';
+    const num = typeof val === 'bigint' ? Number(val) : typeof val === 'number' ? (Number.isFinite(val) ? val : 0) : 0;
     if (num === 0) return '—';
     return num.toLocaleString('vi-VN');
   };

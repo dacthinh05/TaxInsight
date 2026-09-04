@@ -197,6 +197,124 @@ describe('Request avalanche and missing-XML regressions', () => {
     expect(legacyClient.downloadFiling).toHaveBeenCalledWith('LEGACY-MESSAGE-01');
     expect(currentClient.downloadHoSo).not.toHaveBeenCalled();
   });
+  it.each([
+    ['VAT', VatAnalyticsEngine],
+    ['PIT', PitAnalyticsEngine]
+  ] as const)('prefers eTax resolution for current %s declarations when DVC metadata is present', async (taxType, Engine) => {
+    const currentClient = {
+      downloadHoSo: vi.fn()
+    };
+    const legacyBuffer = Buffer.from('<?xml version="1.0"?><HSoThueDTu><maTKhai>01</maTKhai></HSoThueDTu>');
+    const legacyClient = {
+      resolveAndDownloadFiling: vi.fn().mockResolvedValue({
+        dataBuffer: legacyBuffer,
+        fileName: 'etax.xml',
+        contentType: 'application/xml'
+      })
+    };
+    const engine = new Engine(currentClient as any, '', legacyClient as any);
+    const filing: TaxFiling = {
+      id: `${taxType}_CURRENT_01`,
+      title: taxType === 'VAT' ? 'Tờ khai thuế GTGT' : 'Tờ khai thuế TNCN',
+      taxType,
+      declarationCode: taxType === 'VAT' ? '01/GTGT' : '05/KK-TNCN',
+      period: '01/2026',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    const result = await (engine as any).downloadHoSoWithRetry(filing);
+
+    expect(Buffer.from(result.content, 'base64')).toEqual(legacyBuffer);
+    expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledWith('', filing);
+    expect(currentClient.downloadHoSo).not.toHaveBeenCalled();
+  });
+  it('keeps all PIT filings as explicit unavailable snapshots after a rate-limit stop', async () => {
+    const rateLimitError = Object.assign(new Error('HTTP 429 Too Many Requests'), {
+      code: 'RATE_LIMIT',
+      httpStatus: 429
+    });
+    const client = {
+      downloadHoSo: vi.fn().mockRejectedValue(rateLimitError)
+    };
+    const engine = new PitAnalyticsEngine(client as unknown as TaxPortalClient);
+
+    const summary = await engine.analyzePitFilings(createAnalyticsFilings('PIT'), '3702735709');
+
+    expect(summary.totalFilingsAnalyzed).toBe(5);
+    expect(summary.totalXmlAvailableCount).toBe(0);
+    expect(summary.failedXmlCount).toBe(5);
+    expect(summary.coverageStatus).toBe('UNAVAILABLE');
+    expect(summary.failedXmlDetails).toHaveLength(5);
+    expect(client.downloadHoSo).toHaveBeenCalledTimes(2);
+  });
+  it.each([
+    ['VAT', VatAnalyticsEngine],
+    ['PIT', PitAnalyticsEngine]
+  ] as const)('does not fall back to DVC when eTax %s download throws RATE_LIMIT or 429', async (taxType, Engine) => {
+    const currentClient = {
+      downloadHoSo: vi.fn()
+    };
+    const rateLimitError = Object.assign(new Error('HTTP 429 Too Many Requests'), {
+      code: 'RATE_LIMIT',
+      status: 429
+    });
+    const legacyClient = {
+      resolveAndDownloadFiling: vi.fn().mockRejectedValue(rateLimitError)
+    };
+    const engine = new Engine(currentClient as any, '', legacyClient as any);
+    const filing: TaxFiling = {
+      id: `${taxType}_RATE_LIMIT_01`,
+      title: taxType === 'VAT' ? 'Tờ khai thuế GTGT' : 'Tờ khai thuế TNCN',
+      taxType,
+      declarationCode: taxType === 'VAT' ? '01/GTGT' : '05/KK-TNCN',
+      period: '01/2026',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    await expect((engine as any).downloadHoSoWithRetry(filing)).rejects.toThrow('HTTP 429 Too Many Requests');
+    expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledWith('', filing);
+    expect(currentClient.downloadHoSo).not.toHaveBeenCalled();
+  });
+
+  it('VAT buildSummaryFromSnapshots picks the last valid XML snapshot as finalSnapshot when a supplemental filing failed', () => {
+    const filings: TaxFiling[] = [
+      { id: 'F1', title: 'Tờ khai GTGT', taxType: 'VAT', period: 'Q1/2026', filingType: 'ORIGINAL', downloadAvailable: true },
+      { id: 'F2', title: 'Tờ khai GTGT', taxType: 'VAT', period: 'Q1/2026', filingType: 'SUPPLEMENTAL', supplementalNo: 1, downloadAvailable: true }
+    ];
+    const snapshots: any[] = [
+      {
+        period: { normalizedKey: '2026-Q1', raw: 'Q1/2026', year: 2026, quarter: 1 },
+        declarationType: 'ORIGINAL',
+        xmlAvailable: true,
+        submittedAt: '2026-04-20T00:00:00Z',
+        ct24_thueMuaVao: 100n,
+        ct25_thueKhauTruKyNay: 100n,
+        ct35_thueBanRa: 200n,
+        ct40_thuePhaiNop: 100n,
+        ct43_thueKhauTruChuyenKySau: 0n
+      },
+      {
+        period: { normalizedKey: '2026-Q1', raw: 'Q1/2026', year: 2026, quarter: 1 },
+        declarationType: 'SUPPLEMENTAL',
+        supplementalNo: 1,
+        xmlAvailable: false,
+        submittedAt: '2026-05-20T00:00:00Z',
+        ct24_thueMuaVao: 0n,
+        ct25_thueKhauTruKyNay: 0n,
+        ct35_thueBanRa: 0n,
+        ct40_thuePhaiNop: 0n,
+        ct43_thueKhauTruChuyenKySau: 0n
+      }
+    ];
+
+    const summary = VatAnalyticsEngine.buildSummaryFromSnapshots(filings, snapshots, '3702735709');
+    expect(summary.periodGroups).toHaveLength(1);
+    expect(summary.periodGroups[0].finalSnapshot).toBeDefined();
+    expect(summary.periodGroups[0].finalSnapshot?.xmlAvailable).toBe(true);
+    expect(summary.periodGroups[0].finalSnapshot?.ct40_thuePhaiNop).toBe(100n);
+  });
 
   const detailHtml = (
     maHoSo: string,

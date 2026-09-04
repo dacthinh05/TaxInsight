@@ -303,6 +303,13 @@ export class PitAnalyticsEngine {
             filing.title.toLowerCase().includes('quyết toán');
           const failReason = failedXmlDetails.find(f => f.submissionId === filing.id)?.reason
             || (filing.downloadAvailable ? 'Không tải được file XML từ Cổng Thuế' : 'Hồ sơ không cho phép tải file đính kèm');
+          if (!failedXmlDetails.find(f => f.submissionId === filing.id)) {
+            failedXmlDetails.push({
+              submissionId: filing.id,
+              periodLabel: filing.period || filing.periodNormalized?.raw || '',
+              reason: failReason
+            });
+          }
 
           snapshot = {
             submissionId: filing.id,
@@ -359,7 +366,8 @@ export class PitAnalyticsEngine {
       }
 
       if (i + concurrency < total && !this.isCancelled) {
-        if (stopForInfrastructure) break;
+        // Sau lỗi hạ tầng, các batch còn lại chỉ tạo snapshot FAILED local;
+        // không được bỏ qua hồ sơ và làm sai tổng coverage.
         await new Promise(r => setTimeout(r, 250));
       }
     }
@@ -439,39 +447,55 @@ export class PitAnalyticsEngine {
     };
   }
   private async downloadHoSoWithRetry(filing: TaxFiling, maxRetries = 3): Promise<{ fileName: string; fileType: string; content: string }> {
-    let lastErr: any;
+    let lastErr: unknown;
+    const etaxTaxTypes: Record<string, true> = { VAT: true, PIT: true, CIT: true, FCT: true, OTHER: true };
+    const shouldTryLegacyFirst = Boolean(
+      this.legacyClient &&
+      (filing.source === 'dvc-etax-html' || Boolean(filing.messageId) || etaxTaxTypes[filing.taxType] === true)
+    );
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       if (this.isCancelled) {
-        const cancelErr = new Error('Phân tích đã bị hủy');
-        (cancelErr as any).code = 'CANCELLED';
+        const cancelErr = Object.assign(new Error('Phân tích đã bị hủy'), { code: 'CANCELLED' });
         throw cancelErr;
       }
       try {
-        if (this.legacyClient && (filing.source === 'dvc-etax-html' || Boolean(filing.messageId))) {
-          const legacyId = filing.messageId || filing.id;
-          if (legacyId) {
+        if (shouldTryLegacyFirst && this.legacyClient) {
+          if (filing.messageId) {
             try {
-              const legacyFile = await this.legacyClient.downloadFiling(legacyId);
+              const legacyFile = await this.legacyClient.downloadFiling(filing.messageId);
               return {
                 fileName: legacyFile.fileName,
                 fileType: legacyFile.contentType,
                 content: legacyFile.dataBuffer.toString('base64')
               };
-            } catch {}
-          }
-          if (typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
-            try {
-              const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
-              return {
-                fileName: legacyFile.fileName,
-                fileType: legacyFile.contentType,
-                content: legacyFile.dataBuffer.toString('base64')
-              };
-            } catch (legacyErr: any) {
-              console.warn(`[PitAnalyticsEngine] Tải qua eTax thất bại (${legacyErr?.message}), chuyển sang Cổng DVC`);
+            } catch (legacyDirectErr: unknown) {
+              const errObj = legacyDirectErr as any;
+              if (errObj?.code === 'RATE_LIMIT' || errObj?.code === 'SESSION_EXPIRED' || errObj?.code === 'AUTH_REQUIRED' || errObj?.code === 'CANCELLED' || errObj?.status === 429) {
+                throw legacyDirectErr;
+              }
+              console.warn(`[PitAnalyticsEngine] Tải eTax trực tiếp thất bại (${String(legacyDirectErr)}), thử tra cứu theo hồ sơ`);
             }
           }
+
+          try {
+            const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
+            if (legacyFile?.dataBuffer && legacyFile.dataBuffer.length > 0) {
+              return {
+                fileName: legacyFile.fileName,
+                fileType: legacyFile.contentType,
+                content: legacyFile.dataBuffer.toString('base64')
+              };
+            }
+          } catch (legacyErr: unknown) {
+            const errObj = legacyErr as any;
+            if (errObj?.code === 'RATE_LIMIT' || errObj?.code === 'SESSION_EXPIRED' || errObj?.code === 'AUTH_REQUIRED' || errObj?.code === 'CANCELLED' || errObj?.status === 429) {
+              throw legacyErr;
+            }
+            console.warn(`[PitAnalyticsEngine] Tải qua eTax thất bại (${String(legacyErr)}), chuyển sang Cổng DVC`);
+          }
         }
+
         try {
           return await this.client.downloadHoSo(filing.id, undefined, {
             isThueDienTu: filing.isThueDienTu,
@@ -481,8 +505,8 @@ export class PitAnalyticsEngine {
             period: filing.period,
             declarationCode: filing.declarationCode
           });
-        } catch (dvcErr: any) {
-          if (this.legacyClient && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
+        } catch (dvcErr: unknown) {
+          if (this.legacyClient && !shouldTryLegacyFirst && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
             try {
               const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
               if (legacyFile?.dataBuffer && legacyFile.dataBuffer.length > 0) {
@@ -492,19 +516,28 @@ export class PitAnalyticsEngine {
                   content: legacyFile.dataBuffer.toString('base64')
                 };
               }
-            } catch (etaxErr: any) {
-              console.warn(`[PitAnalyticsEngine] eTax fallback thất bại cho ${filing.period}:`, etaxErr?.message);
+            } catch (etaxErr: unknown) {
+              const errObj = etaxErr as any;
+              if (errObj?.code === 'RATE_LIMIT' || errObj?.code === 'SESSION_EXPIRED' || errObj?.code === 'AUTH_REQUIRED' || errObj?.code === 'CANCELLED' || errObj?.status === 429) {
+                throw etaxErr;
+              }
+              console.warn(`[PitAnalyticsEngine] eTax fallback thất bại cho ${filing.period}:`, String(etaxErr));
             }
           }
           throw dvcErr;
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         lastErr = err;
-        if (err?.code === 'CANCELLED' || err?.code === 'SESSION_EXPIRED') throw err;
-        const isTransient = err?.code === 'TIMEOUT' || err?.code === 'NETWORK';
-        if (isTransient && attempt < maxRetries) {
-          await new Promise(r => setTimeout(r, 2000 * attempt + Math.random() * 500));
-          continue;
+        const errorCode =
+          err && typeof err === 'object' && 'code' in err && typeof err.code === 'string'
+            ? err.code
+            : undefined;
+        if (errorCode === 'CANCELLED' || errorCode === 'SESSION_EXPIRED' || errorCode === 'RATE_LIMIT' || errorCode === 'AUTH_REQUIRED') throw err;
+        if (errorCode === 'TIMEOUT' || errorCode === 'NETWORK') {
+          if (attempt < maxRetries) {
+            await new Promise(r => setTimeout(r, 2000 * attempt));
+            continue;
+          }
         }
         throw err;
       }

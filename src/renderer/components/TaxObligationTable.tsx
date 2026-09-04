@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { MatchedPaymentSlipItem, TaxObligation, TaxObligationSummary } from '../../shared/obligationTypes';
 import { getTaxTypeLabel } from '../../shared/declarationFormatter';
+import { formatMoneyVND } from '../../shared/moneyUtils';
 
 interface TaxObligationTableProps {
   obligationSummary: TaxObligationSummary;
@@ -62,7 +63,7 @@ const CONFIDENCE_CLASS: Record<string, string> = {
   POSSIBLE: 'bg-blue-100 text-blue-800'
 };
 
-const fmtVnd = (v: bigint): string => `${v.toLocaleString('vi-VN')} ₫`;
+const fmtVnd = (v: bigint | number | undefined | null): string => formatMoneyVND(v ?? undefined);
 
 export const TaxObligationTable: React.FC<TaxObligationTableProps> = ({
   obligationSummary,
@@ -546,7 +547,7 @@ export const TaxObligationTable: React.FC<TaxObligationTableProps> = ({
                   Mẫu biểu: <span className="font-semibold">Mẫu {selectedLegalObligation.declarationCode}</span> · {selectedLegalObligation.currentVersion}
                 </div>
                 <div className="text-teal-950 font-bold font-mono text-[13px] pt-1">
-                  Số thuế phát sinh theo tờ khai cuối: {selectedLegalObligation.amountPayable.toLocaleString('vi-VN')} ₫
+                  Số thuế phát sinh theo tờ khai cuối: {formatMoneyVND(selectedLegalObligation.amountPayable)}
                 </div>
                 <div className="text-slate-600 pt-1">
                   Hạn nộp pháp định: <strong className="text-slate-900">{selectedLegalObligation.deadline.effectivePaymentDeadline}</strong>

@@ -738,6 +738,11 @@ export class LegacyFilingClient {
           etaxFilings = allFilings;
           this.etaxFilingsCache.set(filingYear, etaxFilings);
         } catch (queryErr: unknown) {
+          const isRateLimit = (queryErr as any)?.status === 429 || (queryErr as any)?.code === 'RATE_LIMIT' || String((queryErr as any)?.message).includes('429');
+          const isAuth = (queryErr as any)?.code === 'SESSION_EXPIRED' || (queryErr as any)?.code === 'AUTH_REQUIRED';
+          if (isRateLimit || isAuth) {
+            throw queryErr;
+          }
           const msg = queryErr instanceof Error ? queryErr.message : String(queryErr);
           console.warn(`[LegacyFilingClient] Tra cứu eTax năm ${filingYear} thất bại: ${msg}`);
           continue;

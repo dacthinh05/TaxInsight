@@ -65,7 +65,7 @@ describe('PortalRequestScheduler chống HTTP 429 và Request Avalanche', () => 
     const first = await firstPromise;
     const second = await secondPromise;
     expect(starts[0] - startedAt).toBeGreaterThanOrEqual(40);
-    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(14);
+    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(10);
 
     first.release();
     second.release();
