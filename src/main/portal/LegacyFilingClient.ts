@@ -754,7 +754,8 @@ export class LegacyFilingClient {
     const cleanPeriod = periodText.trim().toLowerCase().replace(/[\s\-_/]/g, '');
     const cleanPeriodDigits = periodText.match(/\b(20\d{2})\b/)?.[1] || '';
     const cleanCode = (filing.declarationCode || filing.procedureCode || filing.title || '').trim().toLowerCase().replace(/[\s\-_/]/g, '');
-    const isQtt = cleanCode.includes('qtt') || cleanCode.includes('quyettoan') || cleanCode.includes('quyết toán') || (filing.title || '').toLowerCase().includes('quyết toán');
+    const isExplicitKk = cleanCode.includes('05kk') || cleanCode.includes('02kk') || cleanCode.includes('06kk') || (filing.declarationCode || '').includes('KK');
+    const isQtt = !isExplicitKk && (cleanCode.includes('qtt') || cleanCode.includes('quyettoan') || cleanCode.includes('quyết toán') || (filing.title || '').toLowerCase().includes('quyết toán'));
 
     // 3. Tìm kiếm lần lượt trong các năm
     for (const filingYear of yearsToSearch) {
@@ -796,7 +797,8 @@ export class LegacyFilingClient {
           const fPeriod = (f.period || f.periodNormalized?.raw || '').trim().toLowerCase().replace(/[\s\-_/]/g, '');
           const fPeriodDigits = (f.period || f.periodNormalized?.raw || '').match(/\b(20\d{2})\b/)?.[1] || '';
           const fCode = (f.declarationCode || f.procedureCode || f.title || '').trim().toLowerCase().replace(/[\s\-_/]/g, '');
-          const fIsQtt = fCode.includes('qtt') || fCode.includes('quyettoan') || (f.title || '').toLowerCase().includes('quyết toán');
+          const fIsExplicitKk = fCode.includes('05kk') || fCode.includes('02kk') || fCode.includes('06kk') || (f.declarationCode || '').includes('KK');
+          const fIsQtt = !fIsExplicitKk && (fCode.includes('qtt') || fCode.includes('quyettoan') || (f.title || '').toLowerCase().includes('quyết toán'));
 
           // Khớp kỳ tính thuế
           let periodMatches = false;
@@ -832,7 +834,10 @@ export class LegacyFilingClient {
 
           // Khớp loại tờ khai
           let codeMatches = false;
-          if (isQtt && fIsQtt) {
+          // Nếu một bên là Quyết toán (QTT) và một bên là Khấu trừ / Kê khai kỳ (KK) -> TUYỆT ĐỐI KHÔNG KHỚP
+          if (isQtt !== fIsQtt) {
+            codeMatches = false;
+          } else if (isQtt && fIsQtt) {
             codeMatches = true;
           } else if (fCode && cleanCode && (
             fCode === cleanCode ||

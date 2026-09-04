@@ -169,17 +169,28 @@ export class TaxFilingParser {
       return { filingType: 'REFUND' };
     }
 
-    // 3. Quyết toán thuế (03/TNDN, 05/QTT-TNCN, 02/QTT-TNCN, 1.008346, 1.008347...)
-    if (
-      combined.includes('quyet toan') ||
-      combined.includes('qtt') ||
-      combined.includes('03/tndn') ||
-      combined.includes('05/qtt-tncn') ||
-      combined.includes('02/qtt-tncn') ||
-      combined.includes('1.008346') ||
+    // 3. Quyết toán thuế (03/TNDN, 05/QTT-TNCN, 02/QTT-TNCN, 1.008346, 1.008309, 2.002233...)
+    // Chú ý: Tờ khai khấu trừ/kê khai (05/KK-TNCN, 02/KK-TNCN, 06/KK-TNCN, 1.008347, 2.002235)
+    // TUYỆT ĐỐI KHÔNG phải là quyết toán thuế (FINALIZATION).
+    const isExplicitKk =
+      /0[256]\/kk|kk-tncn/i.test(declarationCode || '') ||
+      combined.includes('05/kk') ||
+      combined.includes('02/kk') ||
+      combined.includes('06/kk') ||
       combined.includes('1.008347') ||
-      combined.includes('1.008309') ||
-      combined.includes('2.002233')
+      combined.includes('2.002235');
+
+    if (
+      !isExplicitKk && (
+        combined.includes('quyet toan') ||
+        combined.includes('qtt') ||
+        combined.includes('03/tndn') ||
+        combined.includes('05/qtt-tncn') ||
+        combined.includes('02/qtt-tncn') ||
+        combined.includes('1.008346') ||
+        combined.includes('1.008309') ||
+        combined.includes('2.002233')
+      )
     ) {
       return { filingType: 'FINALIZATION' };
     }

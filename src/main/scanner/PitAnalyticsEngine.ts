@@ -297,10 +297,20 @@ export class PitAnalyticsEngine {
         if (!snapshot) {
           const rawPeriod = filing.period || filing.periodNormalized?.raw || '';
           const norm = normalizeVatPeriod(rawPeriod, filing.submittedAt);
+          const isExplicitKk =
+            (filing.declarationCode || '').includes('05/KK') ||
+            (filing.declarationCode || '').includes('02/KK') ||
+            (filing.declarationCode || '').includes('06/KK') ||
+            (filing.procedureCode || '').includes('1.008347') ||
+            (filing.procedureCode || '').includes('2.002235');
+
           const isFinal =
-            filing.filingType === 'FINALIZATION' ||
-            (filing.declarationCode || '').includes('05/QTT') ||
-            filing.title.toLowerCase().includes('quyết toán');
+            !isExplicitKk && (
+              (filing.declarationCode || '').includes('05/QTT') ||
+              (filing.declarationCode || '').includes('02/QTT') ||
+              filing.filingType === 'FINALIZATION' ||
+              filing.title.toLowerCase().includes('quyết toán')
+            );
           const failReason = failedXmlDetails.find(f => f.submissionId === filing.id)?.reason
             || (filing.downloadAvailable ? 'Không tải được file XML từ Cổng Thuế' : 'Hồ sơ không cho phép tải file đính kèm');
           if (!failedXmlDetails.find(f => f.submissionId === filing.id)) {

@@ -369,4 +369,38 @@ describe('PIT XML Parser & Flow Engine Test Suite', () => {
     expect(result.totalNonResidentTax33).toBe(10000000n);
     expect(result.totalWithheldTax34).toBe(88000000n);
   });
+
+  it('6. BUGFIX: Tờ khai 05/KK-TNCN có thủ tục 1.008347 hoặc chứa chữ quyết toán không bị coi là finalization', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <HSoThueDTu>
+      <TTinChung>
+        <maTKhai>864</maTKhai>
+        <kyKKhai>Q1/2026</kyKKhai>
+      </TTinChung>
+      <NDungTKhai>
+        <ct21>50</ct21>
+        <ct34>5000000</ct34>
+      </NDungTKhai>
+    </HSoThueDTu>`;
+
+    const filingWithOldMeta: TaxFiling = {
+      id: 'PIT_05KK_SUSPICIOUS',
+      procedureCode: '1.008347',
+      declarationCode: '05/KK-TNCN',
+      title: '05/KK-TNCN - Tờ khai quyết toán thuế TNCN', // Giả sử metadata cũ chứa chữ quyết toán
+      taxType: 'PIT',
+      period: 'Quý 1/2026',
+      submittedAt: '20/04/2026 10:00:00',
+      filingType: 'ORIGINAL',
+      downloadAvailable: true
+    };
+
+    const snap = PitXmlParser.parsePitXml(xml, filingWithOldMeta, '0123456789');
+    expect(snap).not.toBeNull();
+    expect(snap?.isFinalization).toBe(false);
+    expect(snap?.formCode).toBe('05/KK-TNCN');
+    expect(snap?.isQuarter).toBe(true);
+    expect(snap?.isYear).toBe(false);
+    expect(snap?.periodLabel).toBe('Quý 1/2026');
+  });
 });

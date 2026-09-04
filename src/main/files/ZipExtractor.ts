@@ -190,7 +190,8 @@ export class ZipExtractor {
       .replace(/đ/g, 'd')
       .replace(/Đ/g, 'd');
 
-    const isQuyetToan = (filing.title || '').toLowerCase().includes('quyết toán') || (filing.declarationCode || '').includes('03/TNDN') || (filing.declarationCode || '').includes('QTT');
+    const isExplicitKk = /0[256]\/kk|kk-tncn/i.test(filing.declarationCode || '') || (filing.title || '').toLowerCase().includes('khấu trừ');
+    const isQuyetToan = !isExplicitKk && ((filing.title || '').toLowerCase().includes('quyết toán') || (filing.declarationCode || '').includes('03/TNDN') || (filing.declarationCode || '').includes('QTT'));
     const filingSuffix = filing.filingType === 'SUPPLEMENTAL'
       ? `BoSung-L${filing.supplementalNo || 1}`
       : (isQuyetToan ? 'QuyetToan' : 'ChinhThuc');
@@ -335,6 +336,25 @@ export class ZipExtractor {
           fileHashes: { [resolved.targetPath]: resolved.hash }
         };
       }
+      // Duyệt tuần tự các Local File Header (PK\x03\x04) và giải nén bằng zlib.inflateRawSync.
+      if (zipBuffer.includes(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+        try {
+          const recovered = this.recoverTruncatedZip(
+            zipBuffer,
+            destDir,
+            filing,
+            taxCode,
+            sha256,
+            prefixCode,
+            cleanPeriod,
+            filingSuffix,
+            filingIdentity
+          );
+          if (recovered && recovered.savedPaths.length > 0) {
+            return recovered;
+          }
+        } catch {}
+      }
 
       throw new Error(`File không đúng định dạng ZIP: ${err.message}`);
     }
@@ -452,5 +472,113 @@ export class ZipExtractor {
       sha256,
       fileHashes
     };
+  }
+
+  /**
+   * Phục hồi giải nén các tệp ZIP bị thiếu END header (No END header found do stream bị ngắt
+   * hoặc server Cổng Thuế không ghi Central Directory).
+   * Duyệt tuần tự các Local File Header (PK\x03\x04) từ đầu buffer và giải nén bằng zlib.inflateRawSync.
+   */
+  private static recoverTruncatedZip(
+    zipBuffer: Buffer,
+    destDir: string,
+    filing: TaxFiling,
+    taxCode: string,
+    sha256: string,
+    prefixCode: string,
+    cleanPeriod: string,
+    filingSuffix: string,
+    filingIdentity: string
+  ): ExtractedZipResult | null {
+    const pkSig = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+    let offset = 0;
+    const savedPaths: string[] = [];
+    let xmlPath: string | undefined;
+    let pdfPath: string | undefined;
+    const fileHashes: Record<string, string> = {};
+
+    while (offset + 30 <= zipBuffer.length) {
+      const idx = zipBuffer.indexOf(pkSig, offset);
+      if (idx === -1 || idx + 30 > zipBuffer.length) break;
+
+      const method = zipBuffer.readUInt16LE(idx + 8);
+      const compressedSize = zipBuffer.readUInt32LE(idx + 18);
+      const uncompressedSize = zipBuffer.readUInt32LE(idx + 22);
+      const fnLen = zipBuffer.readUInt16LE(idx + 26);
+      const extraLen = zipBuffer.readUInt16LE(idx + 28);
+
+      const dataStart = idx + 30 + fnLen + extraLen;
+      if (dataStart > zipBuffer.length) break;
+
+      let entryName = zipBuffer.toString('utf8', idx + 30, idx + 30 + fnLen).trim();
+      if (!entryName) {
+        entryName = `entry_${savedPaths.length + 1}`;
+      }
+
+      let decompressedData: Buffer | null = null;
+      let nextOffset = dataStart;
+
+      if (method === 8) {
+        // Raw Deflate
+        try {
+          const slice = compressedSize > 0 && dataStart + compressedSize <= zipBuffer.length
+            ? zipBuffer.subarray(dataStart, dataStart + compressedSize)
+            : zipBuffer.subarray(dataStart);
+          decompressedData = zlib.inflateRawSync(slice);
+          nextOffset = compressedSize > 0 ? dataStart + compressedSize : dataStart + 1;
+        } catch {
+          try {
+            const slice = compressedSize > 0 && dataStart + compressedSize <= zipBuffer.length
+              ? zipBuffer.subarray(dataStart, dataStart + compressedSize)
+              : zipBuffer.subarray(dataStart);
+            decompressedData = zlib.inflateSync(slice);
+            nextOffset = compressedSize > 0 ? dataStart + compressedSize : dataStart + 1;
+          } catch {}
+        }
+      } else if (method === 0) {
+        // Stored uncompressed
+        if (compressedSize > 0 && dataStart + compressedSize <= zipBuffer.length) {
+          decompressedData = zipBuffer.subarray(dataStart, dataStart + compressedSize);
+          nextOffset = dataStart + compressedSize;
+        } else if (uncompressedSize > 0 && dataStart + uncompressedSize <= zipBuffer.length) {
+          decompressedData = zipBuffer.subarray(dataStart, dataStart + uncompressedSize);
+          nextOffset = dataStart + uncompressedSize;
+        }
+      }
+
+      if (decompressedData && decompressedData.length > 0) {
+        const ext = path.extname(entryName).toLowerCase() || (
+          decompressedData.slice(0, 5).toString('utf8').startsWith('%PDF') ? '.pdf' : '.xml'
+        );
+        const finalFileName = this.buildSafeFileName(
+          `${prefixCode}_${cleanPeriod}_${filingSuffix}_${filingIdentity}_${savedPaths.length}`,
+          ext
+        );
+        const resolved = this.resolveCollisionSafePath(destDir, finalFileName, decompressedData);
+        if (!resolved.isExisting) {
+          fs.writeFileSync(resolved.targetPath, decompressedData);
+        }
+        if (fs.existsSync(resolved.targetPath) && fs.statSync(resolved.targetPath).size > 0) {
+          savedPaths.push(resolved.targetPath);
+          fileHashes[resolved.targetPath] = resolved.hash;
+          if (ext === '.xml' && !xmlPath) xmlPath = resolved.targetPath;
+          if (ext === '.pdf' && !pdfPath) pdfPath = resolved.targetPath;
+        }
+      }
+
+      offset = Math.max(nextOffset, idx + 4);
+    }
+
+    if (savedPaths.length > 0) {
+      return {
+        isExisting: false,
+        savedPaths,
+        xmlPath,
+        pdfPath,
+        sha256,
+        fileHashes
+      };
+    }
+    return null;
   }
 }

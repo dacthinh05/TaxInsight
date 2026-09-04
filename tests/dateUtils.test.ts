@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   checkMissingPeriods,
   compareFilings,
+  getFilingDisplayName,
   generateMonthRanges,
   generateQuarterRanges,
   generateYearRange,
@@ -214,6 +215,41 @@ describe('Date Utilities & Adaptive Range Generator', () => {
 
       // Kỳ 11/2025 GTGT -> 10/2025 GTGT -> 08/2025 Hoàn thuế -> 08/2025 Bổ sung L1 -> 08/2025 Bổ sung L2 -> 07/2025 GTGT -> TNCN -> OTHER
       expect(sortedIds).toEqual(['2', '5', '3', '4', '1', '6', '7', '8']);
+    });
+  });
+
+  describe('getFilingDisplayName: Phân biệt chính xác Khấu trừ vs Quyết toán TNCN', () => {
+    it('định danh đúng tờ khai khấu trừ TNCN (05/KK-TNCN, thủ tục 1.008347), không nhầm thành quyết toán', () => {
+      const kkFiling: TaxFiling = {
+        id: 'KK_001',
+        procedureCode: '1.008347',
+        declarationCode: '05/KK-TNCN',
+        title: '1.008347 - Khai thuế thu nhập cá nhân',
+        taxType: 'PIT',
+        period: 'Quý 1/2026',
+        filingType: 'ORIGINAL',
+        downloadAvailable: true
+      };
+      const formatted = getFilingDisplayName(kkFiling);
+      expect(formatted.primaryTitle).toBe('Khai thuế TNCN');
+      expect(formatted.primaryTitle).not.toBe('Quyết toán thuế TNCN');
+      expect(formatted.detailText).toBe('Mẫu 05/KK-TNCN');
+    });
+
+    it('định danh đúng tờ khai quyết toán TNCN (05/QTT-TNCN, thủ tục 1.008309)', () => {
+      const qttFiling: TaxFiling = {
+        id: 'QTT_001',
+        procedureCode: '1.008309',
+        declarationCode: '05/QTT-TNCN',
+        title: '1.008309 - Quyết toán thuế thu nhập cá nhân',
+        taxType: 'PIT',
+        period: 'Năm 2025',
+        filingType: 'FINALIZATION',
+        downloadAvailable: true
+      };
+      const formatted = getFilingDisplayName(qttFiling);
+      expect(formatted.primaryTitle).toBe('Quyết toán thuế TNCN');
+      expect(formatted.detailText).toBe('Mẫu 05/QTT-TNCN');
     });
   });
 });

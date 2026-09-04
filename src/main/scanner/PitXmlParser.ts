@@ -35,12 +35,30 @@ export class PitXmlParser {
     if (!xmlContent || typeof xmlContent !== 'string') return null;
 
     try {
+      const isExplicitKk =
+        (filing.declarationCode || '').includes('05/KK') ||
+        (filing.declarationCode || '').includes('02/KK') ||
+        (filing.declarationCode || '').includes('06/KK') ||
+        xmlContent.includes('05/KK-TNCN') ||
+        xmlContent.includes('05_KK_TNCN') ||
+        xmlContent.includes('02/KK-TNCN') ||
+        xmlContent.includes('02_KK_TNCN') ||
+        xmlContent.includes('06/KK-TNCN') ||
+        xmlContent.includes('06_KK_TNCN') ||
+        xmlContent.includes('<maTKhai>864</maTKhai>');
+
       const isFinalization =
-        filing.filingType === 'FINALIZATION' ||
-        filing.title.toLowerCase().includes('quyết toán') ||
-        (filing.declarationCode || '').includes('05/QTT') ||
-        xmlContent.includes('05/QTT-TNCN') ||
-        xmlContent.includes('05_QTT_TNCN');
+        !isExplicitKk && (
+          (filing.declarationCode || '').includes('05/QTT') ||
+          (filing.declarationCode || '').includes('02/QTT') ||
+          xmlContent.includes('05/QTT-TNCN') ||
+          xmlContent.includes('05_QTT_TNCN') ||
+          xmlContent.includes('02/QTT-TNCN') ||
+          xmlContent.includes('02_QTT_TNCN') ||
+          xmlContent.includes('<maTKhai>953</maTKhai>') ||
+          filing.filingType === 'FINALIZATION' ||
+          filing.title.toLowerCase().includes('quyết toán')
+        );
 
       // 1. Trích xuất loại tờ khai và lần bổ sung từ XML nếu có
       let versionType: 'ORIGINAL' | 'SUPPLEMENTAL' = filing.filingType === 'SUPPLEMENTAL' ? 'SUPPLEMENTAL' : 'ORIGINAL';

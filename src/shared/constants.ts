@@ -56,14 +56,14 @@ export const PROCEDURE_MAPPING: Record<string, { type: 'VAT' | 'PIT' | 'CIT' | '
   '1.007039': { type: 'REFUND', standardName: 'Hoàn thuế GTGT đối với hàng hóa, dịch vụ xuất khẩu' },
 
   // ─── TNCN (PIT) ──────────────────────────────────────────────────────────
-  '1.008347': { type: 'PIT', standardName: '05/KK-TNCN - Tờ khai quyết toán thuế TNCN' },
+  '1.008347': { type: 'PIT', standardName: '05/KK-TNCN - Tờ khai khấu trừ thuế TNCN' },
   '2.002235': { type: 'PIT', standardName: '05/KK-TNCN - Tờ khai thuế TNCN khấu trừ' },
   '2.002237': { type: 'PIT', standardName: 'Khai thuế TNCN trực tiếp với CQT' },
   '2.002233': { type: 'PIT', standardName: '02/QTT-TNCN - Quyết toán thuế TNCN' },
   '1.008309': { type: 'PIT', standardName: '05/QTT-TNCN - Quyết toán thuế TNCN' },
   '1.008340': { type: 'PIT', standardName: '06/KK-TNCN - Tờ khai khấu trừ thuế TNCN' },
   '05/KK-TNCN': { type: 'PIT', standardName: '05/KK-TNCN - Tờ khai khấu trừ thuế TNCN' },
-  '02/KK-TNCN': { type: 'PIT', standardName: '02/KK-TNCN - Tờ khai quyết toán thuế TNCN' },
+  '02/KK-TNCN': { type: 'PIT', standardName: '02/KK-TNCN - Tờ khai khấu trừ thuế TNCN' },
   '02/QTT-TNCN': { type: 'PIT', standardName: '02/QTT-TNCN - Quyết toán thuế TNCN' },
   '05/QTT-TNCN': { type: 'PIT', standardName: '05/QTT-TNCN - Quyết toán thuế TNCN' },
   '02TH': { type: 'OTHER', standardName: '02TH - Bảng tổng hợp đăng ký người phụ thuộc' },

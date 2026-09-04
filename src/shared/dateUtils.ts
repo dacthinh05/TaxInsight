@@ -1003,13 +1003,21 @@ export function getFilingDisplayName(filing: TaxFiling): FilingDisplayName {
   }
 
   // 4. Quyết toán thuế TNCN
-  if (
+  const isExplicitKkPit =
+    declCode.includes('KK') ||
     code === '1.008347' ||
-    code === '1.008309' ||
-    code === '2.002233' ||
-    declCode.includes('QTT') ||
-    (filing.filingType === 'FINALIZATION' && filing.taxType === 'PIT') ||
-    (lower.includes('quyết toán') && (filing.taxType === 'PIT' || lower.includes('tncn') || lower.includes('cá nhân')))
+    code === '2.002235' ||
+    lower.includes('khấu trừ') ||
+    lower.includes('khau tru');
+
+  if (
+    !isExplicitKkPit && (
+      code === '1.008309' ||
+      code === '2.002233' ||
+      declCode.includes('QTT') ||
+      (filing.filingType === 'FINALIZATION' && filing.taxType === 'PIT') ||
+      (lower.includes('quyết toán') && (filing.taxType === 'PIT' || lower.includes('tncn') || lower.includes('cá nhân')))
+    )
   ) {
     return {
       primaryTitle: 'Quyết toán thuế TNCN',
@@ -1049,8 +1057,8 @@ export function getFilingDisplayName(filing: TaxFiling): FilingDisplayName {
     };
   }
 
-  // 9. Khai thuế TNCN (2.002235 / 05/KK-TNCN)
-  if (filing.taxType === 'PIT' || code === '2.002235' || declCode.includes('TNCN')) {
+  // 9. Khai thuế TNCN (1.008347 / 2.002235 / 05/KK-TNCN)
+  if (filing.taxType === 'PIT' || code === '1.008347' || code === '2.002235' || declCode.includes('TNCN')) {
     return {
       primaryTitle: 'Khai thuế TNCN',
       detailText: declCode ? `Mẫu ${declCode}` : 'Tổ chức trả thu nhập'

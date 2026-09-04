@@ -160,4 +160,26 @@ describe('TaxFilingParser & DOM Integrity', () => {
     expect(filing.altIds).toBeUndefined();
     expect(filing.isThueDienTu).toBe(false);
   });
+
+  it('BUGFIX: Tờ khai khấu trừ TNCN (05/KK-TNCN, 1.008347) KHÔNG bị nhận diện nhầm thành quyết toán (FINALIZATION)', () => {
+    // 1. Kiểm tra parseFilingType cho 05/KK-TNCN chính thức
+    const resOfficial = TaxFilingParser.parseFilingType('Tờ khai chính thức', '1.008347', '05/KK-TNCN', '1.008347 - Khai thuế thu nhập cá nhân');
+    expect(resOfficial.filingType).toBe('ORIGINAL');
+    expect(resOfficial.filingType).not.toBe('FINALIZATION');
+
+    // 2. Kiểm tra parseFilingType cho 05/KK-TNCN bổ sung
+    const resSupplemental = TaxFilingParser.parseFilingType('Tờ khai bổ sung lần 2', '1.008347', '05/KK-TNCN', '1.008347 - Khai thuế thu nhập cá nhân');
+    expect(resSupplemental.filingType).toBe('SUPPLEMENTAL');
+    expect(resSupplemental.supplementalNo).toBe(2);
+    expect(resSupplemental.filingType).not.toBe('FINALIZATION');
+
+    // 3. Kiểm tra parseFilingType cho 02/KK-TNCN
+    const res02KK = TaxFilingParser.parseFilingType('Chính thức', undefined, '02/KK-TNCN', 'Tờ khai thuế TNCN khấu trừ');
+    expect(res02KK.filingType).toBe('ORIGINAL');
+    expect(res02KK.filingType).not.toBe('FINALIZATION');
+
+    // 4. Quyết toán thực sự (05/QTT-TNCN, 1.008309) vẫn phải nhận diện đúng là FINALIZATION
+    const resQtt = TaxFilingParser.parseFilingType('Chính thức', '1.008309', '05/QTT-TNCN', '1.008309 - Quyết toán thuế thu nhập cá nhân');
+    expect(resQtt.filingType).toBe('FINALIZATION');
+  });
 });

@@ -175,7 +175,7 @@ export class EtaxFilingResultParser {
       ) {
         filingType = 'SUPPLEMENTAL';
         supplementalNo = Number.isFinite(amendmentNo) && amendmentNo > 0 ? amendmentNo : 1;
-      } else if (/quyết toán|quyet toan/i.test(rawTitle)) {
+      } else if (!/0[256]\/kk|kk-tncn/i.test(formCode || '') && !/khấu trừ|khau tru/i.test(rawTitle) && /quyết toán|quyet toan/i.test(rawTitle)) {
         filingType = 'FINALIZATION';
       }
 
