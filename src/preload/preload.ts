@@ -57,8 +57,8 @@ const api = {
   // Phân hệ Giấy Nộp Tiền (eTax)
   scanPaymentSlips: (params: { range: DateRange; options?: { maGiaoDich?: string; soGnt?: string; trangThai?: string; page?: number } }) =>
     ipcRenderer.invoke('paymentSlips:scan', params),
-  openPaymentSlipsAuthWindow: () =>
-    ipcRenderer.invoke('paymentSlips:openAuthWindow'),
+  openPaymentSlipsAuthWindow: (params?: { fromDate?: string; toDate?: string; forceInteractive?: boolean }) =>
+    ipcRenderer.invoke('paymentSlips:openAuthWindow', params),
   getPaymentSlipsDiagnostics: () =>
     ipcRenderer.invoke('paymentSlips:getDiagnostics'),
   getPaymentSlipDetail: (params: { ctuId: string; soGnt?: string; maGiaoDich?: string }) =>

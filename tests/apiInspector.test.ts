@@ -7,6 +7,7 @@ describe('ApiInspectorManager Core Suite', () => {
   let mockSender: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    delete process.env.TAXINSIGHT_ADMIN_PIN_SHA256;
     manager = ApiInspectorManager.getInstance();
     manager.clearEntries();
     mockSender = vi.fn();

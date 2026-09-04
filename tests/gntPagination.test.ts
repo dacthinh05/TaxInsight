@@ -165,4 +165,100 @@ describe('GNT Multi-Page Pagination Suite', () => {
 
     await expect(client.searchPaymentSlips(mockRange)).rejects.toMatchObject({ errorCode: 'CONNECTIVITY_ERROR' });
   });
+
+  it('should terminate immediately on page 1 with 0 calls to page 2 when page 1 has 0 records', async () => {
+    const mockSession = new PortalSession();
+    const client = new PaymentSlipClient(mockSession);
+
+    const spy = vi.spyOn(client, 'queryPaymentSlips').mockResolvedValue({
+      success: true,
+      data: []
+    });
+
+    const mockRange = { fromDate: '01/01/2026', toDate: '31/12/2026', label: '2026', level: 'YEAR' as const };
+    const results = await client.searchPaymentSlips(mockRange);
+
+    expect(results).toHaveLength(0);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('should treat valid eTax query page with no data as success with 0 records', async () => {
+    const mockSession = new PortalSession();
+    const client = new PaymentSlipClient(mockSession);
+
+    client.setManualSessionState({
+      sessionId: 'TEST_SESSION_123',
+      applicationId: '-1',
+      pageId: '1',
+      operationName: 'corpQueryTaxProc',
+      processorState: 'viewQueryPage',
+      processorId: 'TEST_PROC_123'
+    });
+
+    const mockEmptyHtml = `
+      <html>
+        <body>
+          <form name="corpQueryTaxProc" action="/etaxnnt/Request">
+            <input type="hidden" name="dse_sessionId" value="TEST_SESSION_123" />
+            <input type="hidden" name="dse_operationName" value="corpQueryTaxProc" />
+            <input type="hidden" name="type_tax" value="01" />
+            <input type="text" name="ngay_lap_tu_ngay" value="01/01/2026" />
+            <div class="message">Không tìm thấy kết quả thỏa mãn điều kiện tìm kiếm.</div>
+          </form>
+        </body>
+      </html>
+    `;
+
+    mockSession.client.post = vi.fn().mockResolvedValue({
+      status: 200,
+      data: mockEmptyHtml
+    });
+
+    const res = await client.queryPaymentSlips({
+      startDate: '01/01/2026',
+      endDate: '31/12/2026',
+      page: 1
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.data).toEqual([]);
+  });
+
+  it('should return error when eTax query response contains NullPointerException or system error', async () => {
+    const mockSession = new PortalSession();
+    const client = new PaymentSlipClient(mockSession);
+
+    client.setManualSessionState({
+      sessionId: 'TEST_SESSION_123',
+      applicationId: '-1',
+      pageId: '1',
+      operationName: 'corpQueryTaxProc',
+      processorState: 'viewQueryPage',
+      processorId: 'TEST_PROC_123'
+    });
+
+    const mockNpeHtml = `
+      <html>
+        <body>
+          <h1>500 Internal Server Error</h1>
+          <pre>java.lang.NullPointerException at vn.gov.gdt.etax...</pre>
+        </body>
+      </html>
+    `;
+
+    mockSession.client.post = vi.fn().mockResolvedValue({
+      status: 200,
+      data: mockNpeHtml
+    });
+
+    const res = await client.queryPaymentSlips({
+      startDate: '01/01/2026',
+      endDate: '31/12/2026',
+      page: 1
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.errorCode).toBe('ETAX_SYSTEM_ERROR');
+    expect(res.error).toContain('NullPointerException');
+  });
 });

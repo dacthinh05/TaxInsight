@@ -690,11 +690,11 @@ export class LegacyFilingClient {
     fileName: string;
     contentType: string;
   }> {
-    // 1. Nếu đã có messageId sẵn trong filing
-    if (filing.messageId) {
-      return await this.downloadFiling(filing.messageId, signal);
+    // 1. Nếu đã có messageId sẵn trong filing hoặc filing.id là messageId thuần số (17 chữ số eTax)
+    const effectiveMsgId = filing.messageId || (/^\d{17}$/.test(filing.id || '') ? filing.id : undefined);
+    if (effectiveMsgId) {
+      return await this.downloadFiling(effectiveMsgId, signal);
     }
-
     // 2. Xác định các năm cần tìm kiếm trên eTax (ưu tiên năm nộp thực tế vì eTax lọc theo Ngày nộp)
     const yearsToSearch: number[] = [];
     if (filing.submittedAt) {

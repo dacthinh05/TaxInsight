@@ -99,3 +99,78 @@ describe('BUGFIX F-010 — assertGeneration ném lỗi hủy phiên với code t
     expect(() => (client as any).assertGeneration((client as any).generation)).not.toThrow();
   });
 });
+
+describe('SSO handoff FORM_POST from DVC to eTax', () => {
+  it('submits HTML auto-submit form to eTax when DVC returns FORM_POST SSO payload', async () => {
+    const session = new PortalSession();
+    const client = new PaymentSlipClient(session);
+
+    (session as any).getCookieJar = () => ({
+      getCookies: () => Promise.resolve([{ key: 'JSESSIONID', value: 'MOCK_DVC_SESSION' }])
+    });
+
+    session.client.get = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/tthc/dich-vu-khac')) {
+        return Promise.resolve({
+          status: 200,
+          data: '<html><head><meta name="_csrf" content="token_123" /></head><body>Trang dich vu khac</body></html>'
+        });
+      }
+      return Promise.reject(new Error(`Unexpected GET: ${url}`));
+    });
+
+    session.client.post = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/tthc/sso/redirect-to-service')) {
+        // DVC responds with an auto-submit HTML form pointing to eTax
+        const formHtml = `
+          <html>
+            <body>
+              <form action="https://thuedientu.gdt.gov.vn/etaxnnt/EstablishSession" method="POST">
+                <input type="hidden" name="dse_sessionId" value="ETAX_SESSION_999" />
+                <input type="hidden" name="dse_applicationId" value="-1" />
+                <input type="hidden" name="dse_operationName" value="corpQueryTaxProc" />
+                <input type="hidden" name="dse_pageId" value="1" />
+                <input type="hidden" name="dse_processorState" value="initial" />
+                <input type="hidden" name="dse_processorId" value="PROC_999" />
+              </form>
+            </body>
+          </html>
+        `;
+        return Promise.resolve({ status: 200, data: formHtml });
+      }
+      if (url.includes('/etaxnnt/EstablishSession')) {
+        // eTax returns query form state
+        const etaxHtml = `
+          <html>
+            <body>
+              <form action="/etaxnnt/Request" method="POST">
+                <input type="hidden" name="dse_sessionId" value="ETAX_SESSION_999" />
+                <input type="hidden" name="dse_applicationId" value="-1" />
+                <input type="hidden" name="dse_operationName" value="corpQueryTaxProc" />
+                <input type="hidden" name="dse_pageId" value="1" />
+                <input type="hidden" name="dse_processorState" value="query" />
+                <input type="hidden" name="dse_processorId" value="PROC_999" />
+              </form>
+            </body>
+          </html>
+        `;
+        return Promise.resolve({
+          status: 200,
+          data: etaxHtml,
+          request: { res: { responseUrl: 'https://thuedientu.gdt.gov.vn/etaxnnt/EstablishSession' } }
+        });
+      }
+      return Promise.reject(new Error(`Unexpected POST: ${url}`));
+    });
+
+    await client.ensureEtaxSession(true);
+
+    const report = client.getDiagnosticReport();
+    expect(report.checkpoints.GNT_01_DVC_SESSION_VALID.status).toBe('PASS');
+    expect(report.checkpoints.GNT_02_ETAX_ENTRY_TRIGGERED.status).toBe('PASS');
+    expect(report.checkpoints.GNT_03_SSO_HANDOFF_DETECTED.status).toBe('PASS');
+    expect(report.checkpoints.GNT_04_ETAX_ORIGIN_REACHED.status).toBe('PASS');
+    expect(report.checkpoints.GNT_05_ETAX_AUTHENTICATED.status).toBe('PASS');
+    expect(report.ssoHandoffType).toBe('FORM_POST');
+  });
+});

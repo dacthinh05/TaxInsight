@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { AlertCircle, CheckSquare, CreditCard, ExternalLink, RefreshCw, Square } from 'lucide-react';
-import { PaymentSlipRecord } from '../../shared/types';
+import { PaymentQueryStatus, PaymentSlipRecord } from '../../shared/types';
 import { SlipReconInfo } from '../../shared/paymentSlipAudit';
 import { PaymentSlipPreviewDrawer } from './PaymentSlipPreviewDrawer';
 import { PaymentSlipRow } from './PaymentSlipRow';
@@ -14,6 +14,7 @@ interface PaymentSlipTableProps {
   errorState?: { message: string; errorCode?: string } | null;
   onRetry?: () => void;
   isScanning?: boolean;
+  paymentQueryStatus?: PaymentQueryStatus;
 }
 
 export const PaymentSlipTable: React.FC<PaymentSlipTableProps> = ({
@@ -22,7 +23,8 @@ export const PaymentSlipTable: React.FC<PaymentSlipTableProps> = ({
   reconIndex,
   errorState,
   onRetry,
-  isScanning = false
+  isScanning = false,
+  paymentQueryStatus = 'NOT_QUERIED'
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeSlipForDetail, setActiveSlipForDetail] = useState<PaymentSlipRecord | null>(null);
@@ -116,7 +118,7 @@ export const PaymentSlipTable: React.FC<PaymentSlipTableProps> = ({
                         type="button"
                         onClick={async () => {
                           if (window.taxPortalAPI?.openPaymentSlipsAuthWindow) {
-                            const res = await window.taxPortalAPI.openPaymentSlipsAuthWindow();
+                            const res = await window.taxPortalAPI.openPaymentSlipsAuthWindow({ forceInteractive: true });
                             if (res && res.success && onRetry) {
                               onRetry();
                             }
@@ -153,10 +155,21 @@ export const PaymentSlipTable: React.FC<PaymentSlipTableProps> = ({
                         <CreditCard className="w-6 h-6 text-slate-400" />
                       </div>
                       <div className="space-y-1">
-                        <p className="font-semibold text-slate-700 text-sm">Chưa có Giấy Nộp Tiền (C1-02/NS)</p>
-                        <p className="text-slate-500 text-xs">
-                          Bấm nút <strong className="text-teal-700">"Quét Giấy Nộp Tiền"</strong> ở thanh trên để tra cứu chứng từ nộp thuế từ eTax.
-                        </p>
+                        {paymentQueryStatus === 'CONNECTED_NO_DATA' ? (
+                          <>
+                            <p className="font-semibold text-slate-700 text-sm">Không có Giấy Nộp Tiền</p>
+                            <p className="text-slate-500 text-xs">
+                              Không tìm thấy chứng từ nộp thuế nào phát sinh trong khoảng thời gian đã chọn trên eTax.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-semibold text-slate-700 text-sm">Chưa có Giấy Nộp Tiền (C1-02/NS)</p>
+                            <p className="text-slate-500 text-xs">
+                              Bấm nút <strong className="text-teal-700">"Tra cứu GNT"</strong> ở thanh trên để tra cứu chứng từ nộp thuế từ eTax.
+                            </p>
+                          </>
+                        )}
                       </div>
                     </div>
                   ) : (

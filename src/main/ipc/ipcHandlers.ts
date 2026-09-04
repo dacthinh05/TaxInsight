@@ -829,6 +829,8 @@ export function setupIpcHandlers(
     const authPromise = new Promise<any>(async (resolve) => {
       try {
         const isInteractive = Boolean(options?.forceInteractive);
+        const timeoutMs = isInteractive ? 120_000 : 20_000;
+        const windowStartTime = Date.now();
         const authWin = new BrowserWindow({
           width: 1200,
           height: 800,
@@ -1165,12 +1167,17 @@ export function setupIpcHandlers(
                 queryActivationPromise = null;
               }
             }
-            if (res?.isDvcLoginPage && !authWin.isDestroyed() && !authWin.isVisible()) {
-              // Chỉ hiển thị cửa sổ khi Cổng Thuế thực sự yêu cầu nhập CAPTCHA/mật khẩu lại
+            const elapsedMs = Date.now() - windowStartTime;
+            const needsUserInteraction = Boolean(
+              res?.isDvcLoginPage ||
+              res?.pluginGate ||
+              (elapsedMs > 6000 && !isManualStateReady && res?.isAtEtax)
+            );
+            if (needsUserInteraction && !authWin.isDestroyed() && !authWin.isVisible()) {
+              // Tự động hiển thị cửa sổ khi cần tương tác (login, CAPTCHA, plugin) để người dùng không phải chờ trong vô vọng
               authWin.show();
               authWin.focus();
             }
-
             if (dseSessionId && !isManualStateAccepted) {
               console.log('[paymentSlips:openAuthWindow] Đã có dse_sessionId nhưng form GNT chưa đủ state; tiếp tục chờ.');
             } else if (isManualStateAccepted && !isManualStateReady) {
@@ -1239,14 +1246,15 @@ export function setupIpcHandlers(
         // Không để IPC treo vô hạn khi eTax chỉ cấp JSESSIONID hoặc thay đổi DOM
         // khiến không thể lấy đủ DSE state. Người dùng có thể mở lại để thử tiếp.
         authTimeoutId = setTimeout(() => {
-          auditLogger.log('WARNING', 'Cửa sổ xác thực eTax hết thời gian chờ', 'Không lấy được form GNT hợp lệ sau 90 giây');
+          auditLogger.log('WARNING', 'Cửa sổ xác thực eTax hết thời gian chờ', `Không lấy được form GNT hợp lệ sau ${Math.round(timeoutMs / 1000)} giây`);
           settleAuthWindow({
             success: false,
             errorCode: 'AUTH_TIMEOUT',
-            error: 'Hết thời gian chờ xác thực eTax (90 giây). Vui lòng mở lại cửa sổ và thử lại.'
+            error: isInteractive
+              ? 'Hết thời gian chờ xác thực eTax (2 phút). Vui lòng thử lại.'
+              : 'Chưa thể tự động đồng bộ phiên eTax ngầm. Vui lòng bấm "Mở eTax để xác thực" để kết nối trực tiếp.'
           });
-        }, 90_000);
-
+        }, timeoutMs);
         authWin.on('closed', () => {
           if (paymentAuthWindow === authWin) paymentAuthWindow = null;
           if (!hasClosed) {

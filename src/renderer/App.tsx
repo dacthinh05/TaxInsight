@@ -432,10 +432,6 @@ export const App: React.FC = () => {
     setSession(info);
     checkExistingCheckpoint(taxCode, selectedYear);
     checkExistingGntCheckpoint(taxCode, selectedYear);
-    // Tự động xác thực ngầm phân hệ eTax / GNT trong nền (show: false, không mở cửa sổ riêng)
-    if (window.taxPortalAPI?.openPaymentSlipsAuthWindow) {
-      window.taxPortalAPI.openPaymentSlipsAuthWindow().catch(() => {});
-    }
   };
   // Quét hồ sơ thuế (Hỗ trợ Quét Đa Năm & Chống Race Condition)
   const handleStartScan = async () => {
@@ -1351,35 +1347,9 @@ export const App: React.FC = () => {
     setIsScanningGnt(true);
     setPaymentSlipsError(null);
     try {
-      // GNT chỉ tra cứu theo khoảng ngày đơn; multi-year mode -> dùng cả năm
-      const range = resolveScanDateRange(
-        selectedYear,
-        scanRangeMode.startsWith('MULTI') ? 'FULL_YEAR' : scanRangeMode
-      );
-      let res: { success?: boolean; paymentSlips?: PaymentSlipRecord[]; error?: string; errorCode?: string } = await window.taxPortalAPI.scanPaymentSlips({ range });
-
-      // Tự động nhận diện và kết nối lại qua cửa sổ ngầm (headless recovery) khi gặp bất kỳ
-      // trở ngại nào về xác thực, plugin gate, lệch DSE state hoặc hết phiên eTax
-      const isRecoverableError =
-        !res?.success &&
-        Boolean(window.taxPortalAPI?.openPaymentSlipsAuthWindow) &&
-        (
-          ['AUTH_REQUIRED', 'SESSION_EXPIRED', 'ETAX_QUERY_BLOCKED', 'ETAX_FORM_CHANGED', 'ETAX_ERROR'].includes(String(res?.errorCode || '')) ||
-          /plugin|xác thực|phiên|đăng nhập|hết hạn|không trả về bảng/i.test(String(res?.error || ''))
-        );
-
-      if (isRecoverableError && window.taxPortalAPI?.openPaymentSlipsAuthWindow) {
-        const authResult: { success?: boolean; error?: string; message?: string; errorCode?: string } = await window.taxPortalAPI.openPaymentSlipsAuthWindow();
-        if (authResult?.success) {
-          res = await window.taxPortalAPI.scanPaymentSlips({ range });
-        } else if (authResult?.error || authResult?.message) {
-          res = {
-            ...res,
-            error: authResult.error || authResult.message,
-            errorCode: authResult.errorCode || 'AUTH_REQUIRED'
-          };
-        }
-      }
+      // GNT luôn tra cứu trọn vẹn cả năm được chọn (01/01 đến 31/12 hoặc hôm nay)
+      const range = resolveScanDateRange(selectedYear, 'FULL_YEAR');
+      const res: { success?: boolean; paymentSlips?: PaymentSlipRecord[]; error?: string; errorCode?: string } = await window.taxPortalAPI.scanPaymentSlips({ range });
 
       if (res?.success) {
         const slips: PaymentSlipRecord[] = res.paymentSlips || [];
@@ -1554,6 +1524,7 @@ export const App: React.FC = () => {
               errorState={paymentSlipsError}
               onRetry={handleScanPaymentSlips}
               isScanning={isScanningGnt}
+              paymentQueryStatus={paymentQueryStatus}
             />
           ) : (
             <TaxObligationTable

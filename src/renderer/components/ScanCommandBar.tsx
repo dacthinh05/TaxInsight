@@ -241,26 +241,30 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
           </button>
         )}
 
-        {/* Primary CTA — Nổi bật với màu teal thương hiệu */}
+        {/* Primary CTA — Nổi bật, sắc nét và đồng bộ chiều cao h-8 */}
         <button
           type="button"
           onClick={onStartScan}
           disabled={isScanning}
-          className="h-8.5 px-4 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-bold rounded-lg flex items-center justify-center space-x-1.5 transition-all shadow-xs hover:shadow-sm disabled:opacity-50 cursor-pointer shrink-0 min-w-[135px]"
+          className={`h-8 px-4 rounded-lg font-semibold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs shrink-0 select-none ${
+            isScanning
+              ? 'bg-teal-800 text-teal-100 cursor-wait border border-teal-700/60 shadow-inner'
+              : 'bg-teal-700 hover:bg-teal-600 active:bg-teal-800 active:scale-[0.98] text-white hover:shadow-sm cursor-pointer border border-teal-800/30'
+          }`}
         >
           {isScanning ? (
             <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-200" />
-              <span>{isGntMode ? 'Đang tra cứu...' : 'Đang quét...'}</span>
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-200 shrink-0" />
+              <span>{isGntMode ? 'Đang tra cứu…' : 'Đang quét…'}</span>
             </>
           ) : isGntMode ? (
             <>
-              <Search className="w-3.5 h-3.5 text-teal-200" />
+              <Search className="w-3.5 h-3.5 text-teal-200 shrink-0" />
               <span>Tra cứu GNT</span>
             </>
           ) : (
             <>
-              <FileText className="w-3.5 h-3.5 text-teal-200" />
+              <FileText className="w-3.5 h-3.5 text-teal-200 shrink-0" />
               <span>Quét hồ sơ thuế</span>
             </>
           )}
