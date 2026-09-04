@@ -863,12 +863,22 @@ export function setupIpcHandlers(
         // 1. Đồng bộ toàn bộ Cookie từ Axios Jar sang Electron Browser Session TRƯỚC KHI load URL
         const jar = session.getCookieJar();
         try {
-          // Lấy theo URL nằm dưới /tthc để bao gồm cả cookie Path=/tthc.
-          // Lấy theo origin trần từng làm mất cookie phiên khi copy sang Electron.
-          const cookies = await jar.getCookies(PORTAL_CONFIG.TCHS_URL);
-          for (const c of cookies) {
+          const dvcCookies = await jar.getCookies(PORTAL_CONFIG.TCHS_URL);
+          const etaxCookies = await jar.getCookies(PORTAL_CONFIG.ETAX_BASE_URL);
+          const allCookies = [...dvcCookies, ...etaxCookies];
+          const seenKeys = new Set<string>();
+
+          for (const c of allCookies) {
+            const uniqueKey = `${c.key}:${c.value}:${c.domain}`;
+            if (seenKeys.has(uniqueKey)) continue;
+            seenKeys.add(uniqueKey);
+
+            const targetUrl = c.domain?.includes('thuedientu')
+              ? PORTAL_CONFIG.ETAX_BASE_URL
+              : PORTAL_CONFIG.TCHS_URL;
+
             const cookieDetails: Electron.CookiesSetDetails = {
-              url: PORTAL_CONFIG.TCHS_URL,
+              url: targetUrl,
               name: c.key,
               value: c.value,
               path: c.path || '/',
@@ -878,9 +888,6 @@ export function setupIpcHandlers(
             if (c.expires instanceof Date && Number.isFinite(c.expires.getTime())) {
               cookieDetails.expirationDate = c.expires.getTime() / 1000;
             }
-            // Không truyền domain thủ công: Electron sẽ tạo host-only cookie
-            // cho dichvucong.gdt.gov.vn. Domain lấy từ tough-cookie có thể là
-            // parent domain và từng khiến BrowserWindow bị trả về /homelogin.
             await authWin.webContents.session.cookies.set(cookieDetails).catch(() => {});
           }
         } catch {}
@@ -978,8 +985,11 @@ export function setupIpcHandlers(
                       button.textContent = 'Đang chuyển...';
                     }
                     const csrfEl = document.querySelector('input[name="_csrf"]') || document.querySelector('meta[name="csrf-token"]') || document.querySelector('meta[name="_csrf"]');
-                    const csrf = (csrfEl && (csrfEl.value || csrfEl.content)) || '';
-
+                    let csrf = (csrfEl && (csrfEl.value || csrfEl.content)) || '';
+                    if (!csrf) {
+                      const cookieMatch = document.cookie.match(/XSRF-TOKEN=([^;]+)/i) || document.cookie.match(/_csrf=([^;]+)/i);
+                      if (cookieMatch) csrf = decodeURIComponent(cookieMatch[1]);
+                    }
                     fetch('/tthc/sso/redirect-to-service?module=330410', {
                       method: 'POST',
                       headers: {
@@ -1312,10 +1322,43 @@ export function setupIpcHandlers(
           }
         });
 
-        // Bootstrap trang home để Electron nhận/refresh đầy đủ cookie phiên DVC.
-        // Listener phía trên sẽ chờ portal rời /homelogin|/login rồi mới gửi
-        // POST SSO từ trang DVC đã xác thực.
-        authWin.loadURL('https://dichvucong.gdt.gov.vn/tthc/home?isChooseDgDinhKy=Y')
+        // Lấy trực tiếp URL SSO từ Cổng DVC sang eTax để mở thẳng eTax, tránh bị kẹt ở trang chủ DVC
+        let directEtaxUrl = '';
+        try {
+          const entryRes = await session.client.get('https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac', {
+            headers: {
+              'Referer': 'https://dichvucong.gdt.gov.vn/tthc/home',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+            }
+          });
+          const entryHtml = String(entryRes.data || '');
+          const csrf = entryHtml.match(/name=["']_csrf["']\s+value=["']([^"']+)["']/i)?.[1] ||
+            entryHtml.match(/name=["']csrf-token["']\s+content=["']([^"']+)["']/i)?.[1] || '';
+
+          const ssoRes = await session.client.post(
+            `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=330410`,
+            csrf ? `_csrf=${encodeURIComponent(csrf)}` : '',
+            {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': 'https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac',
+                ...(csrf ? { 'X-XSRF-TOKEN': csrf } : {})
+              },
+              validateStatus: () => true
+            }
+          );
+          const ssoData = String(ssoRes.data || '').trim();
+          if (ssoData.startsWith('http') && ssoData.includes('thuedientu.gdt.gov.vn')) {
+            directEtaxUrl = ssoData;
+            auditLogger.log('SUCCESS', 'Đã lấy thành công direct SSO URL sang eTax', directEtaxUrl.slice(0, 60) + '...');
+          }
+        } catch (ssoErr: any) {
+          console.warn('[triggerPaymentAuthWindow] Không lấy được direct eTax SSO link, dùng fallback:', ssoErr?.message || ssoErr);
+        }
+
+        const targetStartUrl = directEtaxUrl || 'https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac';
+        authWin.loadURL(targetStartUrl)
           .catch(err => {
             auditLogger.log('ERROR', 'Không thể tải trang xác thực eTax', err?.message || String(err));
             if (!authWin.isDestroyed() && !hasClosed) {
