@@ -166,6 +166,16 @@ describe('Declaration Formatter Presentation Layer', () => {
     });
     expect(fallback.group).toBe('CHỈ TIÊU KÊ KHAI CHÍNH');
   });
+
+  it('9. Falls back to text type when label is unrecognized and value is not numeric', () => {
+    const custom = formatDeclarationValue({
+      code: 'CUSTOM_LABEL',
+      label: 'Chỉ tiêu tự do',
+      value: 'Non-numeric string'
+    });
+    expect(custom.type).toBe('text');
+    expect(custom.formattedValue).toBe('Non-numeric string');
+  });
 });
 
 describe('getTaxTypeLabel', () => {

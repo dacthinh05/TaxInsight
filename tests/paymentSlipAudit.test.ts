@@ -171,6 +171,16 @@ describe('paymentSlipAudit', () => {
       const resNoObligations = buildSlipReconciliationIndex([sampleSlip], [], 'CONNECTED_WITH_DATA');
       expect(resNoObligations.get('slip_1')?.status).toBe('UNKNOWN');
       expect(resNoObligations.get('slip_1')?.reasonUnknown).toContain('Chưa có dữ liệu tờ khai');
+
+      const zeroObligation = {
+        id: 'ob_zero',
+        title: 'Tờ khai 01/GTGT',
+        amountPayable: 0n,
+        matchedSlips: []
+      } as unknown as TaxObligation;
+      const resZero = buildSlipReconciliationIndex([sampleSlip], [zeroObligation], 'CONNECTED_WITH_DATA');
+      expect(resZero.get('slip_1')?.status).toBe('UNKNOWN');
+      expect(resZero.get('slip_1')?.reasonUnknown).toContain('không phát sinh số thuế phải nộp');
     });
 
     it('matches slips with obligations correctly', () => {
@@ -191,6 +201,24 @@ describe('paymentSlipAudit', () => {
       expect(info?.status).toBe('MATCHED');
       expect(info?.allocatedAmount).toBe(1000000n);
       expect(info?.obligations).toHaveLength(1);
+    });
+
+    it('sets PARTIAL status when allocatedAmount is positive but less than slipAmount', () => {
+      const obligation = {
+        id: 'ob_part',
+        title: 'Thuế GTGT',
+        amountPayable: 500000n,
+        matchedSlips: [{
+          paymentSlipId: 'slip_1',
+          allocatedAmount: 400000n,
+          confidence: 'HIGH' as const
+        }]
+      } as unknown as TaxObligation;
+
+      const index = buildSlipReconciliationIndex([sampleSlip], [obligation], 'CONNECTED_WITH_DATA');
+      const info = index.get('slip_1');
+      expect(info?.status).toBe('PARTIAL');
+      expect(info?.allocatedAmount).toBe(400000n);
     });
 
     it('identifies duplicate suspect slips when multiple unmatched slips share amount and period', () => {
@@ -254,6 +282,12 @@ describe('paymentSlipAudit', () => {
 
       const resEmpty = filterPaymentSlips([sampleSlip], '');
       expect(resEmpty).toHaveLength(1);
+
+      const resClassNdkt = filterPaymentSlips([sampleSlip], '1701');
+      expect(resClassNdkt).toHaveLength(1);
+
+      const resClassPeriod = filterPaymentSlips([sampleSlip], 'Q1/2026');
+      expect(resClassPeriod).toHaveLength(1);
     });
   });
 });
