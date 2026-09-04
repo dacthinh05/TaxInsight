@@ -1,5 +1,5 @@
 # BÁO CÁO KIỂM TOÁN HỆ THỐNG, CẤU TRÚC VÀ SƠ ĐỒ XỬ LÝ MODULE
-# TAXINSIGHT (v3.1.1) — EVIDENCE-GRADE AUDIT REPORT
+# TAXINSIGHT (v3.1.2) — EVIDENCE-GRADE AUDIT REPORT
 
 **Thời điểm kiểm toán:** 2026-09-04  
 **Phạm vi:** Toàn bộ kiến trúc mã nguồn (`src/main`, `src/preload`, `src/renderer`, `src/shared`, `tests`)  
