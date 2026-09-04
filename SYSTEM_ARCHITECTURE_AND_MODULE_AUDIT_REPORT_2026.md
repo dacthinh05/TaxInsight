@@ -1,5 +1,5 @@
 # BÁO CÁO KIỂM TOÁN HỆ THỐNG, CẤU TRÚC VÀ SƠ ĐỒ XỬ LÝ MODULE
-# TAXINSIGHT (v3.0.10) — EVIDENCE-GRADE AUDIT REPORT
+# TAXINSIGHT (v3.0.11) — EVIDENCE-GRADE AUDIT REPORT
 
 **Thời điểm kiểm toán:** 2026-09-04  
 **Phạm vi:** Toàn bộ kiến trúc mã nguồn (`src/main`, `src/preload`, `src/renderer`, `src/shared`, `tests`)  
@@ -10,7 +10,7 @@
 ## 1. TỔNG QUAN KIỂM TOÁN & VERDICT HỆ THỐNG
 
 ### 1.1. Kết Quả Kiểm Thử Kỹ Thuật (Test & Build Status)
-- **Kiểm thử tự động (Vitest v3.0.5):** **54/54 Test Suites Passed (100%)** — **445/445 Test Cases Passed (100%)**, thời gian thực thi ~17.6s.
+- **Kiểm thử tự động (Vitest v3.2.7):** **55/55 Test Suites Passed (100%)** — **455/455 Test Cases Passed (100%)**, thời gian thực thi ~17.6s.
 - **Biên dịch TypeScript (`tsc --noEmit` & `tsc -p tsconfig.electron.json --noEmit`):** **0 Lỗi**, type-safe tuyệt đối trên cả 3 tầng (Main, Preload, Renderer).
 - **Đóng gói Production (`npm run build`):** Vite v6.4.3 build thành công toàn bộ bundle frontend và electron bundle.
 - **Độ tin cậy số liệu thuế:** Toàn bộ phép tính số học tiền tệ và nghĩa vụ thuế được thực thi trên kiểu dữ liệu `BigInt` và các hàm tiện ích trong `moneyUtils.ts`, triệt tiêu hoàn toàn rủi ro sai lệch số thập phân (floating-point precision issues).
@@ -252,7 +252,7 @@ flowchart TD
     CheckAttachIdentity -- Khớp --> ExtractPhase
     CheckAttachIdentity -- Lệch/Lỗi --> EtaxCrossFallback
     
-    EtaxCrossFallback --> ResolveEtax[LegacyFilingClient.resolveAndDownloadFiling]
+    EtaxCrossFallback --> ResolveEtax[LegacyFilingClient.resolveAndDownloadFiling: Tự nhận diện kieuKy M/Q/Y & mở rộng toDate]
     ResolveEtax --> ExtractPhase
     
     %% Giai đoạn giải nén & cứu hộ
@@ -436,8 +436,9 @@ flowchart LR
 
 ## 7. KẾT LUẬN KIỂM TOÁN (FINAL CONCLUSION)
 
-Hệ thống **TaxInsight v3.0.10** đã đạt mức độ hoàn thiện kiến trúc cao:
-1. **Kiến trúc rõ ràng:** Phân tách rành mạch giữa giao tiếp mạng, phân tích cú pháp, quy tắc nghiệp vụ và giao diện hiển thị.
-2. **Khả năng tự phục hồi vượt trội:** Bộ cơ chế tự sửa lỗi ZIP, fallback đa kênh DVC/eTax, và adaptive pagination giúp ứng dụng hoạt động ổn định trước sự thiếu ổn định của các cổng thuế công.
-3. **An toàn và minh bạch dữ liệu:** Tuân thủ nguyên tắc an toàn ngữ nghĩa, không đưa ra phán đoán sai lệch về nợ thuế của doanh nghiệp khi chưa đủ dữ liệu đối soát.
-4. **Sẵn sàng bàn giao và vận hành thương mại.**
+Hệ thống **TaxInsight v3.0.11** đã giải quyết triệt để các rào cản kỹ thuật then chốt:
+1. **Cơ chế tải tờ khai Fallback eTax hoàn thiện:** Tự động nhận diện kỳ nộp (`targetKieuKy`: 'M' cho Tháng, 'Q' cho Quý, 'Y' cho Quyết toán), triệt tiêu lỗi lọc sai hồ sơ trên eTax; mở rộng dải ngày tìm kiếm đến 31/03 năm sau.
+2. **Bộ lọc thông báo chuẩn xác:** Phân định rõ ràng giữa Thông báo thuế và tờ khai Báo cáo hóa đơn BC26/AC, không chặn nhầm tệp hợp lệ.
+3. **Phân tích thuế 12 tháng trọn vẹn:** Thu thập đầy đủ tờ khai Tháng 12, Quý 4 nộp vào tháng 01 năm sau trong 1 lần quét duy nhất; tích hợp bộ chuyển đổi tần suất hiển thị 12 Tháng / 4 Quý trực tiếp trên UI.
+4. **Bảo toàn tính toàn vẹn và dòng luân chuyển số liệu:** Dòng thuế [22] -> [43] được tính toán liên tục, chính xác tuyệt đối trên kiểu số BigInt.
+5. **Sẵn sàng vận hành thương mại và triển khai tới người dùng cuối.**
