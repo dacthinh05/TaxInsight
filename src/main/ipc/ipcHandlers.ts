@@ -821,17 +821,18 @@ export function setupIpcHandlers(
   let paymentAuthWindow: BrowserWindow | null = null;
   let paymentAuthPromise: Promise<any> | null = null;
 
-  const triggerPaymentAuthWindow = async (): Promise<any> => {
+  const triggerPaymentAuthWindow = async (options?: { fromDate?: string; toDate?: string; forceInteractive?: boolean }): Promise<any> => {
     if (paymentAuthPromise) {
       return paymentAuthPromise;
     }
 
     const authPromise = new Promise<any>(async (resolve) => {
       try {
+        const isInteractive = Boolean(options?.forceInteractive);
         const authWin = new BrowserWindow({
           width: 1200,
           height: 800,
-          show: true,
+          show: isInteractive,
           center: true,
           autoHideMenuBar: true,
           title: 'Xác Thực Phiên Làm Việc eTax (Tra Cứu Giấy Nộp Tiền) - TaxInsight',
@@ -919,14 +920,18 @@ export function setupIpcHandlers(
             }
 
             // B. Phân tích DOM tìm Session ID eTax, GNT Form & Table Results
+            const targetFrom = String(options?.fromDate || '').trim();
+            const targetTo = String(options?.toDate || '').trim();
             const res = await authWin.webContents.executeJavaScript(`
               (() => {
                 const currentUrl = window.location.href;
                 const pageBody = document.body ? document.body.innerText : '';
                 const isDvc = currentUrl.includes('dichvucong.gdt.gov.vn');
                 const isEtax = currentUrl.includes('thuedientu.gdt.gov.vn');
-                const isDvcLoginPage = /\/tthc\/(?:home)?login(?:[/?#]|$)/i.test(currentUrl);
+                const isDvcLoginPage = /\\/tthc\\/(?:home)?login(?:[/?#]|$)/i.test(currentUrl);
                 const isDvcSsoEndpoint = currentUrl.includes('/tthc/sso/redirect-to-service');
+                const targetFromDate = ${JSON.stringify(targetFrom)};
+                const targetToDate = ${JSON.stringify(targetTo)};
 
                 // ─── 1. TỰ ĐỘNG CHUYỂN TIẾP SSO TỪ DVC SANG ETAX ────────────
                 if (isDvc && !isDvcLoginPage && !isDvcSsoEndpoint) {
@@ -956,9 +961,6 @@ export function setupIpcHandlers(
                       button.setAttribute('disabled', 'true');
                       button.textContent = 'Đang chuyển...';
                     }
-                    // Điều hướng bằng đúng MỘT POST. Trước đây fetch trước rồi
-                    // fallback form POST khi body không phải URL/lỗi mạng, khiến
-                    // cùng một thao tác SSO có thể chạm server hai lần.
                     const f = document.createElement('form');
                     f.method = 'POST';
                     f.action = '/tthc/sso/redirect-to-service?module=330410';
@@ -994,12 +996,39 @@ export function setupIpcHandlers(
                     document.body.prepend(banner);
                   }
 
+                  // Xử lý vượt Plugin Gate nếu eTax yêu cầu
+                  const isPluginGate = pageBody.includes('kiểm tra bản cập nhật') ||
+                    pageBody.includes('ứng dụng ký điện tử') ||
+                    currentUrl.includes('retailIndexProc') ||
+                    pageBody.includes('checkInstall');
+
+                  if (isPluginGate) {
+                    if (typeof window.fncInstalled === 'function') {
+                      try { window.fncInstalled(); } catch {}
+                    } else if (document.goProcForm) {
+                      try {
+                        document.goProcForm.dse_operationName.value = 'corpQueryTaxProc';
+                        document.goProcForm.dse_nextEventName.value = 'start';
+                        document.goProcForm.submit();
+                      } catch {}
+                    }
+                  }
+
                   const isGntForm = pageBody.includes('Tra cứu giấy nộp tiền') || Boolean(document.querySelector('input[name="ngay_lap_tu_ngay"], input[value="Tra cứu"], #btnSearch, .btn-search'));
                   
                   if (!isGntForm) {
                     banner.innerHTML = '<span>⚡ TaxInsight: Đang vào mục Tra cứu Giấy nộp tiền...</span>';
-                    const menuItems = Array.from(document.querySelectorAll('a, td, span, div'));
-                    const traCuuMenu = menuItems.find(el => el.textContent && el.textContent.trim().toLowerCase() === 'tra cứu' && el.getAttribute('href')?.includes('corpQueryTaxProc'));
+                    const menuItems = Array.from(document.querySelectorAll('a, input[type="button"], button, td, span, div'));
+                    const traCuuMenu = menuItems.find(el => {
+                      const text = (el.textContent || el.value || '').trim().toLowerCase();
+                      const href = el.getAttribute('href') || '';
+                      const onclick = el.getAttribute('onclick') || '';
+                      return (
+                        (text.includes('tra cứu') && (text.includes('nộp tiền') || text.includes('giấy nộp tiền'))) ||
+                        href.includes('corpQueryTaxProc') ||
+                        onclick.includes('corpQueryTaxProc')
+                      );
+                    });
                     if (traCuuMenu && typeof traCuuMenu.click === 'function') {
                       traCuuMenu.click();
                     }
@@ -1007,27 +1036,30 @@ export function setupIpcHandlers(
                     banner.innerHTML = '<span>⚡ TaxInsight: Đã kết nối form Tra cứu! Đang tự động nạp dữ liệu...</span><button id="taxinsight-btn-search" style="background:#fff;color:#0d9488;border:none;padding:6px 14px;border-radius:6px;font-weight:bold;cursor:pointer;">Tra Cứu Ngay 🔍</button>';
 
                     const searchBtn = document.querySelector('input[value="Tra cứu"], input[value="Tra Cứu"], button.btn-search, #btnSearch') || 
-                                      Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a')).find(el => el.textContent && el.textContent.trim().toLowerCase() === 'tra cứu');
+                                      Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a')).find(el => (el.textContent || el.value || '').trim().toLowerCase() === 'tra cứu');
                     
                     document.getElementById('taxinsight-btn-search')?.addEventListener('click', () => {
                       if (searchBtn && typeof searchBtn.click === 'function') searchBtn.click();
                     });
 
-                    // Tự động điền ngày nếu trống và click tra cứu
+                    // Tự động điền ngày theo yêu cầu và click tra cứu
                     if (!window._taxinsight_search_triggered) {
                       window._taxinsight_search_triggered = true;
                       
                       const fromDateInput = document.querySelector('input[name="ngay_lap_tu_ngay"], #ngay_lap_tu_ngay');
                       const toDateInput = document.querySelector('input[name="ngay_lap_den_ngay"], #ngay_lap_den_ngay');
-                      if (fromDateInput && !fromDateInput.value) {
-                        const currentYear = new Date().getFullYear();
-                        fromDateInput.value = '01/01/' + (currentYear - 1);
+                      if (fromDateInput) {
+                        fromDateInput.value = targetFromDate || fromDateInput.value || ('01/01/' + new Date().getFullYear());
                       }
-                      if (toDateInput && !toDateInput.value) {
-                        const now = new Date();
-                        const dd = String(now.getDate()).padStart(2, '0');
-                        const mm = String(now.getMonth() + 1).padStart(2, '0');
-                        toDateInput.value = dd + '/' + mm + '/' + now.getFullYear();
+                      if (toDateInput) {
+                        if (targetToDate) {
+                          toDateInput.value = targetToDate;
+                        } else if (!toDateInput.value) {
+                          const now = new Date();
+                          const dd = String(now.getDate()).padStart(2, '0');
+                          const mm = String(now.getMonth() + 1).padStart(2, '0');
+                          toDateInput.value = dd + '/' + mm + '/' + now.getFullYear();
+                        }
                       }
 
                       setTimeout(() => {
@@ -1245,13 +1277,19 @@ export function setupIpcHandlers(
     }
   };
 
-  ipcMain.handle('paymentSlips:openAuthWindow', async () => {
-    return triggerPaymentAuthWindow();
+  ipcMain.handle('paymentSlips:openAuthWindow', async (_event, params?: { fromDate?: string; toDate?: string; forceInteractive?: boolean }) => {
+    return triggerPaymentAuthWindow(params);
   });
 
   ipcMain.handle('paymentSlips:scan', async (_event, { range, options }) => {
+    let safeRange: DateRange;
     try {
-      const safeRange = normalizeDateRange(range);
+      safeRange = normalizeDateRange(range);
+    } catch {
+      safeRange = { fromDate: '01/01/2026', toDate: '31/12/2026', label: 'Cả năm 2026', level: 'YEAR' };
+    }
+
+    try {
       auditLogger.log('INFO', `Bắt đầu tra cứu Giấy Nộp Tiền (${safeRange.fromDate} → ${safeRange.toDate})`);
       const results = await paymentSlipClient.searchPaymentSlips(safeRange, options || {});
       auditLogger.log('SUCCESS', `Tìm thấy ${results.length} Giấy Nộp Tiền trên eTax`);
@@ -1266,9 +1304,16 @@ export function setupIpcHandlers(
       ) {
         try {
           auditLogger.log('INFO', 'Tự động xác thực phiên eTax ngầm và thử lại tra cứu GNT...');
-          const authRes = await triggerPaymentAuthWindow();
+          const authRes = await triggerPaymentAuthWindow({
+            fromDate: safeRange.fromDate,
+            toDate: safeRange.toDate,
+            forceInteractive: false
+          });
           if (authRes?.success) {
-            const safeRange = normalizeDateRange(range);
+            if (Array.isArray(authRes.paymentSlips) && authRes.paymentSlips.length > 0) {
+              auditLogger.log('SUCCESS', `Trích xuất ${authRes.paymentSlips.length} Giấy Nộp Tiền từ cửa sổ xác thực ngầm`);
+              return { success: true, paymentSlips: authRes.paymentSlips };
+            }
             const retryResults = await paymentSlipClient.searchPaymentSlips(safeRange, options || {});
             auditLogger.log('SUCCESS', `Tìm thấy ${retryResults.length} Giấy Nộp Tiền sau khi tự động xác thực`);
             return { success: true, paymentSlips: retryResults };
