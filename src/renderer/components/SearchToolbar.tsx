@@ -102,26 +102,26 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
     <div className="flex items-center justify-between gap-3 text-xs">
       {/* Search Box */}
       <div className="relative flex-1 max-w-md">
-        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
           ref={searchInputRef}
           type="text"
           value={searchQuery}
           onChange={e => onSearchChange(e.target.value)}
           placeholder="Tìm tên, mã, kỳ hoặc ID hồ sơ…"
-          className="w-full h-8.5 pl-9 pr-14 bg-slate-50/80 focus:bg-white border border-slate-300 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus-ring transition-all shadow-2xs"
+          className="w-full h-9 pl-9 pr-16 bg-slate-50/90 focus:bg-white border border-slate-300 rounded-lg text-xs text-slate-900 placeholder:text-slate-400 focus-ring transition-all shadow-xs"
         />
         {searchQuery ? (
           <button
             type="button"
             onClick={() => onSearchChange('')}
-            className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer p-1"
             title="Xóa tìm kiếm"
           >
             <X className="w-4 h-4" />
           </button>
         ) : (
-          <kbd className="absolute right-2 top-2 px-1.5 py-0.5 bg-slate-200/60 text-slate-500 rounded text-[10px] font-mono border border-slate-300/60 pointer-events-none select-none">
+          <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 px-1.5 py-0.5 bg-slate-200/70 text-slate-500 rounded text-[10px] font-mono border border-slate-300 pointer-events-none select-none">
             Ctrl K
           </kbd>
         )}
@@ -133,9 +133,9 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
           <button
             type="button"
             onClick={onToggleViewMode}
-            className={`h-8.5 px-3 rounded-lg border font-semibold text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs btn-press ${
+            className={`h-9 px-3 rounded-lg border font-semibold text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs btn-press ${
               viewMode === 'BY_PERIOD'
-                ? 'bg-teal-50/90 border-teal-300 text-teal-800'
+                ? 'bg-teal-50 border-teal-300 text-teal-800'
                 : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
             }`}
             title="Chuyển đổi giữa gom nhóm theo kỳ kê khai và danh sách phẳng"
@@ -151,10 +151,10 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
             type="button"
             onClick={onAnalyzeVat}
             disabled={totalFilingsCount === 0 || isVatAnalyzing}
-            className={`h-8.5 px-3 rounded-lg border font-semibold text-xs flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 btn-press ${
+            className={`h-9 px-3 rounded-lg border font-semibold text-xs flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 btn-press ${
               isVatAnalyzing
                 ? 'bg-amber-50 border-amber-300 text-amber-900 animate-pulse'
-                : 'bg-teal-50/80 hover:bg-teal-100/80 text-teal-800 border-teal-200 shadow-2xs'
+                : 'bg-teal-50/80 hover:bg-teal-100 text-teal-800 border-teal-200 shadow-xs'
             }`}
             title="Trích xuất chỉ tiêu [22]..[43], đối chiếu các lần bổ sung và tạo Bảng tham chiếu"
           >
@@ -169,10 +169,10 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
             type="button"
             onClick={onAnalyzePit}
             disabled={totalFilingsCount === 0 || isPitAnalyzing}
-            className={`h-8.5 px-3 rounded-lg border font-semibold text-xs flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 btn-press ${
+            className={`h-9 px-3 rounded-lg border font-semibold text-xs flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50 btn-press ${
               isPitAnalyzing
                 ? 'bg-amber-50 border-amber-300 text-amber-900 animate-pulse'
-                : 'bg-teal-50/80 hover:bg-teal-100/80 text-teal-800 border-teal-200 shadow-2xs'
+                : 'bg-teal-50/80 hover:bg-teal-100 text-teal-800 border-teal-200 shadow-xs'
             }`}
             title="Trích xuất chỉ tiêu [32]..[34], đối chiếu Tháng, Quý và Quyết toán năm 05/QTT-TNCN"
           >
@@ -181,13 +181,12 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
           </button>
         )}
 
-        {/* Nút tải chính (Primary CTA - Màu Teal đậm duy nhất trên thanh) */}
         {/* Nút tải chính (Primary CTA) */}
         {selectedCount > 0 ? (
           <button
             type="button"
             onClick={onDownloadSelected}
-            className="h-8.5 px-3.5 bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 active:from-teal-800 active:to-teal-700 text-white font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer btn-press border border-teal-700/40"
+            className="h-9 px-3.5 bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 active:from-teal-800 active:to-teal-700 text-white font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer btn-press border border-teal-700/40"
             title={`Bắt đầu tải ${selectedCount} hồ sơ đã chọn`}
           >
             <Download className="w-3.5 h-3.5" />
@@ -197,7 +196,7 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
           <button
             type="button"
             onClick={onDownloadFiltered}
-            className="h-8.5 px-3.5 bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 active:from-teal-800 active:to-teal-700 text-white font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer btn-press border border-teal-700/40"
+            className="h-9 px-3.5 bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 active:from-teal-800 active:to-teal-700 text-white font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer btn-press border border-teal-700/40"
             title={`Tải nhanh ${filteredCount} hồ sơ theo danh mục đang xem`}
           >
             <Download className="w-3.5 h-3.5" />
@@ -213,7 +212,7 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
               setIsFilterOpen(!isFilterOpen);
               setIsMenuOpen(false);
             }}
-            className={`h-8.5 px-3 rounded-lg border font-semibold text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs btn-press ${
+            className={`h-9 px-3 rounded-lg border font-semibold text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs btn-press ${
               activeFilterCount > 0
                 ? 'bg-teal-50 border-teal-300 text-teal-800'
                 : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
@@ -252,7 +251,7 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
               setIsMenuOpen(false);
             }}
             disabled={totalFilingsCount === 0}
-            className="h-8.5 px-3 bg-white hover:bg-slate-50 active:bg-slate-100 border border-slate-300 text-slate-700 font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-all disabled:opacity-40 cursor-pointer shadow-2xs btn-press"
+            className="h-9 px-3 bg-white hover:bg-slate-50 active:bg-slate-100 border border-slate-300 text-slate-700 font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-all disabled:opacity-40 cursor-pointer shadow-xs btn-press"
             title="Tùy chọn xuất Excel"
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-teal-700" />
@@ -304,7 +303,7 @@ export const SearchToolbar: React.FC<SearchToolbarProps> = ({
               setIsFilterOpen(false);
             }}
             disabled={totalFilingsCount === 0}
-            className="h-9 px-2.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-600 rounded-lg text-xs flex items-center transition-colors disabled:opacity-40 cursor-pointer shadow-2xs"
+            className="h-9 w-9 justify-center bg-white hover:bg-slate-50 border border-slate-300 text-slate-600 rounded-lg text-xs flex items-center transition-colors disabled:opacity-40 cursor-pointer shadow-xs"
             title="Tùy chọn tải khác"
           >
             <MoreHorizontal className="w-4 h-4" />

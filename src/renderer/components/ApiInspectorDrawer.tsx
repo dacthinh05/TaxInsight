@@ -274,7 +274,7 @@ export const ApiInspectorDrawer: React.FC<ApiInspectorDrawerProps> = ({ isOpen, 
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               placeholder="Tìm kiếm theo URL, Method, Headers, Body hoặc Mã lỗi..."
-              className="w-full pl-9 pr-8 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-teal-500"
+              className="w-full pl-9 pr-8 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-500"
             />
             {searchQuery && (
               <button
@@ -351,7 +351,7 @@ export const ApiInspectorDrawer: React.FC<ApiInspectorDrawerProps> = ({ isOpen, 
             <select
               value={moduleFilter}
               onChange={e => setModuleFilter(e.target.value)}
-              className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-hidden focus:border-teal-500 cursor-pointer"
+              className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-teal-500 cursor-pointer"
             >
               <option value="ALL">Tất cả Modules</option>
               <option value="AUTH">AUTH (Đăng nhập / Captcha)</option>

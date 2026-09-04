@@ -342,7 +342,7 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
                 placeholder="Tìm mã tờ khai, kỳ thuế, mã hồ sơ..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-8.5 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500 focus:border-teal-500 focus:bg-white transition-all"
+                className="w-full pl-8.5 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500 focus:bg-white transition-all"
               />
               {searchQuery && (
                 <button
