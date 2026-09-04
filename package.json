@@ -74,7 +74,7 @@
       "repo": "TaxInsight"
     },
     "directories": {
-      "output": "dist-release-v307",
+      "output": "dist-release-app",
       "buildResources": "build"
     },
     "files": [
