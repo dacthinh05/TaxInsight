@@ -270,10 +270,27 @@ export class PaymentSlipClient {
         const resDataStr = typeof resData === 'string' ? resData : JSON.stringify(resData || '');
         const finalUrl = (ssoRes.request as any)?.res?.responseUrl || '';
 
+        const ssoForm = this.extractMainForm(resDataStr);
         if (finalUrl && finalUrl.includes('thuedientu.gdt.gov.vn')) {
           handoffType = 'ALREADY_AT_ETAX';
           ssoResponseHtml = resDataStr;
           redirectUrl = finalUrl;
+        } else if (ssoForm && (ssoForm.action.includes('thuedientu.gdt.gov.vn') || ssoForm.action.includes('EstablishSession') || ssoForm.action.includes('/etaxnnt/'))) {
+          handoffType = 'FORM_POST';
+          redirectUrl = this.resolveEtaxUrl(ssoForm.action.replace(/\\u0026/g, '&').replace(/&amp;/g, '&'), PORTAL_CONFIG.ETAX_BASE_URL);
+          const postParams = new URLSearchParams(ssoForm.fields);
+          const etaxPostRes = await this.session.client.post(redirectUrl, postParams.toString(), {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Origin': 'https://dichvucong.gdt.gov.vn',
+              'Referer': 'https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+            },
+            timeout: 20000,
+            maxRedirects: 5
+          });
+          ssoResponseHtml = String(etaxPostRes.data || '');
+          redirectUrl = (etaxPostRes.request as any)?.res?.responseUrl || redirectUrl;
         } else {
           const match = resDataStr.match(/https?:\/\/[^\s"'<>]+thuedientu\.gdt\.gov\.vn[^\s"'<>]+/i);
           if (match) {
@@ -824,50 +841,61 @@ export class PaymentSlipClient {
 
         const gntList = GntParser.parseList(html);
 
-        // ── PHÁT HIỆN TRANG LỖI GIẢ MẠO "THÀNH CÔNG" ─────────────────────
-        // Server xử lý query nhưng phiên đã chết: trả lại form truy vấn rỗng
-        // (GNT_QUERY_PAGE), trang lỗi hệ thống hoặc trang lạ — không có bảng
-        // kết quả. Trước đây bị ngầm hiểu là "0 giấy nộp tiền".
-        const hasResultTable = kind === 'GNT_LIST' || kind === 'GNT_DETAIL' || gntList.length > 0;
-        if (!hasResultTable) {
-          const isNpe = html.includes('NullPointerException');
-          this.logCheckpoint('GNT_07_GNT_QUERY_READY', 'FAIL', `Phản hồi không có bảng kết quả (kind=${kind}${isNpe ? ', NullPointerException' : ''})`);
+        // ── PHÂN BIỆT TRANG KẾT QUẢ RỖNG HỢP LỆ VS TRANG LỖI ─────────────────
+        // 1. Trường hợp có bản ghi GNT -> trả về kết quả thành công
+        if (gntList.length > 0) {
+          this.logCheckpoint('GNT_07_GNT_QUERY_READY', 'PASS', `Truy vấn thành công, nhận ${gntList.length} giấy nộp tiền`);
+          const records: PaymentSlipRecord[] = gntList.map(item => ({
+            id: item.ctuId,
+            stt: item.raw?.cells[0] ? parseInt(item.raw.cells[0], 10) || 1 : 1,
+            maGiaoDich: item.transactionRef || '',
+            maGiaoDichChiTiet: item.detailTransactionRef,
+            lanNop: item.submissionNo ? String(item.submissionNo) : undefined,
+            soGnt: item.gntNo || item.ctuId,
+            soTien: GntMoneyParser.toSafeNumber(item.amount.value),
+            soTienFormatted: GntMoneyParser.formatVND(item.amount.value),
+            loaiTien: item.currency || 'VND',
+            trangThai: item.statusRaw || 'Nộp thuế thành công',
+            soChungTu: item.bankDocumentNo,
+            ngayLapGnt: item.createdAt,
+            ngayGuiGnt: item.sentAt,
+            ngayNopThue: item.paidAt,
+            hinhThucNop: item.source === 'OTHER_CHANNEL' ? 'Nộp tại các kênh khác' : 'Nộp tại cổng eTax của TCT',
+            tenNganHang: item.bankName,
+            soTaiKhoan: item.bankAccount,
+            downloadAvailable: item.canDownload
+          }));
           return {
-            success: false,
-            data: [],
-            error: isNpe
-              ? 'eTax đang trả trang lỗi hệ thống (NullPointerException). Vui lòng thử lại sau ít phút.'
-              : 'eTax không trả về bảng kết quả tra cứu (phiên phân hệ tra cứu có thể đã đứt). Vui lòng thử lại hoặc dùng "Mở eTax để xác thực".',
-            errorCode: isNpe ? 'ETAX_SYSTEM_ERROR' : 'ETAX_QUERY_BLOCKED'
+            success: true,
+            data: records
           };
         }
 
-        this.logCheckpoint('GNT_07_GNT_QUERY_READY', 'PASS', `Truy vấn thành công, nhận ${gntList.length} giấy nộp tiền`);
+        // 2. Trường hợp gntList rỗng: kiểm tra xem có phải kết quả tra cứu rỗng hợp lệ
+        const isNoDataPattern = /không có (?:dữ liệu|bản ghi|chứng từ|kết quả)|không tìm thấy|0 bản ghi|0 kết quả|không có số liệu/i.test(html);
+        const isQueryResultPage = kind === 'GNT_LIST' ||
+          (kind === 'GNT_QUERY_PAGE' && (isNoDataPattern || html.includes('corpQueryTaxProc') || html.includes('dse_operationName')));
 
-        const records: PaymentSlipRecord[] = gntList.map(item => ({
-          id: item.ctuId,
-          stt: item.raw?.cells[0] ? parseInt(item.raw.cells[0], 10) || 1 : 1,
-          maGiaoDich: item.transactionRef || '',
-          maGiaoDichChiTiet: item.detailTransactionRef,
-          lanNop: item.submissionNo ? String(item.submissionNo) : undefined,
-          soGnt: item.gntNo || item.ctuId,
-          soTien: GntMoneyParser.toSafeNumber(item.amount.value),
-          soTienFormatted: GntMoneyParser.formatVND(item.amount.value),
-          loaiTien: item.currency || 'VND',
-          trangThai: item.statusRaw || 'Nộp thuế thành công',
-          soChungTu: item.bankDocumentNo,
-          ngayLapGnt: item.createdAt,
-          ngayGuiGnt: item.sentAt,
-          ngayNopThue: item.paidAt,
-          hinhThucNop: item.source === 'OTHER_CHANNEL' ? 'Nộp tại các kênh khác' : 'Nộp tại cổng eTax của TCT',
-          tenNganHang: item.bankName,
-          soTaiKhoan: item.bankAccount,
-          downloadAvailable: item.canDownload
-        }));
+        const isNpe = html.includes('NullPointerException');
+        const isPortalError = kind === 'PORTAL_ERROR' || isNpe || html.includes('error_page.jsp') || html.includes('Đã có lỗi hệ thống');
+        const isOutsideModule = nextDse.operationName && !['corpQueryTaxProc', 'corpJumpProc'].includes(nextDse.operationName);
 
+        if (!isPortalError && !isOutsideModule && isQueryResultPage) {
+          this.logCheckpoint('GNT_07_GNT_QUERY_READY', 'PASS', 'Truy vấn thành công, không có Giấy Nộp Tiền trong khoảng thời gian');
+          return {
+            success: true,
+            data: []
+          };
+        }
+
+        this.logCheckpoint('GNT_07_GNT_QUERY_READY', 'FAIL', `Phản hồi không có bảng kết quả (kind=${kind}${isNpe ? ', NullPointerException' : ''})`);
         return {
-          success: true,
-          data: records
+          success: false,
+          data: [],
+          error: isNpe
+            ? 'eTax đang trả trang lỗi hệ thống (NullPointerException). Vui lòng thử lại sau ít phút.'
+            : 'eTax không trả về bảng kết quả tra cứu (phiên phân hệ tra cứu có thể đã đứt). Vui lòng thử lại hoặc dùng "Mở eTax để xác thực".',
+          errorCode: isNpe ? 'ETAX_SYSTEM_ERROR' : 'ETAX_QUERY_BLOCKED'
         };
       } catch (err: any) {
         const status = err.response?.status;
@@ -1150,6 +1178,12 @@ export class PaymentSlipClient {
       }
     }
 
+    // Nếu trang 1 không có bản ghi nào, kết thúc ngay lập tức (không cần quét tiếp trang 2..50)
+    if (allRecords.length === 0) {
+      console.log(`[PaymentSlipClient] Hoàn tất tra cứu: Không có Giấy Nộp Tiền nào trong khoảng ${range.fromDate} → ${range.toDate}`);
+      return allRecords;
+    }
+
     // KHÔNG đoán "trang cuối" theo số dòng/trang (server GDT giới hạn 20 dòng/trang
     // nhưng không cam kết cố định). Điều kiện dừng dựa trên dấu hiệu cấu trúc:
     // trang rỗng / không còn bản ghi mới / chạm trần MAX_PAGES.
@@ -1195,7 +1229,6 @@ export class PaymentSlipClient {
       // Giãn cách nhẹ tránh nghẽn DSE
       await new Promise(r => setTimeout(r, 100));
     }
-
     console.log(`[PaymentSlipClient] Hoàn tất tra cứu: Đã thu thập tổng cộng ${allRecords.length} Giấy Nộp Tiền qua phân trang tự động`);
     return allRecords;
   }
