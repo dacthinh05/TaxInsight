@@ -2,6 +2,7 @@ export type TaxType = 'ALL' | 'VAT' | 'REFUND' | 'PIT' | 'CIT' | 'FCT' | 'HOUSE_
 
 export type FilingType = 'PERIODIC' | 'FINALIZATION' | 'SUPPLEMENTAL' | 'REFUND' | 'ORIGINAL' | 'UNKNOWN';
 
+export type PaymentQueryStatus = 'CONNECTED_WITH_DATA' | 'CONNECTED_NO_DATA' | 'QUERY_FAILED' | 'NOT_QUERIED';
 export type PortalErrorCode =
   | 'NETWORK'
   | 'TIMEOUT'
