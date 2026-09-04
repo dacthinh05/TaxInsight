@@ -345,26 +345,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
         </div>
 
 
-        {onOpenInspector && (
-          <button
-            type="button"
-            onClick={onOpenInspector}
-            className={`h-8 px-2.5 rounded-md text-xs font-medium border flex items-center space-x-1.5 transition-colors relative cursor-pointer ${
-              inspectorErrorCount > 0
-                ? 'bg-red-950/80 border-red-800 text-red-300 hover:bg-red-900'
-                : 'bg-purple-950/70 border-purple-800/80 text-purple-300 hover:bg-purple-900'
-            }`}
-            title="Mở công cụ giám sát & chẩn đoán API Inspector (Admin / Dev)"
-          >
-            <Activity className={`w-3.5 h-3.5 ${inspectorErrorCount > 0 ? 'text-red-400' : 'text-purple-400'}`} />
-            <span className="hidden md:inline">API Inspector</span>
-            {inspectorErrorCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-red-600 text-white animate-pulse">
-                {inspectorErrorCount}
-              </span>
-            )}
-          </button>
-        )}
 
         <button
           type="button"

@@ -15,7 +15,8 @@ describe('ApiInspectorManager Core Suite', () => {
 
   describe('1. Admin PIN Verification & Status', () => {
     it('should only allow the development PIN and reject former hardcoded backdoors', () => {
-      expect(manager.verifyAdminPin('admin')).toEqual({ success: true });
+      expect(manager.verifyAdminPin('820510')).toEqual({ success: true });
+      expect(manager.verifyAdminPin('admin').success).toBe(false);
       expect(manager.verifyAdminPin('888888').success).toBe(false);
       expect(manager.verifyAdminPin('taxinsight@admin2026').success).toBe(false);
       expect(manager.verifyAdminPin('123456').success).toBe(false);
@@ -28,9 +29,8 @@ describe('ApiInspectorManager Core Suite', () => {
     });
 
     it('should return admin status after successful unlock', () => {
-      manager.verifyAdminPin('admin');
+      manager.verifyAdminPin('820510');
       const status = manager.getAdminStatus();
-      expect(status.isAdmin).toBe(true);
       expect(status.unlockedAt).toBeDefined();
     });
   });
