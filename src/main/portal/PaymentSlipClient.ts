@@ -32,6 +32,7 @@ export class PaymentSlipClient {
 
   /** ctuId -> chi tiết trong cache đã được đối chiếu khớp với danh sách chưa */
   private detailCacheVerified = new Map<string, boolean>();
+  private slipLookup = new Map<string, string>();
   private generation = 0;
 
   private latestDiagnostic: GntDiagnosticReport = {
@@ -508,7 +509,6 @@ export class PaymentSlipClient {
           currentHtml.match(/location\.replace\(\s*["']([^"']+)["']\s*\)/i) ||
           currentHtml.match(/window\.location\s*=\s*["']([^"']+)["']/i);
         const metaRedir = currentHtml.match(/http-equiv=["']refresh["'][^>]*url=([^"'>]+)/i);
-
         const nextPath = ((jsRedir?.[1] || metaRedir?.[1]) || '').trim();
         if (nextPath && !nextPath.toLowerCase().startsWith('javascript')) {
           nextUrl = this.resolveEtaxUrl(clean(nextPath), currentUrl);
@@ -865,6 +865,14 @@ export class PaymentSlipClient {
         // 1. Trường hợp có bản ghi GNT -> trả về kết quả thành công
         if (gntList.length > 0) {
           this.logCheckpoint('GNT_07_GNT_QUERY_READY', 'PASS', `Truy vấn thành công, nhận ${gntList.length} giấy nộp tiền`);
+          for (const item of gntList) {
+            if (item.ctuId && /^\d{1,12}$/.test(item.ctuId)) {
+              this.slipLookup.set(item.ctuId, item.ctuId);
+              if (item.gntNo) this.slipLookup.set(item.gntNo, item.ctuId);
+              if (item.transactionRef) this.slipLookup.set(item.transactionRef, item.ctuId);
+              if (item.bankDocumentNo) this.slipLookup.set(item.bankDocumentNo, item.ctuId);
+            }
+          }
           const records: PaymentSlipRecord[] = gntList.map(item => ({
             id: item.ctuId,
             stt: item.raw?.cells[0] ? parseInt(item.raw.cells[0], 10) || 1 : 1,
@@ -1011,6 +1019,34 @@ export class PaymentSlipClient {
     const fetchOnce = async (forceRefreshSession: boolean): Promise<PaymentSlipDetail> => {
       await this.ensureEtaxSession(forceRefreshSession);
       this.assertQueryState(this.currentDseState);
+      let effectiveCtuId = ctuId;
+      if (this.slipLookup.has(effectiveCtuId)) {
+        effectiveCtuId = this.slipLookup.get(effectiveCtuId)!;
+      } else if (verify?.soGnt && this.slipLookup.has(verify.soGnt)) {
+        effectiveCtuId = this.slipLookup.get(verify.soGnt)!;
+      } else if (verify?.maGiaoDich && this.slipLookup.has(verify.maGiaoDich)) {
+        effectiveCtuId = this.slipLookup.get(verify.maGiaoDich)!;
+      }
+
+      // Nếu ctuId vẫn là chuỗi dài (không phải số nguyên 1-12 chữ số), cố gắng tra cứu danh sách để phân giải ID số
+      if (!/^\d{1,12}$/.test(effectiveCtuId)) {
+        const rawTarget = verify?.soGnt || ctuId;
+        const yearMatch = rawTarget.match(/202\d/);
+        const targetYear = yearMatch ? parseInt(yearMatch[0], 10) : new Date().getFullYear();
+        try {
+          await this.queryPaymentSlips({
+            startDate: `01/01/${targetYear}`,
+            endDate: `31/12/${targetYear}`
+          });
+          if (this.slipLookup.has(effectiveCtuId)) {
+            effectiveCtuId = this.slipLookup.get(effectiveCtuId)!;
+          } else if (verify?.soGnt && this.slipLookup.has(verify.soGnt)) {
+            effectiveCtuId = this.slipLookup.get(verify.soGnt)!;
+          } else if (verify?.maGiaoDich && this.slipLookup.has(verify.maGiaoDich)) {
+            effectiveCtuId = this.slipLookup.get(verify.maGiaoDich)!;
+          }
+        } catch {}
+      }
 
       const params = new URLSearchParams();
       params.append('dse_sessionId', this.currentDseState.sessionId);
@@ -1025,7 +1061,7 @@ export class PaymentSlipClient {
       params.append('dse_nextEventName', 'detail');
       params.append('pn', '1');
       params.append('sct', '');
-      params.append('ctuId', ctuId);
+      params.append('ctuId', effectiveCtuId);
       params.append('soGnt', verify?.soGnt || '');
       params.append('idBke', '');
       params.append('type_tax', PORTAL_CONFIG.GNT_TYPE_TAX);

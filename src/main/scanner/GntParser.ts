@@ -176,9 +176,9 @@ export class GntParser {
       let gntHref = '';
       $tr.find('a').each((_, a) => {
         const h = $(a).attr('href') || '';
-        if (!gntHref && /chiTietCT|downloadGNT/.test(h)) gntHref = h;
+        if (!gntHref && /chiTietCT|downloadGNT|uploadBke/.test(h)) gntHref = h;
       });
-      const matchCtu = gntHref.match(/chiTietCT\((\d+)\)/) || gntHref.match(/downloadGNT\((\d+)\)/);
+      const matchCtu = gntHref.match(/(?:chiTietCT|downloadGNT|uploadBke|uploadBkeTMDT)\s*\(\s*['"]?(\d+)['"]?/i);
       if (matchCtu) {
         ctuId = matchCtu[1];
       }
@@ -187,7 +187,7 @@ export class GntParser {
         // Tìm trong các nút download/action khác ở các cột sau
         $tr.find('a').each((_, a) => {
           const aHref = $(a).attr('href') || '';
-          const m = aHref.match(/(?:chiTietCT|downloadGNT|uploadBke)\((\d+)/);
+          const m = aHref.match(/(?:chiTietCT|downloadGNT|uploadBke|uploadBkeTMDT)\s*\(\s*['"]?(\d+)['"]?/i);
           if (m && !ctuId) {
             ctuId = m[1];
           }
