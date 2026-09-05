@@ -462,7 +462,7 @@ export class PitAnalyticsEngine {
       this.legacyClient &&
       (filing.source === 'dvc-etax-html' || Boolean(filing.messageId))
     );
-
+    const abortCtrl = new AbortController();
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       if (this.isCancelled) {
         const cancelErr = Object.assign(new Error('Phân tích đã bị hủy'), { code: 'CANCELLED' });
@@ -472,7 +472,7 @@ export class PitAnalyticsEngine {
         if (shouldTryLegacyFirst && this.legacyClient) {
           if (filing.messageId) {
             try {
-              const legacyFile = await this.legacyClient.downloadFiling(filing.messageId);
+              const legacyFile = await this.legacyClient.downloadFiling(filing.messageId, abortCtrl.signal);
               return {
                 fileName: legacyFile.fileName,
                 fileType: legacyFile.contentType,
@@ -488,7 +488,7 @@ export class PitAnalyticsEngine {
           }
 
           try {
-            const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
+            const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing, abortCtrl.signal);
             if (legacyFile?.dataBuffer && legacyFile.dataBuffer.length > 0) {
               return {
                 fileName: legacyFile.fileName,
@@ -517,7 +517,7 @@ export class PitAnalyticsEngine {
         } catch (dvcErr: unknown) {
           if (this.legacyClient && !shouldTryLegacyFirst && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
             try {
-              const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing);
+              const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing, abortCtrl.signal);
               if (legacyFile?.dataBuffer && legacyFile.dataBuffer.length > 0) {
                 return {
                   fileName: legacyFile.fileName,

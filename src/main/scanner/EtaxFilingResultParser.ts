@@ -229,7 +229,7 @@ export class EtaxFilingResultParser {
       filings,
       historicalRecords,
       pagination,
-      isEmpty: noData || candidateRowCount === 0,
+      isEmpty: filings.length === 0 && (noData || candidateRowCount === 0),
       isFormChanged: parserFailed,
       errorMessage: parserFailed
         ? 'Có dòng kết quả nhưng không lấy được messageId từ downloadTkhai(...)'

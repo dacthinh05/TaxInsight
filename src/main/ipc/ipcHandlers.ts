@@ -1390,12 +1390,13 @@ export function setupIpcHandlers(
             }
           });
           const entryHtml = String(entryRes.data || '');
-          const csrf = entryHtml.match(/name=["']_csrf["']\s+value=["']([^"']+)["']/i)?.[1] ||
-            entryHtml.match(/name=["']csrf-token["']\s+content=["']([^"']+)["']/i)?.[1] || '';
+          const csrf = entryHtml.match(/['"]X-XSRF-TOKEN['"]\s*:\s*['"]([^'"]+)['"]/i)?.[1] ||
+            entryHtml.match(/name=["']_csrf["']\s+value=["']([^'"]+)["']/i)?.[1] ||
+            entryHtml.match(/name=["']csrf-token["']\s+content=["']([^'"]+)["']/i)?.[1] || '';
 
-          const ssoRes = await session.client.post(
-            `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=330410`,
-            csrf ? `_csrf=${encodeURIComponent(csrf)}` : '',
+          let ssoRes = await session.client.post(
+            `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=360103`,
+            '',
             {
               headers: {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -1406,6 +1407,21 @@ export function setupIpcHandlers(
               validateStatus: () => true
             }
           );
+          if (ssoRes.status !== 200) {
+            ssoRes = await session.client.post(
+              `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=330410`,
+              '',
+              {
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                  'X-Requested-With': 'XMLHttpRequest',
+                  'Referer': 'https://dichvucong.gdt.gov.vn/tthc/dich-vu-khac',
+                  ...(csrf ? { 'X-XSRF-TOKEN': csrf } : {})
+                },
+                validateStatus: () => true
+              }
+            );
+          }
           const ssoData = String(ssoRes.data || '').trim();
           if (ssoData.startsWith('http') && ssoData.includes('thuedientu.gdt.gov.vn')) {
             directEtaxUrl = ssoData;

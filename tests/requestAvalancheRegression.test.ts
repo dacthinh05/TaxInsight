@@ -194,7 +194,7 @@ describe('Request avalanche and missing-XML regressions', () => {
     const result = await (engine as any).downloadHoSoWithRetry(filing);
 
     expect(Buffer.from(result.content, 'base64')).toEqual(legacyBuffer);
-    expect(legacyClient.downloadFiling).toHaveBeenCalledWith('LEGACY-MESSAGE-01');
+    expect(legacyClient.downloadFiling).toHaveBeenCalledWith('LEGACY-MESSAGE-01', expect.anything());
     expect(currentClient.downloadHoSo).not.toHaveBeenCalled();
   });
   it.each([
@@ -228,7 +228,7 @@ describe('Request avalanche and missing-XML regressions', () => {
 
     expect(Buffer.from(result.content, 'base64')).toEqual(legacyBuffer);
     expect(currentClient.downloadHoSo).toHaveBeenCalledTimes(1);
-    expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledWith('', filing);
+    expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledWith('', filing, expect.anything());
   });
   it('keeps all PIT filings as explicit unavailable snapshots after a rate-limit stop', async () => {
     const rateLimitError = Object.assign(new Error('HTTP 429 Too Many Requests'), {
@@ -276,7 +276,7 @@ describe('Request avalanche and missing-XML regressions', () => {
 
     await expect((engine as any).downloadHoSoWithRetry(filing)).rejects.toThrow('HTTP 429 Too Many Requests');
     expect(currentClient.downloadHoSo).toHaveBeenCalledTimes(1);
-    expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledWith('', filing);
+    expect(legacyClient.resolveAndDownloadFiling).toHaveBeenCalledWith('', filing, expect.anything());
   });
 
   it('VAT buildSummaryFromSnapshots picks the last valid XML snapshot as finalSnapshot when a supplemental filing failed', () => {
@@ -675,7 +675,7 @@ describe('Request avalanche and missing-XML regressions', () => {
     expect(session.client.post).toHaveBeenCalledTimes(1);
   });
 
-  it('classifies retailIndexProc as interactive auth and sends no guessed navigation request', async () => {
+  it('classifies plugin gate as interactive auth and sends no guessed navigation request', async () => {
     const session = new PortalSession();
     session.client.get = vi.fn();
     session.client.post = vi.fn();
@@ -684,11 +684,11 @@ describe('Request avalanche and missing-XML regressions', () => {
       <form action="/etaxnnt/Request">
         <input name="dse_sessionId" value="runtime-session" />
         <input name="dse_applicationId" value="-1" />
-        <input name="dse_operationName" value="retailIndexProc" />
-        <input name="dse_pageId" value="runtime-page" />
+        <input name="dse_operationName" value="corpPluginProc" />
         <input name="dse_processorState" value="runtime-state" />
         <input name="dse_processorId" value="runtime-processor" />
       </form>
+      <div>Hệ thống đang thực hiện kiểm tra bản cập nhật</div>
     `;
 
     await expect(

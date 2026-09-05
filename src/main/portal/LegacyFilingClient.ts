@@ -168,7 +168,9 @@ export class LegacyFilingClient {
         if (this.mustStopFallback(entryErr)) throw entryErr;
       }
 
+      const jsXsrfMatch = dvcEntryHtml.match(/['"]X-XSRF-TOKEN['"]\s*:\s*['"]([^'"]+)['"]/i)?.[1];
       const csrfFromHtml =
+        jsXsrfMatch ||
         dvcEntryHtml.match(/name=["']_csrf["']\s+value=["']([^"']+)["']/i)?.[1] ||
         dvcEntryHtml.match(/value=["']([^"']+)["']\s+name=["']_csrf["']/i)?.[1] ||
         dvcEntryHtml.match(/name=["']csrf-token["']\s+content=["']([^"']+)["']/i)?.[1] ||
@@ -191,17 +193,13 @@ export class LegacyFilingClient {
       this.logCheckpoint('LEGACY_02_SSO_REQUESTED', 'PASS', 'Gửi POST redirect-to-service?module=360103');
 
       // Module 360103: Tra cứu tờ khai trên eTax
-      const ssoBody = new URLSearchParams();
-      if (csrfToken) ssoBody.append('_csrf', csrfToken);
-
+      // Cổng DVC dùng $.ajax gửi header X-XSRF-TOKEN với body rỗng.
+      // Không gửi _csrf trong body vì Spring Security sẽ trả 403 Forbidden.
       const ssoRes = await this.session.client.post(
         `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=360103`,
-        ssoBody.toString(),
+        '',
         {
-          headers: {
-            ...ssoHeaders,
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-          },
+          headers: ssoHeaders,
           timeout: 20000,
           maxRedirects: 5
         }
@@ -526,13 +524,10 @@ export class LegacyFilingClient {
     }
     if (!kieuKy) kieuKy = this.currentFormState.formValues.kieuKy;
     if (!kieuKy && requestedFormCode === '00') {
-      // Trace xác nhận chế độ "Tất cả" gửi Q dù hidden kieuKy của form là
-      // chuỗi rỗng. Chỉ áp dụng khi chính form sống hiện tại công bố Q trong
-      // arrTKhai; nếu Q biến mất thì fail-closed thay vì đoán.
-      const livePeriodTypes = new Set(
-        this.availableFormOptions.map(option => option.kieuKy).filter(Boolean)
-      );
-      if (livePeriodTypes.has('Q')) kieuKy = 'Q';
+      // Khi tra cứu "Tất cả" (00), không ép kieuKy='Q' vì eTax backend sẽ gặp lỗi
+      // "Response already committed" trên các trang phân trang tiếp theo.
+      // Để trống chuỗi rỗng để eTax tự quét toàn bộ các tháng và quý.
+      kieuKy = '';
     }
 
     const searchParams = EtaxFormStateParser.buildSearchParams(this.currentFormState, {

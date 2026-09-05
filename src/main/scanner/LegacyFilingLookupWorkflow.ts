@@ -273,7 +273,7 @@ export class LegacyFilingLookupWorkflow extends EventEmitter {
           });
 
           // Nếu trang rỗng hoặc không có bản ghi mới -> dừng phân trang năm này
-          if (pageResult.isEmpty) {
+          if (pageResult.isEmpty || pageResult.filings.length === 0) {
             break;
           }
 

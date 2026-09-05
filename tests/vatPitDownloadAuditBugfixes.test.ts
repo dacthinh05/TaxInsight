@@ -423,10 +423,10 @@ describe('VAT & PIT Audit & Download Bugfixes Regression Suite', () => {
       expect(quarters[3].toDate).toBe('31/01/2026');
     });
 
-    it('resolveScanDateRange cho FULL_YEAR của năm đã qua mở rộng toDate đến 31/03 năm sau', () => {
+    it('resolveScanDateRange cho FULL_YEAR của năm đã qua giữ nguyên toDate 31/12 của năm đó', () => {
       const range = resolveScanDateRange(2025, 'FULL_YEAR');
       expect(range.fromDate).toBe('01/01/2025');
-      expect(range.toDate).toBe('31/03/2026');
+      expect(range.toDate).toBe('31/12/2025');
       expect(range.level).toBe('YEAR');
     });
   });

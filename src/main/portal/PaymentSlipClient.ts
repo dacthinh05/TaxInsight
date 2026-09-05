@@ -220,7 +220,9 @@ export class PaymentSlipClient {
 
       // Cổng mới nhúng CSRF token vào HTML (_csrf hidden input / meta csrf-token),
       // KHÔNG còn cấp qua cookie XSRF-TOKEN -> phải trích từ HTML
+      const jsXsrfMatch = dvcEntryHtml.match(/['"]X-XSRF-TOKEN['"]\s*:\s*['"]([^'"]+)['"]/i)?.[1];
       const csrfFromHtml =
+        jsXsrfMatch ||
         dvcEntryHtml.match(/name=["']_csrf["']\s+value=["']([^"']+)["']/i)?.[1] ||
         dvcEntryHtml.match(/value=["']([^"']+)["']\s+name=["']_csrf["']/i)?.[1] ||
         dvcEntryHtml.match(/name=["']csrf-token["']\s+content=["']([^"']+)["']/i)?.[1] ||
@@ -250,21 +252,29 @@ export class PaymentSlipClient {
       let handoffType: 'HTTP_REDIRECT' | 'FORM_POST' | 'DIRECT_URL' | 'ALREADY_AT_ETAX' | 'UNKNOWN' = 'UNKNOWN';
 
       try {
-        const ssoBody = new URLSearchParams();
-        if (csrfToken) ssoBody.append('_csrf', csrfToken);
-
-        const ssoRes = await this.session.client.post(
-          `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=330410`,
-          ssoBody.toString(),
-          {
-            headers: {
-              ...ssoHeaders,
-              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-            },
-            timeout: 15000,
-            maxRedirects: 5
-          }
-        );
+        let ssoRes: any;
+        try {
+          ssoRes = await this.session.client.post(
+            `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=360103`,
+            '',
+            {
+              headers: ssoHeaders,
+              timeout: 15000,
+              maxRedirects: 5
+            }
+          );
+        } catch (mErr: any) {
+          console.warn('[PaymentSlipClient] SSO module=360103 failed, fallback sang module=330410:', mErr?.message || mErr);
+          ssoRes = await this.session.client.post(
+            `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=330410`,
+            '',
+            {
+              headers: ssoHeaders,
+              timeout: 15000,
+              maxRedirects: 5
+            }
+          );
+        }
 
         const resData = ssoRes.data;
         const resDataStr = typeof resData === 'string' ? resData : JSON.stringify(resData || '');
@@ -364,9 +374,18 @@ export class PaymentSlipClient {
       }
 
       let dseState = DseFormStateParser.extractDseFormState(initHtml);
+      if (!dseState.sessionId) {
+        const htmlSid = initHtml.match(/[?&](?:dse_)?sessionId=([^&"'#\s]+)/i)?.[1] ||
+                        initHtml.match(/name=["']dse_sessionId["']\s+value=["']([^"']+)["']/i)?.[1];
+        if (htmlSid) dseState.sessionId = decodeURIComponent(htmlSid);
+      }
       if (!dseState.sessionId && redirectUrl) {
         const urlSid = redirectUrl.match(/[?&](?:dse_)?sessionId=([^&"'#\s]+)/i)?.[1];
         if (urlSid) dseState.sessionId = decodeURIComponent(urlSid);
+      }
+      if (!dseState.operationName) {
+        const htmlOp = initHtml.match(/[?&](?:dse_)?operationName=([^&"'#\s]+)/i)?.[1];
+        if (htmlOp) dseState.operationName = decodeURIComponent(htmlOp);
       }
       if (dseState.sessionId) {
         this.currentDseState = dseState;
@@ -771,7 +790,7 @@ export class PaymentSlipClient {
         if (st.processorState) params.append('dse_processorState', st.processorState);
         if (st.processorId) params.append('dse_processorId', st.processorId);
         if (st.errorPage) params.append('dse_errorPage', st.errorPage);
-        params.append('dse_nextEventName', st.nextEventName || st.hiddenFields?.dse_nextEventName || 'query');
+        params.append('dse_nextEventName', 'query');
         params.append('pn', String(query.page || 1));
         params.append('sct', '');
         params.append('ctuId', '');

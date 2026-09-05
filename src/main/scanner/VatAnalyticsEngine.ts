@@ -458,6 +458,25 @@ export class VatAnalyticsEngine {
           clearTimeout(timer);
           return dvcPayload;
         } catch (dvcErr: unknown) {
+          if (this.legacyClient && !shouldTryLegacyFirst && typeof this.legacyClient.resolveAndDownloadFiling === 'function') {
+            try {
+              const legacyFile = await this.legacyClient.resolveAndDownloadFiling(this.taxpayerId, filing, abortCtrl.signal);
+              if (legacyFile?.dataBuffer && legacyFile.dataBuffer.length > 0) {
+                clearTimeout(timer);
+                return {
+                  fileName: legacyFile.fileName,
+                  fileType: legacyFile.contentType,
+                  content: legacyFile.dataBuffer.toString('base64')
+                };
+              }
+            } catch (legacyErr: unknown) {
+              const errObj = legacyErr as any;
+              if (errObj?.code === 'RATE_LIMIT' || errObj?.code === 'SESSION_EXPIRED' || errObj?.code === 'AUTH_REQUIRED' || errObj?.code === 'CANCELLED' || errObj?.status === 429) {
+                clearTimeout(timer);
+                throw legacyErr;
+              }
+            }
+          }
           clearTimeout(timer);
           throw dvcErr;
         }
