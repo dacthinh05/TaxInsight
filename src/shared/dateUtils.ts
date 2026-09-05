@@ -325,12 +325,10 @@ export function resolveScanDateRange(year: number, mode: string): DateRange {
   }
 
   if (mode === 'FULL_YEAR') {
-    // Để bắt trọn tờ khai Tháng 12, Quý 4 và Quyết toán năm (nộp vào T01, T02, T03 năm sau):
-    const toDate = year < currentYear ? `31/03/${year + 1}` : `31/12/${year}`;
     return {
       fromDate: `01/01/${year}`,
-      toDate,
-      label: year < currentYear ? `Cả năm ${year} (Bao gồm QTT T03/${year + 1})` : `Cả năm ${year}`,
+      toDate: year === currentYear ? todayStr : `31/12/${year}`,
+      label: `Cả năm ${year}`,
       level: 'YEAR'
     };
   }

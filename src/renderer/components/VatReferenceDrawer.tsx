@@ -553,13 +553,23 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
           
           {/* CỘT TRÁI: BẢNG WORKING PAPER KIỂM TOÁN */}
           <div className="flex-1 flex flex-col overflow-auto bg-white border-r border-slate-200">
-            {isLoading ? (
+            {isLoading && (!summary || !summary.periodGroups || summary.periodGroups.length === 0) ? (
               <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
                 <div className="w-10 h-10 rounded-full border-3 border-teal-200 border-t-teal-700 animate-spin" />
                 <p className="text-xs text-slate-500">{progressMessage || 'Đang kết xuất working paper kiểm toán…'}</p>
               </div>
             ) : activeTab === 'RECONCILIATION' ? (
-              <table className="w-full min-w-[1240px] text-left border-collapse text-[13px] tabular-nums table-fixed">
+              <>
+                {isLoading && (
+                  <div className="bg-teal-50 border-b border-teal-200 px-4 py-2 flex items-center justify-between text-xs text-teal-800 animate-pulse shrink-0">
+                    <span className="flex items-center space-x-2">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-teal-700" />
+                      <span>{progressMessage || 'Đang bóc tách và phân tích dữ liệu tờ khai...'}</span>
+                    </span>
+                    <span className="text-[11px] font-mono text-teal-600">Đang cập nhật...</span>
+                  </div>
+                )}
+                <table className="w-full min-w-[1240px] text-left border-collapse text-[13px] tabular-nums table-fixed">
                 {/* 2-Tier Header chuẩn working paper kiểm toán */}
                 <thead className="sticky top-0 bg-[#F8FAFC] text-slate-700 font-bold border-b border-slate-300 z-20 shadow-2xs text-[11.5px] select-none">
                   <tr>
@@ -1104,7 +1114,8 @@ export const VatReferenceDrawer: React.FC<VatReferenceDrawerProps> = ({
                     </td>
                   </tr>
                 </tfoot>
-              </table>
+                </table>
+              </>
             ) : activeTab === 'SUPPLEMENTAL_HISTORY' ? (
               /* ─── VIEW 3: LỊCH SỬ BỔ SUNG (BẢNG TỔNG KẾT REVIEW TOÀN BỘ BS) ─── */
               <div className="flex-1 flex flex-col p-6 space-y-4">

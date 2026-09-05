@@ -524,7 +524,7 @@ export const App: React.FC = () => {
           let yearFilings: TaxFiling[] = [];
           const res = await window.taxPortalAPI.startScan({
             year: y,
-            taxType: selectedTaxType,
+            taxType: scanRangeMode.startsWith('MULTI') ? 'ALL' : selectedTaxType,
             limitToToday: y === currentYear,
             customRange: resolveScanDateRange(y, 'FULL_YEAR')
           });
@@ -1572,7 +1572,11 @@ export const App: React.FC = () => {
         <div className="flex-1 min-h-0">
           {viewMode === 'FILINGS' ? (
             <InventoryTable
-              filings={filings}
+              filings={
+                scanRangeMode.startsWith('MULTI')
+                  ? filings
+                  : filings.filter(f => !f.periodNormalized?.year || f.periodNormalized.year === selectedYear)
+              }
               selectedIds={selectedIds}
               onToggleSelect={id => {
                 const next = new Set(selectedIds);

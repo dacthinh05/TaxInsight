@@ -184,6 +184,39 @@ export class TthcDetailParser {
       }
     });
 
+    // Hỗ trợ trang chi tiết kết xuất dưới dạng form ẩn (như mẫu 05/QTT-TNCN và một số mẫu quyết toán):
+    // <form id="downloadForm" method="POST" action="/tthc/downloadhoso"><input name="mahoso" value="..."/></form>
+    if (!filingAction) {
+      $('form').each((_, element) => {
+        if (filingAction) return;
+        const $form = $(element);
+        const action = ($form.attr('action') || '').toLowerCase();
+        const formId = ($form.attr('id') || '').toLowerCase();
+        if (action.includes('downloadhoso') || formId.includes('downloadform') || formId.includes('downloadhoso')) {
+          const rawMaHoSo =
+            $form.find('input[name="mahoso"], input[name="maHoSo"], input[name="idTKhai"]').val() ||
+            $form.find('[data-mahoso]').attr('data-mahoso') ||
+            $form.attr('data-mahoso');
+          const cleanMaHoSo = String(rawMaHoSo || '').trim();
+          if (cleanMaHoSo && this.isSafeIdentifier(cleanMaHoSo)) {
+            const isThueDienTu = this.parseBooleanAttribute(
+              ($form.find('input[name="isThueDienTu"]').val() as string) ||
+              $form.attr('data-is-tdt')
+            );
+            const loaiTraCuu =
+              ($form.find('input[name="loaiTraCuu"]').val() as string) ||
+              $form.attr('data-loai-tra-cuu');
+            filingAction = {
+              kind: 'filing',
+              maHoSo: cleanMaHoSo,
+              isThueDienTu,
+              loaiTraCuu
+            };
+          }
+        }
+      });
+    }
+
     $('[data-mahs], [data-ma-hs]').each((_, element) => {
       const $element = $(element);
       const maHso = this.firstAttribute($element, ['data-mahs', 'data-ma-hs']);

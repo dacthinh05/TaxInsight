@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PortalSession } from '../src/main/portal/PortalSession';
 import { TaxPortalClient } from '../src/main/portal/TaxPortalClient';
+import { TthcDetailParser } from '../src/main/portal/TthcDetailParser';
 
 describe('Tax filing download payload decoding', () => {
   const extract = (value: unknown) => {
@@ -91,5 +92,22 @@ describe('Tax filing download payload decoding', () => {
       fileType: 'application/zip',
       content: sampleZipBase64
     });
+  });
+
+  it('extracts download action from hidden downloadForm matching 05/QTT-TNCN format', () => {
+    const html = `
+      <html>
+        <head><meta name="_csrf" content="test-token"/></head>
+        <body>
+          <form id="downloadForm" method="POST" action="/tthc/downloadhoso">
+            <input name="mahoso" value="000.701.18.G12-260331-27110000310611" type="hidden"/>
+          </form>
+        </body>
+      </html>
+    `;
+    const parsed = TthcDetailParser.parse(html, 'https://dichvucong.gdt.gov.vn/tthc/tchs/files/detail/123');
+    expect(parsed.filingAction).toBeDefined();
+    expect(parsed.filingAction?.kind).toBe('filing');
+    expect(parsed.filingAction?.maHoSo).toBe('000.701.18.G12-260331-27110000310611');
   });
 });

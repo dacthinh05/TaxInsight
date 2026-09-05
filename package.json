@@ -1,6 +1,6 @@
 {
   "name": "tax-insight",
-  "version": "3.1.4",
+  "version": "3.1.5",
   "description": "Tải và quản lý hồ sơ, tờ khai thuế điện tử",
   "main": "dist-electron/main/main.js",
   "scripts": {

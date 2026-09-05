@@ -282,7 +282,13 @@ export class TaxScanEngine extends EventEmitter {
             }
           );
 
-          this.allFilings = TaxFilingParser.deduplicateFilings(this.allFilings, qResolution.filings);
+          const targetFilings = qRange.label.includes('QTT')
+            ? qResolution.filings.filter(f => {
+                const pYear = f.periodNormalized?.year;
+                return !pYear || pYear === rangeYear;
+              })
+            : qResolution.filings;
+          this.allFilings = TaxFilingParser.deduplicateFilings(this.allFilings, targetFilings);
 
           if (qResolution.needSplitRange || !qResolution.isFullyRetrieved) {
             needSplitToMonths = true;
