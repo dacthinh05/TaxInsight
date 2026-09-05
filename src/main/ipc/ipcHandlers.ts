@@ -1327,6 +1327,7 @@ export function setupIpcHandlers(
                   soTaiKhoan: item.bankAccount,
                   downloadAvailable: item.canDownload
                 }));
+                legacyFilingClient.adoptDseSession(dseSessionId, res?.currentUrl, res?.tableHtml);
                 auditLogger.log('SUCCESS', `Trích xuất ${records.length} GNT và đồng bộ phiên eTax thành công`);
                 settleAuthWindow({ success: true, paymentSlips: records, sessionId: dseSessionId });
                 return;
@@ -1334,6 +1335,7 @@ export function setupIpcHandlers(
             }
 
             if (isManualStateReady) {
+              legacyFilingClient.adoptDseSession(dseSessionId, res?.currentUrl, res?.tableHtml);
               auditLogger.log('SUCCESS', 'Xác thực phiên eTax thành công qua cửa sổ trình duyệt', `Session: ${dseSessionId.slice(0, 6)}***`);
               settleAuthWindow({ success: true, sessionId: dseSessionId });
             }
@@ -1958,6 +1960,19 @@ export function setupIpcHandlers(
       return { success: true, options };
     } catch (err: any) {
       return { success: false, options: [], error: err.message };
+    }
+  });
+
+  ipcMain.handle('legacyFiling:openAuthWindow', async (_event, options?: { forceInteractive?: boolean }) => {
+    try {
+      const res = await triggerPaymentAuthWindow({ forceInteractive: options?.forceInteractive ?? true });
+      if (res && res.success && res.sessionId) {
+        legacyFilingClient.adoptDseSession(res.sessionId);
+      }
+      return res;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
     }
   });
 

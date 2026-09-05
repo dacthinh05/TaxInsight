@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { checkMissingPeriods, resolveScanDateRange } from '../shared/dateUtils';
+import { checkMissingPeriods, isFilingRejected, resolveScanDateRange } from '../shared/dateUtils';
 import {
   AppViewMode,
   AuditLogEntry,
@@ -859,9 +859,17 @@ export const App: React.FC = () => {
       return;
     }
 
-    setSelectedIds(new Set(failedFilings.map(f => f.id)));
+    const retryableFilings = failedFilings.filter(f => !isFilingRejected(f));
+    const rejectedCount = failedFilings.length - retryableFilings.length;
 
-    await startDownloadBatch(failedFilings);
+    if (retryableFilings.length === 0) {
+      alert(`Toàn bộ ${rejectedCount} hồ sơ lỗi đều do Cơ quan Thuế từ chối tiếp nhận (Không chấp nhận). Cổng Thuế không cấp gói tệp tờ khai cho hồ sơ bị từ chối. Vui lòng chọn bản nộp lại được chấp nhận.`);
+      return;
+    }
+
+    setSelectedIds(new Set(retryableFilings.map(f => f.id)));
+
+    await startDownloadBatch(retryableFilings);
   };
 
   // Xuất Excel danh sách hồ sơ thuế

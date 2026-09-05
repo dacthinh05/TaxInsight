@@ -520,9 +520,27 @@ export class DownloadManager extends EventEmitter {
               } catch (etaxFallbackErr: unknown) {
                 const fallbackObj = etaxFallbackErr as { code?: string; status?: number; response?: { status?: number }; message?: string } | null | undefined;
                 const isRateLimit = fallbackObj?.code === 'RATE_LIMIT' || fallbackObj?.status === 429 || fallbackObj?.response?.status === 429 || String(fallbackObj?.message).includes('429');
-                const isAuth = fallbackObj?.code === 'SESSION_EXPIRED' || fallbackObj?.code === 'AUTH_REQUIRED';
-                if (isRateLimit || isAuth || fallbackObj?.code === 'CANCELLED') {
+                const isAuth =
+                  fallbackObj?.code === 'SESSION_EXPIRED' ||
+                  fallbackObj?.code === 'AUTH_REQUIRED' ||
+                  fallbackObj?.code === 'AUTH_EXPIRED' ||
+                  fallbackObj?.code === 'SSO_INTERACTIVE_REQUIRED' ||
+                  String(fallbackObj?.message).includes('chưa được xác thực') ||
+                  String(fallbackObj?.message).includes('hết phiên') ||
+                  String(fallbackObj?.message).includes('operation=unknown');
+                if (isRateLimit || fallbackObj?.code === 'CANCELLED') {
                   throw etaxFallbackErr;
+                }
+                if (isAuth) {
+                  const authErr = new Error(
+                    'Tờ khai lưu trữ trên Cổng Thuế Điện Tử (eTax). Vui lòng xác thực kết nối eTax để tải tệp XML gốc từ Cơ quan Thuế.'
+                  );
+                  Object.assign(authErr, {
+                    code: 'ETAX_AUTH_REQUIRED',
+                    errorCode: 'ETAX_AUTH_REQUIRED',
+                    isEtaxAuthRequired: true
+                  });
+                  throw authErr;
                 }
                 const dvcMsg = dvcErr instanceof Error ? dvcErr.message : String(dvcErr);
                 const etaxMsg = etaxFallbackErr instanceof Error ? etaxFallbackErr.message : String(etaxFallbackErr);
@@ -738,9 +756,7 @@ export class DownloadManager extends EventEmitter {
                 });
               }
             }, cooldownMs);
-            if (typeof this.rateLimitCooldownTimer.unref === 'function') {
-              this.rateLimitCooldownTimer.unref();
-            }
+
           }
           this.emit('paused', this.getSummary());
           this.emitProgress(item);
@@ -775,9 +791,11 @@ export class DownloadManager extends EventEmitter {
         item.error = this.formatDownloadError(err);
         item.filing.downloadStatus = 'FAILED';
         item.filing.downloadError = item.error;
-        this.emit('item_failed', { item, error: item.error });
+        if (err?.code === 'ETAX_AUTH_REQUIRED' || err?.errorCode === 'ETAX_AUTH_REQUIRED' || err?.isEtaxAuthRequired) {
+          item.filing.downloadErrorCode = 'ETAX_AUTH_REQUIRED';
+        }
+        this.emit('item_failed', { item, error: item.error, errorCode: item.filing.downloadErrorCode });
       }
-
       this.emitProgress(item);
     }
   }
@@ -788,10 +806,13 @@ export class DownloadManager extends EventEmitter {
    */
   private formatDownloadError(err: any): string {
     let base = err?.message || 'Lỗi khi tải';
-    const attempts = err?.attempts;
-    if (!Array.isArray(attempts) || attempts.length === 0) return base;
+    if (err?.code === 'ETAX_AUTH_REQUIRED' || err?.errorCode === 'ETAX_AUTH_REQUIRED') {
+      return base;
+    }
     if (base.includes('đã bị dừng bởi người dùng')) base = 'Không nhận được file từ Cổng Thuế';
-    const parts = attempts.slice(-8).map(a =>
+    const attempts = Array.isArray(err?.attempts) ? err.attempts : [];
+    if (attempts.length === 0) return base;
+    const parts = attempts.slice(-8).map((a: { label?: string; status?: number | string; ms?: number; head?: string }) =>
       `${a.label}=${a.status || 'khong-PT'}/${a.ms}ms${a.head ? `«${String(a.head).slice(0, 70)}»` : ''}`
     );
     return `${base} || Thu: ${parts.join(' ;; ')}`;

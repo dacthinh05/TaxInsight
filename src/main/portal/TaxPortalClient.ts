@@ -1783,10 +1783,10 @@ export class TaxPortalClient {
     abortSignal?: AbortSignal,
     filingMeta?: { isThueDienTu?: boolean; loaiTraCuu?: string; maTkhai?: string; altIds?: string[]; period?: string; declarationCode?: string }
   ): Promise<DownloadResponsePayload> {
-    const candidates = Array.from(new Set([
+    const candidates = this.generateIdVariants(
       String(maHoSo || '').trim(),
-      ...(filingMeta?.altIds || []).map(value => String(value || '').trim())
-    ].filter(Boolean))).slice(0, 5);
+      (filingMeta?.altIds || []).map(value => String(value || '').trim())
+    ).slice(0, 8);
 
     if (!candidates.length) {
       throw this.createDownloadWorkflowError(
@@ -1813,12 +1813,14 @@ export class TaxPortalClient {
       try {
         return await this.downloadHoSoSingle(candidate, abortSignal, filingMeta);
       } catch (err: any) {
-        lastError = err;
         if (abortSignal?.aborted) throw err;
         const code = String(err?.code || '');
         const status = Number(err?.httpStatus || err?.response?.status || 0);
         if (!fallbackCodes.has(code) || status === 401 || status === 429 || code === 'SESSION_EXPIRED' || code === 'RATE_LIMIT') {
           throw err;
+        }
+        if (!lastError || code === 'FILING_VALIDATION_FAILED') {
+          lastError = err;
         }
       }
     }

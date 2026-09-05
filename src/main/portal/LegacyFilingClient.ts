@@ -338,6 +338,12 @@ export class LegacyFilingClient {
         return;
       }
 
+      // Điểm ngắt an toàn: Đã tới trang chủ eTax -> dừng auto-submit form để thực hiện jump module an toàn
+      if (op === 'corpIndexProc' || op === 'corporateHomeProc' || op === 'retailIndexProc') {
+        this.logCheckpoint('LEGACY_04_ETAX_AUTHENTICATED', 'PASS', `Đã chạm trang chủ eTax (${op})`);
+        return;
+      }
+
       const clean = (u: string) => u.replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
       let nextUrl = '';
       let nextMethod: 'GET' | 'POST' = 'GET';
@@ -421,6 +427,15 @@ export class LegacyFilingClient {
       }
 
       if (!nextUrl) {
+        if (this.currentFormState.dseSessionId) {
+          try {
+            await this.openLookupModule(activeGeneration);
+            if (this.isLookupReady()) {
+              this.logCheckpoint('LEGACY_05_LOOKUP_SCREEN_OPENED', 'PASS', 'Đã mở màn hình Tra cứu tờ khai qua openLookupModule fallback');
+              break;
+            }
+          } catch {}
+        }
         if (process.env.TAXINSIGHT_DEBUG_DUMP === '1') {
           try {
             const dumpPath = path.resolve(process.cwd(), 'data', 'legacy-form-changed.html');
@@ -1095,6 +1110,20 @@ export class LegacyFilingClient {
     );
   }
 
+  public adoptDseSession(sessionId: string, currentUrl?: string, html?: string): void {
+    this.currentFormState.dseSessionId = sessionId;
+    if (currentUrl) this.currentFormState.actionUrl = currentUrl;
+    if (html) {
+      const parsed = EtaxFormStateParser.parse(html);
+      this.mergeFormState(parsed);
+      if (parsed.formOptions?.length) {
+        this.availableFormOptions = parsed.formOptions;
+      }
+    }
+    this.isEtaxInitialized = true;
+    const suffix = sessionId.slice(-4);
+    this.logCheckpoint('LEGACY_04_ETAX_AUTHENTICATED', 'PASS', `Session adopted: ***${suffix}`);
+  }
   private assertLookupState(): void {
     if (!this.currentFormState.dseSessionId) {
       const error = new Error('Phiên eTax chưa được xác thực hoặc đã hết hạn.');

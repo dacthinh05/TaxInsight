@@ -7,6 +7,7 @@ import {
   Clock,
   Copy,
   Download,
+  ExternalLink,
   Eye,
   FileCode,
   FileText,
@@ -20,6 +21,7 @@ import {
   X,
   XCircle
 } from 'lucide-react';
+import { isFilingRejected } from '../../shared/dateUtils';
 import { DownloadQueueItem, DownloadSummary, TaxFiling } from '../../shared/types';
 
 interface DownloadProgressModalProps {
@@ -54,6 +56,11 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
   const [activeTab, setActiveTab] = useState<FilterTab>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const rejectedCount = useMemo(() => {
+    return queue.filter(item => item.status === 'FAILED' && isFilingRejected(item.filing)).length;
+  }, [queue]);
+  const retryableCount = Math.max(0, summary.failed - rejectedCount);
+
 
   const processedCount = summary.completed + summary.existing + summary.failed;
   const percent = summary.total > 0 ? Math.min(100, Math.round((processedCount / summary.total) * 100)) : 0;
@@ -311,20 +318,26 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
               <div className="flex items-center space-x-2.5">
                 <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
                 <div className="text-xs text-red-800">
-                  <span className="font-bold">Có {summary.failed} hồ sơ chưa tải được.</span>
+                  <span className="font-bold">
+                    Có {summary.failed} hồ sơ chưa tải được
+                    {retryableCount > 0 && rejectedCount > 0 && ` (${retryableCount} có thể thử lại, ${rejectedCount} bị CQT từ chối)`}
+                    {retryableCount === 0 && rejectedCount > 0 && ` (Đều do Cơ quan Thuế từ chối tiếp nhận)`}.
+                  </span>
                   <span className="text-red-700 block sm:inline sm:ml-1.5">
-                    (Do Cổng Thuế quá tải hoặc chưa sẵn sàng file). Bạn có thể bấm Thử lại để hệ thống tải tiếp.
+                    {retryableCount > 0
+                      ? 'Bạn có thể bấm Thử lại để tải tiếp các file này.'
+                      : 'Hồ sơ bị từ chối không có gói tệp trên Cổng Thuế. Vui lòng chọn bản nộp lại được chấp nhận.'}
                   </span>
                 </div>
               </div>
-              {onRetryFailed && (
+              {onRetryFailed && retryableCount > 0 && (
                 <button
                   type="button"
                   onClick={onRetryFailed}
                   className="px-3 py-1.5 bg-red-700 hover:bg-red-800 active:bg-red-900 text-white font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-colors shadow-xs shrink-0 cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Thử lại {summary.failed} file lỗi</span>
+                  <span>Thử lại {retryableCount} file lỗi</span>
                 </button>
               )}
             </div>
@@ -369,9 +382,6 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
               <div className="py-12 text-center text-slate-400">
                 <FileCode className="w-10 h-10 text-slate-300 mx-auto mb-2 opacity-60" />
                 <p className="text-xs font-semibold text-slate-600">Không tìm thấy hồ sơ nào trong mục này</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  {searchQuery ? 'Thử tìm kiếm với từ khóa khác' : 'Chọn tab khác để xem danh sách hồ sơ'}
-                </p>
               </div>
             ) : (
               filteredQueue.map((item, index) => {
@@ -382,7 +392,14 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
                 const isFailed = item.status === 'FAILED';
                 const isPending = item.status === 'PENDING';
                 const isCancelled = item.status === 'CANCELLED';
-
+                const errText = String(item.error || filing.downloadError || '');
+                const isEtaxAuthNeeded = isFailed && (
+                  filing.downloadErrorCode === 'ETAX_AUTH_REQUIRED' ||
+                  errText.includes('Cổng Thuế Điện Tử') ||
+                  errText.includes('eTax') ||
+                  errText.includes('xác thực') ||
+                  errText.includes('operation=unknown')
+                );
                 const procedureCode = filing.declarationCode || filing.procedureCode || 'TKHAI';
                 const period = filing.period || filing.periodNormalized?.raw || 'Chưa rõ kỳ';
 
@@ -460,9 +477,15 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
                             </span>
                           )}
                           {isFailed && (
-                            <span className="text-[10px] font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">
-                              Thất bại
-                            </span>
+                            isEtaxAuthNeeded ? (
+                              <span className="text-[10px] font-semibold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
+                                Cần xác thực eTax
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">
+                                Thất bại
+                              </span>
+                            )
                           )}
                           {isPending && (
                             <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
@@ -504,9 +527,15 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
                           )}
 
                           {isFailed && (item.error || filing.downloadError) && (
-                            <span className="text-red-700 font-medium break-all bg-red-100/60 px-1.5 py-0.5 rounded border border-red-200/60">
-                              Lý do: {item.error || filing.downloadError}
-                            </span>
+                            isEtaxAuthNeeded ? (
+                              <div className="font-medium px-2.5 py-1.5 rounded-lg border text-[11px] leading-relaxed w-full mt-1.5 text-amber-900 bg-amber-50/90 border-amber-200">
+                                <div>💡 <strong>Tờ khai lưu trên Cổng Thuế Điện Tử (eTax):</strong> Cổng DVC không lưu trữ gói tệp này. Nhấn <strong>&quot;Mở eTax để tải&quot;</strong> bên phải để xác thực phiên và tải file XML gốc về máy.</div>
+                              </div>
+                            ) : (
+                              <span className="text-red-700 font-medium break-all bg-red-100/60 px-1.5 py-0.5 rounded border border-red-200/60">
+                                Lý do: {item.error || filing.downloadError}
+                              </span>
+                            )
                           )}
                         </div>
                       </div>
@@ -514,7 +543,26 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
 
                     {/* Right: Actions */}
                     <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
-                      {isFailed && onRetrySingle && (
+                      {isFailed && isEtaxAuthNeeded && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (window.taxPortalAPI?.openLegacyFilingAuthWindow) {
+                              const res = await window.taxPortalAPI.openLegacyFilingAuthWindow({ forceInteractive: true });
+                              if (res && res.success && onRetrySingle) {
+                                onRetrySingle(filing);
+                              }
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-lg text-xs flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs whitespace-nowrap"
+                          title="Mở eTax để xác thực phiên làm việc và tự động tải lại tệp này"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>Mở eTax để tải</span>
+                        </button>
+                      )}
+
+                      {isFailed && !isEtaxAuthNeeded && onRetrySingle && !isFilingRejected(filing) && (
                         <button
                           type="button"
                           onClick={() => onRetrySingle(filing)}
@@ -524,6 +572,11 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
                           <RotateCcw className="w-3 h-3" />
                           <span>Thử lại</span>
                         </button>
+                      )}
+                      {isFailed && isFilingRejected(filing) && (
+                        <span className="px-2 py-0.5 bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-medium rounded-md">
+                          CQT từ chối
+                        </span>
                       )}
 
                       {(isCompleted || isExisting) && onPreviewFiling && (

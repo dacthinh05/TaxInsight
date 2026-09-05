@@ -60,6 +60,7 @@ export interface TaxFiling {
   // ─────────────────────────────────────────────────────────────────────────
   downloadStatus?: 'PENDING' | 'DOWNLOADING' | 'COMPLETED' | 'EXISTING' | 'FAILED' | 'CANCELLED';
   downloadError?: string;
+  downloadErrorCode?: string;
   downloadedFiles?: {
     xml?: string;
     pdf?: string;

@@ -99,6 +99,8 @@ const api = {
     ipcRenderer.invoke('legacyFiling:getCheckpoint', params),
   clearLegacyFilingCheckpoint: (params: { taxCode: string; yearFrom: number; yearTo: number }) =>
     ipcRenderer.invoke('legacyFiling:clearCheckpoint', params),
+  openLegacyFilingAuthWindow: (options?: { forceInteractive?: boolean }) =>
+    ipcRenderer.invoke('legacyFiling:openAuthWindow', options),
   onLegacyFilingProgress: (callback: (data: any) => void) => {
     const handler = (_: any, data: any) => callback(data);
     ipcRenderer.on('legacyFiling:progress', handler);

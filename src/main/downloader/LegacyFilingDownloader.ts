@@ -425,9 +425,7 @@ export class LegacyFilingDownloader extends EventEmitter {
           });
         }
       }, cooldownMs);
-      if (typeof this.rateLimitCooldownTimer.unref === 'function') {
-        this.rateLimitCooldownTimer.unref();
-      }
+
       this.emitProgress(item);
       return;
     }
