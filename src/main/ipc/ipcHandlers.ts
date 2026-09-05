@@ -1000,7 +1000,6 @@ export function setupIpcHandlers(
                 const isDvcLoginPage = /\\/tthc\\/(?:home)?login(?:[/?#]|$)/i.test(currentUrl);
                 const isPluginGatePage = pageBody.includes('kiểm tra bản cập nhật') ||
                   pageBody.includes('ứng dụng ký điện tử') ||
-                  currentUrl.includes('retailIndexProc') ||
                   pageBody.includes('checkInstall');
                 const isDvcSsoEndpoint = currentUrl.includes('/tthc/sso/redirect-to-service');
                 const targetFromDate = ${JSON.stringify(targetFrom)};

@@ -125,7 +125,7 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
                 <option value="FULL_YEAR">Cả năm {selectedYear} (01/01 → 31/12/{selectedYear})</option>
               </>
             ) : (
-              <option value="FULL_YEAR">Cả năm {selectedYear} (Bao gồm T01/{selectedYear + 1})</option>
+              <option value="FULL_YEAR">Cả năm {selectedYear} (01/01 → 31/12/{selectedYear})</option>
             )}
           </optgroup>
           <optgroup label="Theo Quý">

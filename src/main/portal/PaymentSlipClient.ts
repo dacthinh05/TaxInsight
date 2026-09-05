@@ -87,7 +87,7 @@ export class PaymentSlipClient {
       if (this.isEtaxInitialized) return true;
       if (
         Boolean(sessionId.sessionId && sessionId.processorId && sessionId.applicationId !== undefined && String(sessionId.applicationId).trim() !== '') &&
-        ['corpIndexProc', 'corporateHomeProc', 'corpJumpProc'].includes(String(sessionId.operationName || ''))
+        ['corpIndexProc', 'corporateHomeProc', 'corpJumpProc', 'retailIndexProc'].includes(String(sessionId.operationName || ''))
       ) {
         return true;
       }
@@ -127,7 +127,7 @@ export class PaymentSlipClient {
       !this.currentDseState.sessionId ||
       this.currentDseState.applicationId === undefined ||
       String(this.currentDseState.applicationId).trim() === '' ||
-      !['corpIndexProc', 'corporateHomeProc', 'corpJumpProc'].includes(
+      !['corpIndexProc', 'corporateHomeProc', 'corpJumpProc', 'retailIndexProc'].includes(
         String(this.currentDseState.operationName || '')
       )
     ) {
@@ -458,7 +458,7 @@ export class PaymentSlipClient {
 
       const op = this.currentDseState.operationName;
       // Đã tới trang đích đáng tin -> dừng, KHÔNG auto-submit thêm gì nữa
-      if (op === 'corpQueryTaxProc' || op === 'corpIndexProc' || op === 'corporateHomeProc') break;
+      if (op === 'corpQueryTaxProc' || op === 'corpIndexProc' || op === 'corporateHomeProc' || op === 'retailIndexProc') break;
       const clean = (u: string) => u.replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
       let nextUrl = '';
       let nextMethod: 'GET' | 'POST' = 'GET';
@@ -467,16 +467,13 @@ export class PaymentSlipClient {
         /goProc\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/i
       );
       const isPluginGate =
-        op === 'retailIndexProc' ||
+        !observedGoProc &&
         (
-          !observedGoProc &&
+          currentHtml.includes('Hệ thống đang thực hiện kiểm tra bản cập nhật') ||
+          currentHtml.includes('Vui lòng cài đặt ứng dụng ký điện tử') ||
           (
-            currentHtml.includes('Hệ thống đang thực hiện kiểm tra bản cập nhật') ||
-            currentHtml.includes('Vui lòng cài đặt ứng dụng ký điện tử') ||
-            (
-              currentHtml.includes('checkInstall(8768)') &&
-              /kiểm tra (?:plugin|ứng dụng|bản cập nhật)/i.test(currentHtml)
-            )
+            currentHtml.includes('checkInstall(8768)') &&
+            /kiểm tra (?:plugin|ứng dụng|bản cập nhật)/i.test(currentHtml)
           )
         );
 
