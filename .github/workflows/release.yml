@@ -1,4 +1,3 @@
- ```yaml
 name: Release TaxInsight
 
 on:
@@ -51,4 +50,3 @@ jobs:
             release/*.blockmap
             release/latest.yml
           if-no-files-found: warn
- ```                                                                    
