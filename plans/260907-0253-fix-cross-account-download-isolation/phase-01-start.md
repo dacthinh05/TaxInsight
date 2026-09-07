@@ -47,5 +47,5 @@ Ensure every `TaxFiling` carries the `taxCode` of the company it was scanned und
    ```
 
 ## Success Criteria
-- [ ] `TaxFiling.taxCode` is populated on all scanned filings.
-- [ ] Calling `download:start` with filings belonging to a different MST is safely caught and blocked before hitting Cổng DVC.
+- [x] `TaxFiling.taxCode` is populated on all scanned filings.
+- [x] Calling `download:start` with filings belonging to a different MST is safely caught and blocked before hitting Cổng DVC.

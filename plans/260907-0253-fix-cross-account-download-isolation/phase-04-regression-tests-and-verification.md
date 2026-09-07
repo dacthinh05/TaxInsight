@@ -34,6 +34,6 @@ Add unit and regression tests defending cross-account isolation, verify clean bu
 5. Commit and push to GitHub.
 
 ## Success Criteria
-- [ ] 100% tests pass.
-- [ ] Production build succeeds.
-- [ ] Both portable and setup executables generated in `D:\Desktop\TaxInsight-Releases-Final\`.
+- [x] 100% tests pass.
+- [x] Production build succeeds.
+- [x] Both portable and setup executables generated in `D:\Desktop\TaxInsight-Releases-Final\`.

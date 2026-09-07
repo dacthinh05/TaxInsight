@@ -46,6 +46,6 @@ Ensure switching accounts, logging out, or re-authenticating completely cleans u
 4. In `checkExistingCheckpoint` in `App.tsx`, verify that loaded checkpoint belongs strictly to the requested tax code.
 
 ## Success Criteria
-- [ ] Switching accounts instantly closes and cancels any in-flight download queue.
-- [ ] Logging out resets all selection and download modal states.
-- [ ] No download queue items survive across different tax code sessions.
+- [x] Switching accounts instantly closes and cancels any in-flight download queue.
+- [x] Logging out resets all selection and download modal states.
+- [x] No download queue items survive across different tax code sessions.

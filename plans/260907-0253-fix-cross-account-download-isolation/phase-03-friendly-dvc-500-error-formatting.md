@@ -31,4 +31,4 @@ Improve error reporting when Cổng DVC returns HTTP 500 («Đã có lỗi hệ 
    Provide clear guidance explaining that Cổng Thuế returned a 500 rejection for this filing ID.
 
 ## Success Criteria
-- [ ] Error messages displayed in the download modal are clear, polite, and explain the reason (server rejection/unreleased file) instead of showing internal timing and raw HTML snippets.
+- [x] Error messages displayed in the download modal are clear, polite, and explain the reason (server rejection/unreleased file) instead of showing internal timing and raw HTML snippets.
