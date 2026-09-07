@@ -81,6 +81,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         }
       });
     }
+    // Tự động kiểm tra bản cập nhật mới ngay khi mở màn hình đăng nhập
+    onCheckUpdate?.();
   }, []);
 
   const loadCaptcha = async () => {
@@ -281,6 +283,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <h1 className="text-2xl font-black tracking-tight text-slate-900 font-sans">TaxInsight</h1>
             <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-teal-50 text-teal-700 border border-teal-200">v{appVersion}</span>
           </div>
+          {updateInfo && (updateInfo.state === 'AVAILABLE' || updateInfo.state === 'DOWNLOADED') && (
+            <div className="mt-2.5 flex items-center justify-center">
+              <button
+                type="button"
+                onClick={onOpenUpdate}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-full text-xs font-bold shadow-sm transition-transform hover:scale-105 cursor-pointer"
+              >
+                <DownloadCloud className="w-3.5 h-3.5 shrink-0" />
+                <span>Có bản cập nhật v{updateInfo.latestVersion} mới! Bấm để cập nhật</span>
+              </button>
+            </div>
+          )}
           <p className="text-xs text-slate-500 font-medium mt-1">
             Hệ Thống Soát Xét & Đối Chiếu Hồ Sơ Thuế Điện Tử
           </p>

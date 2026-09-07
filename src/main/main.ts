@@ -195,7 +195,7 @@ function createWindow() {
 
   const updater = AppUpdater.getInstance();
   updater.setMainWindow(mainWindow);
-
+  updater.startAutoCheckTimer(3000);
   const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {

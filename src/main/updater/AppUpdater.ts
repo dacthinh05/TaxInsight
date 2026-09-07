@@ -16,8 +16,8 @@ export class AppUpdater {
   private static instance: AppUpdater | null = null;
   private currentStatus: UpdateInfo;
   private mainWindow: BrowserWindow | null = null;
-  private autoCheckTimer: ReturnType<typeof setTimeout> | null = null;
-  private autoCheckInterval: ReturnType<typeof setInterval> | null = null;
+  private autoCheckTimer?: NodeJS.Timeout;
+  private autoCheckInterval?: NodeJS.Timeout;
   private checkPromise: Promise<UpdateInfo> | null = null;
 
   constructor() {
@@ -188,12 +188,19 @@ export class AppUpdater {
    * Khởi động bộ đếm tự động kiểm tra bản cập nhật: check lần đầu sau delayMs
    * rồi lặp lại MỖI GIỜ (trước đây chỉ check đúng 1 lần duy nhất sau khi mở app)
    */
-  public startAutoCheckTimer(_delayMs = 4000) {
-    if (this.autoCheckTimer) clearTimeout(this.autoCheckTimer);
-    if (this.autoCheckInterval) clearInterval(this.autoCheckInterval);
-    // Tự động kiểm tra đã tắt theo yêu cầu người dùng
-  }
+  public startAutoCheckTimer(delayMs = 4000) {
+    clearTimeout(this.autoCheckTimer);
+    clearInterval(this.autoCheckInterval);
+    // Tự động kiểm tra cập nhật sau khi app khởi động
+    this.autoCheckTimer = setTimeout(() => {
+      this.checkForUpdates().catch(() => {});
+    }, delayMs);
 
+    // Định kỳ kiểm tra mỗi 4 giờ
+    this.autoCheckInterval = setInterval(() => {
+      this.checkForUpdates().catch(() => {});
+    }, 4 * 60 * 60 * 1000);
+  }
   private fetchLatestGithubRelease(): Promise<GithubLatestRelease> {
     return new Promise((resolve, reject) => {
       const request = https.get(
