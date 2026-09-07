@@ -87,6 +87,10 @@
       {
         "from": "resources/tessdata",
         "to": "resources/tessdata"
+      },
+      {
+        "from": "resources/models",
+        "to": "resources/models"
       }
     ],
     "win": {

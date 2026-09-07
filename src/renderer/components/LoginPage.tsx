@@ -105,7 +105,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               .then(solveRes => {
                 if (reqId !== captchaReqRef.current) return;
                 if (solveRes?.success && solveRes.text) {
-                  setCaptchaText(solveRes.text);
+                  const clean = solveRes.text.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                  setCaptchaText(clean);
                   setIsAutoSolved(true);
                 }
               })
@@ -197,6 +198,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setIsSubmitting(true);
     setErrorMessage(null);
     setErrorField(null);
+    let currentCaptcha = captchaText.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
     try {
       if (rememberTaxCode) {
@@ -205,21 +207,29 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         localStorage.removeItem('saved_mst');
       }
 
-      if (window.taxPortalAPI) {
-        const res = useSavedPassword
+      const MAX_ATTEMPTS = 4;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        if (!window.taxPortalAPI) break;
+
+        const rawRes = useSavedPassword
           ? await window.taxPortalAPI.loginSaved({
               taxCode: cleanMst,
-              captcha: captchaText.trim()
+              captcha: currentCaptcha
             })
           : await window.taxPortalAPI.login({
               taxCode: cleanMst,
               password,
-              captcha: captchaText.trim()
+              captcha: currentCaptcha
             });
+        const res = rawRes as {
+          success?: boolean;
+          message?: string;
+          errorField?: 'CAPTCHA' | 'PASSWORD' | 'TAX_CODE' | 'SESSION' | 'GENERAL';
+          adjustedTaxCode?: string;
+        };
 
         if (res.success) {
-          const finalMst = (res as any).adjustedTaxCode || cleanMst;
-          // Lưu tài khoản & mật khẩu (nếu người dùng tùy chọn lưu)
+          const finalMst = res.adjustedTaxCode || cleanMst;
           if (window.taxPortalAPI.saveAccount) {
             await window.taxPortalAPI.saveAccount({
               taxCode: finalMst,
@@ -228,38 +238,55 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             });
           }
           onLoginSuccess(finalMst);
-        } else {
-          const field = (res as any).errorField || 'GENERAL';
-          setErrorMessage(res.message || 'Đăng nhập không thành công, vui lòng kiểm tra lại thông tin');
-          setErrorField(field);
+          return;
+        }
 
-          // Tải mã CAPTCHA mới
-          loadCaptcha();
+        const field = res.errorField || 'GENERAL';
+        const isCaptchaError = field === 'CAPTCHA' || Boolean(res.message && res.message.toLowerCase().includes('captcha'));
 
-          if (field === 'CAPTCHA') {
-            setTimeout(() => {
-              captchaInputRef.current?.focus();
-              captchaInputRef.current?.select();
-            }, 100);
-          } else if (field === 'PASSWORD') {
-            setTimeout(() => {
-              passwordInputRef.current?.focus();
-              passwordInputRef.current?.select();
-            }, 100);
-          } else if (field === 'TAX_CODE') {
-            setTimeout(() => {
-              taxCodeInputRef.current?.focus();
-            }, 100);
+        // Tự động nhận diện lại và thử lại nếu sai mã CAPTCHA
+        if (isCaptchaError && attempt < MAX_ATTEMPTS) {
+          setErrorMessage(`Mã CAPTCHA chưa khớp. Đang tự động nhận diện lại và thử đăng nhập (lần ${attempt + 1}/${MAX_ATTEMPTS})...`);
+          setErrorField('CAPTCHA');
+
+          const newCaptcha = await window.taxPortalAPI.getCaptcha();
+          if (newCaptcha?.success && newCaptcha.imageBase64) {
+            setCaptchaImg(newCaptcha.imageBase64);
+            const solveRes = await window.taxPortalAPI.solveCaptcha(newCaptcha.imageBase64).catch(() => null);
+            const clean = (solveRes?.text || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            if (clean && clean.length === 5) {
+              currentCaptcha = clean;
+              setCaptchaText(clean);
+              await new Promise<void>(resolve => { setTimeout(resolve, 600); });
+              continue; // Thử đăng nhập lại với mã mới
+            }
           }
         }
-      } else {
-        setErrorMessage('Không kết nối được tiến trình chính để xác thực đăng nhập.');
-        setErrorField('GENERAL');
+        setErrorMessage(res.message || 'Đăng nhập không thành công, vui lòng kiểm tra lại thông tin');
+        setErrorField(field);
+        loadCaptcha();
+
+        if (field === 'CAPTCHA') {
+          setTimeout(() => {
+            captchaInputRef.current?.focus();
+            captchaInputRef.current?.select();
+          }, 100);
+        } else if (field === 'PASSWORD') {
+          setTimeout(() => {
+            passwordInputRef.current?.focus();
+            passwordInputRef.current?.select();
+          }, 100);
+        } else if (field === 'TAX_CODE') {
+          setTimeout(() => {
+            taxCodeInputRef.current?.focus();
+          }, 100);
+        }
+        break;
       }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Lỗi kết nối khi đăng nhập');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setErrorMessage(message || 'Lỗi kết nối khi đăng nhập');
       setErrorField('GENERAL');
-      loadCaptcha();
     } finally {
       setIsSubmitting(false);
     }
@@ -541,12 +568,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   type="text"
                   value={captchaText}
                   onChange={e => {
-                    setCaptchaText(e.target.value);
+                    const clean = e.target.value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                    setCaptchaText(clean);
                     setIsAutoSolved(false);
                     if (errorField === 'CAPTCHA') setErrorField(null);
                   }}
-                  placeholder="Nhập mã xác thực"
-                  className={`w-full px-3.5 py-2 rounded-lg text-sm font-mono tracking-widest uppercase focus:outline-none transition-all ${
+                  placeholder="Nhập 5 ký tự"
+                  maxLength={6}
+                  className={`w-full px-3.5 py-2.5 rounded-lg text-sm transition-all focus:outline-none ${
                     errorField === 'CAPTCHA'
                       ? 'bg-amber-50/40 border-2 border-amber-500 ring-2 ring-amber-200 font-bold text-amber-950'
                       : 'bg-slate-50 border border-slate-300 focus:ring-2 focus:ring-teal-600 focus:bg-white'
@@ -554,7 +583,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   required
                 />
               </div>
-
               {/* Khối hiển thị ảnh CAPTCHA */}
               <div
                 onClick={loadCaptcha}
