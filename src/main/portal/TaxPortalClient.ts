@@ -1207,7 +1207,9 @@ export class TaxPortalClient {
             signal: abortSignal,
             headers: {
               ...baseHeaders,
+              'Origin': 'https://dichvucong.gdt.gov.vn',
               'Referer': detailUrl,
+              'X-Requested-With': 'XMLHttpRequest',
               'Content-Type': 'application/json;charset=UTF-8',
               'Accept': 'application/json, text/plain, */*'
             },
@@ -1280,7 +1282,9 @@ export class TaxPortalClient {
             signal: abortSignal,
             headers: {
               ...baseHeaders,
+              'Origin': 'https://dichvucong.gdt.gov.vn',
               'Referer': detailUrl,
+              'X-Requested-With': 'XMLHttpRequest',
               'Content-Type': 'application/json;charset=UTF-8',
               'Accept': 'application/json, text/plain, */*'
             },
