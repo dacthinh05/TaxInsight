@@ -30,6 +30,7 @@ export interface PeriodNormalized {
 
 export interface TaxFiling {
   id: string; // idTKhai or maHoSo unique ID
+  taxCode?: string; // Mã số thuế sở hữu hồ sơ (chống lẫn lộn giữa các tài khoản)
   procedureCode?: string; // Mã thủ tục / mã nghiệp vụ (vd: 1.008346, 1.007014)
   declarationCode?: string; // Mã tờ khai (vd: 01/GTGT, 05/KK-TNCN, 03/TNDN)
   title: string; // Tên thủ tục / tiêu đề hồ sơ

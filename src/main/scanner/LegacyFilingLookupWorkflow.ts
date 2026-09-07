@@ -233,6 +233,7 @@ export class LegacyFilingLookupWorkflow extends EventEmitter {
           // Dedupe và ghi nhận hồ sơ
           let newRecordsInPage = 0;
           for (const f of pageResult.filings) {
+            if (!f.taxCode) f.taxCode = params.taxpayerId;
             if (!seenMessageIdsThisYear.has(f.id)) {
               seenMessageIdsThisYear.add(f.id);
               discoveredIds.add(f.id);

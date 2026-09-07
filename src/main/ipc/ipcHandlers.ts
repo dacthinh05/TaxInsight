@@ -460,7 +460,9 @@ export function setupIpcHandlers(
   ipcMain.handle('auth:logout', async () => {
     scanEngine.cancelScan();
     downloadManager.cancel();
+    downloadManager.clearQueue();
     legacyFilingWorkflow.cancel();
+    legacyFilingDownloader.cancel();
     legacyFilingDownloader.clearQueue();
     vatEngine.cancel();
     pitEngine.cancel();
@@ -588,13 +590,25 @@ export function setupIpcHandlers(
       if (!safeFilings.length) {
         return { success: false, error: 'Danh sách tải không có hồ sơ hợp lệ.' };
       }
-      // Hỗ trợ tải mọi hồ sơ (kể cả hỗn hợp hiện hành và năm cũ)
+
+      // Bảo vệ cách ly đa tài khoản: kiểm tra MST sở hữu của từng hồ sơ
+      const ownFilings = safeFilings.filter(f => !f.taxCode || normalizeMstKey(f.taxCode) === normalizeMstKey(sessionTaxCode));
+      const mismatchedCount = safeFilings.length - ownFilings.length;
+      if (mismatchedCount > 0) {
+        auditLogger.log('WARNING', `Đã loại bỏ ${mismatchedCount} hồ sơ thuộc MST khác khỏi đợt tải của ${sessionTaxCode}`);
+      }
+      if (!ownFilings.length) {
+        return {
+          success: false,
+          error: `Các hồ sơ đã chọn không thuộc về mã số thuế đang đăng nhập (${sessionTaxCode}). Vui lòng bấm Quét lại để cập nhật danh sách hồ sơ của doanh nghiệp hiện tại.`
+        };
+      }
 
       downloadManager.setContext(currentTaxCode, currentYear);
-      downloadManager.enqueueFilings(safeFilings, currentTaxCode, currentYear);
+      downloadManager.enqueueFilings(ownFilings, currentTaxCode, currentYear);
       await downloadManager.start();
 
-      auditLogger.log('INFO', `Bắt đầu tải hàng loạt ${safeFilings.length} hồ sơ`);
+      auditLogger.log('INFO', `Bắt đầu tải hàng loạt ${ownFilings.length} hồ sơ`);
       return { success: true, summary: downloadManager.getSummary() };
     } catch (err: any) {
       return { success: false, error: err.message };

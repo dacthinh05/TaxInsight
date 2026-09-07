@@ -47,6 +47,7 @@ import { ApiInspectorEntry, UpdateInfo } from '../shared/types';
 
 type PaymentQueryStatus = 'CONNECTED_WITH_DATA' | 'CONNECTED_NO_DATA' | 'QUERY_FAILED' | 'NOT_QUERIED';
 
+const normalizeMstKey = (val: string): string => String(val || '').replace(/-ql$/i, '').trim().toLowerCase();
 export const App: React.FC = () => {
   const [session, setSession] = useState<UserSessionInfo>({ isLoggedIn: false });
   const [viewMode, setViewMode] = useState<AppViewMode>('FILINGS');
@@ -404,7 +405,21 @@ export const App: React.FC = () => {
     // Bỏ qua response cũ nếu user đã đổi năm sang nơi khác trong lúc chờ
     if (reqId !== checkpointReqId.current) return;
     if (res.success && res.data && res.data.filings?.length > 0) {
-      setAvailableCheckpoint(res.data);
+      // Đảm bảo checkpoint chỉ thuộc về MST hiện tại
+      const rawTaxCode = String(res.data.taxCode || '').trim();
+      if (rawTaxCode && normalizeMstKey(rawTaxCode) !== normalizeMstKey(taxCode)) {
+        setAvailableCheckpoint(null);
+        return;
+      }
+      const matchingFilings = (res.data.filings as TaxFiling[]).map(f => ({
+        ...f,
+        taxCode: f.taxCode || taxCode
+      })).filter(f => !f.taxCode || normalizeMstKey(f.taxCode) === normalizeMstKey(taxCode));
+      if (matchingFilings.length > 0) {
+        setAvailableCheckpoint({ ...res.data, filings: matchingFilings });
+      } else {
+        setAvailableCheckpoint(null);
+      }
     } else {
       setAvailableCheckpoint(null);
     }
@@ -456,6 +471,10 @@ export const App: React.FC = () => {
     setSession(info);
     setFilingsByYear({});
     setFilings([]);
+    setSelectedIds(new Set());
+    setDownloadSummary(null);
+    setIsDownloadModalOpen(false);
+    setAvailableCheckpoint(null);
     setVatSummary(null);
     setIsVatDrawerOpen(false);
     setPitSummary(null);
@@ -1369,11 +1388,16 @@ export const App: React.FC = () => {
 
   const handleLogout = async () => {
     if (window.taxPortalAPI) {
+      await window.taxPortalAPI.cancelDownload?.().catch(() => {});
       await window.taxPortalAPI.logout();
     }
     setSession({ isLoggedIn: false });
     setFilingsByYear({});
     setFilings([]);
+    setSelectedIds(new Set());
+    setDownloadSummary(null);
+    setIsDownloadModalOpen(false);
+    setAvailableCheckpoint(null);
     setVatSummary(null);
     setIsVatDrawerOpen(false);
     setPitSummary(null);
@@ -1388,11 +1412,16 @@ export const App: React.FC = () => {
 
   const handleSwitchAccount = async (targetMst: string) => {
     if (window.taxPortalAPI) {
+      await window.taxPortalAPI.cancelDownload?.().catch(() => {});
       await window.taxPortalAPI.logout();
     }
     setSession({ isLoggedIn: false });
     setFilingsByYear({});
     setFilings([]);
+    setSelectedIds(new Set());
+    setDownloadSummary(null);
+    setIsDownloadModalOpen(false);
+    setAvailableCheckpoint(null);
     setVatSummary(null);
     setIsVatDrawerOpen(false);
     setPitSummary(null);
@@ -1747,6 +1776,7 @@ export const App: React.FC = () => {
           initialTaxCode={session.taxCode || ''}
           onLoginSuccess={async newTaxCode => {
             setIsAuthRequiredModalOpen(false);
+            const isSameAccount = !session.taxCode || normalizeMstKey(newTaxCode) === normalizeMstKey(session.taxCode);
             const info: UserSessionInfo = {
               isLoggedIn: true,
               taxCode: newTaxCode,
@@ -1755,8 +1785,22 @@ export const App: React.FC = () => {
             };
             setSession(info);
 
-            if (window.taxPortalAPI && (isDownloadModalOpen || isDownloadingActive)) {
-              await resumeActiveDownload();
+            if (isSameAccount) {
+              if (window.taxPortalAPI && (isDownloadModalOpen || isDownloadingActive)) {
+                await resumeActiveDownload();
+              }
+            } else {
+              // Khác mã số thuế: hủy hàng đợi cũ và dọn dẹp modal để không tải nhầm hồ sơ tài khoản trước
+              if (window.taxPortalAPI) {
+                await cancelActiveDownload();
+              }
+              setDownloadSummary(null);
+              setIsDownloadModalOpen(false);
+              setSelectedIds(new Set());
+              setFilingsByYear({});
+              setFilings([]);
+              checkExistingCheckpoint(newTaxCode, selectedYear);
+              checkExistingGntCheckpoint(newTaxCode, selectedYear);
             }
           }}
           onCancel={async () => {

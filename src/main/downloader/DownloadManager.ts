@@ -546,12 +546,12 @@ export class DownloadManager extends EventEmitter {
                 const etaxMsg = etaxFallbackErr instanceof Error ? etaxFallbackErr.message : String(etaxFallbackErr);
                 console.warn(`[DownloadManager] Fallback eTax thất bại cho ${item.filingId}: ${etaxMsg}`);
                 const isFromDvc = item.filing.source !== 'dvc-etax-html';
-                const combined = new Error(
-                  isFromDvc
-                    ? `Cổng DVC chưa mở gói tệp [${item.filingId}] (${dvcMsg}). Đã thử tìm dự phòng trên eTax nhưng không có (${etaxMsg}).`
-                    : `${dvcMsg} (Fallback eTax: ${etaxMsg})`
-                );
+                const combinedMsg = isFromDvc
+                  ? `Cổng DVC chưa mở gói tệp [${item.filingId}] (${dvcMsg}). Đã thử tìm dự phòng trên eTax nhưng không có (${etaxMsg}).`
+                  : `${dvcMsg} (Fallback eTax: ${etaxMsg})`;
+                const combined = new Error(combinedMsg);
                 Object.assign(combined, dvcErr);
+                combined.message = combinedMsg;
                 throw combined;
               }
             } else {
@@ -810,6 +810,13 @@ export class DownloadManager extends EventEmitter {
       return base;
     }
     if (base.includes('đã bị dừng bởi người dùng')) base = 'Không nhận được file từ Cổng Thuế';
+
+    // Nhận diện thân thiện khi Cổng Thuế trả về HTTP 500 hoặc Request Rejected
+    const rawText = String(base) + ' ' + (Array.isArray(err?.attempts) ? err.attempts.map((a: any) => a?.head || '').join(' ') : '');
+    if (rawText.includes('500') && (rawText.includes('lỗi hệ thống') || rawText.includes('Request Rejected') || rawText.includes('DETAIL-download-contract=500'))) {
+      return 'Cổng Thuế từ chối truy cập (HTTP 500). Hồ sơ có thể thuộc về MST khác hoặc gói file chưa sẵn sàng trên Cổng DVC; vui lòng quét lại danh sách.';
+    }
+
     const attempts = Array.isArray(err?.attempts) ? err.attempts : [];
     if (attempts.length === 0) return base;
     const parts = attempts.slice(-8).map((a: { label?: string; status?: number | string; ms?: number; head?: string }) =>

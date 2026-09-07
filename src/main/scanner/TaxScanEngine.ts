@@ -133,7 +133,12 @@ export class TaxScanEngine extends EventEmitter {
         );
 
         this.allFilings = resolution.filings;
-
+        const sessionTaxCode = typeof (this.client as any).getSession === 'function' ? (this.client as any).getSession()?.getSessionInfo()?.taxCode : undefined;
+        if (sessionTaxCode) {
+          for (const f of this.allFilings) {
+            if (!f.taxCode) f.taxCode = sessionTaxCode;
+          }
+        }
         let resultFilings = this.allFilings;
         if (selectedTaxType !== 'ALL') {
           resultFilings = this.allFilings.filter(f => f.taxType === selectedTaxType);
@@ -450,7 +455,12 @@ export class TaxScanEngine extends EventEmitter {
         level: 'YEAR',
         status: 'COMPLETED'
       });
-
+      const sessionTaxCode = typeof (this.client as any).getSession === 'function' ? (this.client as any).getSession()?.getSessionInfo()?.taxCode : undefined;
+      if (sessionTaxCode) {
+        for (const f of this.allFilings) {
+          if (!f.taxCode) f.taxCode = sessionTaxCode;
+        }
+      }
       return {
         filings: this.allFilings,
         missingVatCheck,
