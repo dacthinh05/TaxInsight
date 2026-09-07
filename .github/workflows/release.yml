@@ -39,7 +39,7 @@ jobs:
       - name: Package with electron-builder and publish to GitHub Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win -p always -c.directories.output=release
+        run: npx electron-builder --win -p always --config.directories.output=release
 
       - name: Upload build artifacts (backup)
         uses: actions/upload-artifact@v4
