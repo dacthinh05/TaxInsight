@@ -41,6 +41,7 @@ import { LicenseManager } from '../licensing/LicenseManager';
 import { MachineIdProvider } from '../licensing/MachineIdProvider';
 import { AppUpdater } from '../updater/AppUpdater';
 import { ApiInspectorManager } from '../inspector/ApiInspectorManager';
+import { LocalXmlIngestionEngine } from '../files/LocalXmlIngestionEngine';
 
 export function setupIpcHandlers(
   session: PortalSession,
@@ -747,6 +748,70 @@ export function setupIpcHandlers(
       return { success: true, path: finalPath };
     } catch (err: any) {
       return { success: false, error: err.message };
+    }
+  });
+
+  // ─── IMPORT TỆP & THƯ MỤC XML OFFLINE ─────────────────────────────────
+  ipcMain.handle('file:importLocalXmlFiles', async (_event, { filePaths }: { filePaths: string[] }) => {
+    try {
+      if (!Array.isArray(filePaths) || filePaths.length === 0) {
+        return { success: false, importedCount: 0, skippedCount: 0, taxCodes: [], years: [], filings: [], errors: ['Danh sách đường dẫn tệp rỗng'] };
+      }
+      const baseDir = fileOrganizer.getBaseDir();
+      const result = await LocalXmlIngestionEngine.ingestFiles(filePaths, baseDir);
+      auditLogger.log('SUCCESS', `Nhập ${result.importedCount} tệp XML từ máy tính`, `MST: ${result.primaryTaxCode || 'N/A'}`);
+      return result;
+    } catch (err: any) {
+      return { success: false, importedCount: 0, skippedCount: 0, taxCodes: [], years: [], filings: [], errors: [err.message] };
+    }
+  });
+
+  ipcMain.handle('file:importLocalXmlFolder', async (_event, { folderPath }: { folderPath: string }) => {
+    try {
+      const baseDir = fileOrganizer.getBaseDir();
+      const result = await LocalXmlIngestionEngine.ingestDirectory(folderPath, baseDir);
+      auditLogger.log('SUCCESS', `Nhập ${result.importedCount} tệp XML từ thư mục: ${folderPath}`);
+      return result;
+    } catch (err: any) {
+      return { success: false, importedCount: 0, skippedCount: 0, taxCodes: [], years: [], filings: [], errors: [err.message] };
+    }
+  });
+
+  ipcMain.handle('file:selectLocalXmlFolder', async () => {
+    try {
+      const res = await dialog.showOpenDialog({
+        properties: ['openDirectory'],
+        title: 'Chọn thư mục chứa các file XML / ZIP tờ khai thuế'
+      });
+      if (res.canceled || !res.filePaths[0]) {
+        return { success: false, canceled: true, importedCount: 0, skippedCount: 0, taxCodes: [], years: [], filings: [] };
+      }
+      const selectedDir = res.filePaths[0];
+      const baseDir = fileOrganizer.getBaseDir();
+      const result = await LocalXmlIngestionEngine.ingestDirectory(selectedDir, baseDir);
+      auditLogger.log('SUCCESS', `Đã chọn thư mục và nhập ${result.importedCount} tệp XML`, selectedDir);
+      return { ...result, selectedDir };
+    } catch (err: any) {
+      return { success: false, importedCount: 0, skippedCount: 0, taxCodes: [], years: [], filings: [], errors: [err.message] };
+    }
+  });
+
+  ipcMain.handle('file:selectLocalXmlFiles', async () => {
+    try {
+      const res = await dialog.showOpenDialog({
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'Hồ sơ thuế XML & ZIP', extensions: ['xml', 'zip'] }],
+        title: 'Chọn các file XML hoặc file ZIP tờ khai thuế'
+      });
+      if (res.canceled || !res.filePaths.length) {
+        return { success: false, canceled: true, importedCount: 0, skippedCount: 0, taxCodes: [], years: [], filings: [] };
+      }
+      const baseDir = fileOrganizer.getBaseDir();
+      const result = await LocalXmlIngestionEngine.ingestFiles(res.filePaths, baseDir);
+      auditLogger.log('SUCCESS', `Đã chọn và nhập ${result.importedCount} tệp XML từ máy tính`);
+      return result;
+    } catch (err: any) {
+      return { success: false, importedCount: 0, skippedCount: 0, taxCodes: [], years: [], filings: [], errors: [err.message] };
     }
   });
 

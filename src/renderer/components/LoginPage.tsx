@@ -368,7 +368,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           {/* Ô Mã Số Thuế + Dropdown Chọn Nhanh MST */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-semibold text-slate-700">
+              <label htmlFor="taxCode" className="text-xs font-semibold text-slate-700">
                 Mã số thuế / Tài khoản
               </label>
               {savedAccounts.length > 0 && (
@@ -382,10 +382,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </button>
               )}
             </div>
-
             <div className="relative">
-              <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <User className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
               <input
+                id="taxCode"
                 ref={taxCodeInputRef}
                 type="text"
                 value={taxCode}
@@ -420,10 +420,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
               {/* Menu Popup Chọn Nhanh MST */}
               {isAccountMenuOpen && savedAccounts.length > 0 && (
-                <div className="absolute left-0 right-0 top-10.5 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl py-1 text-xs max-h-56 overflow-y-auto animate-fadeIn divide-y divide-slate-100">
-                  <div className="px-3 py-1.5 bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                    TÀI KHOẢN ĐÃ LƯU TRÊN MÁY NÀY
-                  </div>
+                <>
+                  <div
+                    className="fixed inset-0 z-20"
+                    onClick={() => setIsAccountMenuOpen(false)}
+                  />
+                  <div className="absolute left-0 right-0 top-10.5 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl py-1 text-xs max-h-56 overflow-y-auto animate-fadeIn divide-y divide-slate-100">
+                    <div className="px-3 py-1.5 bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      TÀI KHOẢN ĐÃ LƯU TRÊN MÁY NÀY
+                    </div>
                   {savedAccounts.map(acc => (
                     <div
                       key={acc.taxCode}
@@ -452,7 +457,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                       </button>
                     </div>
                   ))}
-                </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -460,7 +466,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           {/* Ô Mật Khẩu */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-semibold text-slate-700">
+              <label htmlFor="password" className="text-xs font-semibold text-slate-700">
                 Mật khẩu
               </label>
               {useSavedPassword && !password && (
@@ -471,10 +477,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               )}
             </div>
             <div className="relative">
-              <Lock className={`w-4 h-4 absolute left-3 top-3 transition-colors ${
+              <Lock className={`w-4 h-4 absolute left-3 top-3 pointer-events-none transition-colors ${
                 useSavedPassword && !password ? 'text-emerald-600' : 'text-slate-400'
               }`} />
               <input
+                id="password"
                 ref={passwordInputRef}
                 type={showPassword ? 'text' : 'password'}
                 value={useSavedPassword && !password ? '••••••••••••' : password}
@@ -495,7 +502,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     e.target.select();
                   }
                 }}
-                placeholder="••••••••••••"
+                onClick={e => {
+                  if (useSavedPassword && !password) {
+                    (e.target as HTMLInputElement).select();
+                  }
+                }}
+                onKeyDown={e => {
+                  if (useSavedPassword && !password) {
+                    if (e.key === 'Backspace' || e.key === 'Delete') {
+                      e.preventDefault();
+                      setPassword('');
+                      setUseSavedPassword(false);
+                    }
+                  }
+                }}
+                placeholder={useSavedPassword && !password ? '••••••••••••' : 'Nhập mật khẩu'}
                 className={`w-full pl-9 pr-10 py-2 rounded-lg text-sm transition-all focus:outline-none ${
                   errorField === 'PASSWORD'
                     ? 'bg-red-50/30 border-2 border-red-500 ring-2 ring-red-200 text-slate-900'
@@ -543,10 +564,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             )}
           </div>
 
-          {/* CAPTCHA SECTION */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-semibold text-slate-700">
+            <div className="flex items-center justify-between mb-1">
+              <label htmlFor="captcha" className="text-xs font-semibold text-slate-700">
                 Mã xác thực (CAPTCHA)
               </label>
               {isLoadingCaptcha ? (
@@ -564,6 +584,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <div className="flex items-center space-x-2">
               <div className="relative flex-1">
                 <input
+                  id="captcha"
                   ref={captchaInputRef}
                   type="text"
                   value={captchaText}

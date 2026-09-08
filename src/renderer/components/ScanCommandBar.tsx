@@ -1,5 +1,5 @@
-import React from 'react';
-import { BarChart3, CreditCard, FileSpreadsheet, FileText, History, Loader2, Search } from 'lucide-react';
+import React, { useState } from 'react';
+import { BarChart3, ChevronDown, CreditCard, FileCode2, FileSpreadsheet, FileText, Folder, FolderUp, History, Loader2, Search } from 'lucide-react';
 import { AppViewMode, FilingSourceMode, TaxType } from '../../shared/types';
 import { YearSelector } from './YearSelector';
 export interface GntCommandStats {
@@ -39,6 +39,9 @@ interface ScanCommandBarProps {
   legacyFormOptions?: { value: string; text: string }[];
   onlyMissing?: boolean;
   onOnlyMissingChange?: (checked: boolean) => void;
+  // ── Nhập tệp / thư mục XML offline từ máy tính ──
+  onSelectXmlFolder?: () => void;
+  onSelectXmlFiles?: () => void;
 }
 
 const fmtVnd = (n: number) => n.toLocaleString('vi-VN');
@@ -68,13 +71,15 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
   onLegacyMaTKhaiChange,
   legacyFormOptions = [],
   onlyMissing = false,
-  onOnlyMissingChange
+  onOnlyMissingChange,
+  onSelectXmlFolder,
+  onSelectXmlFiles
 }) => {
   const currentYear = new Date().getFullYear();
+  const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
   const years = Array.from({ length: 21 }, (_, index) => currentYear - index);
   const isCurrentYear = selectedYear === currentYear;
   const isGntMode = viewMode === 'PAYMENT_SLIPS';
-  const isLegacyMode = viewMode === 'FILINGS' && sourceMode === 'DVC_ETAX_LEGACY';
 
   const todayStr = `${String(new Date().getDate()).padStart(2, '0')}/${String(new Date().getMonth() + 1).padStart(2, '0')}/${currentYear}`;
 
@@ -236,6 +241,61 @@ export const ScanCommandBar: React.FC<ScanCommandBarProps> = ({
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
             <span>Xuất Excel</span>
           </button>
+        )}
+
+        {/* Nút Nhập XML Offline từ máy tính */}
+        {!isGntMode && (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsImportMenuOpen(!isImportMenuOpen)}
+              className="h-9 px-3 bg-slate-50 border border-slate-300 hover:bg-slate-100 active:bg-slate-200 text-slate-700 font-semibold rounded-lg flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs btn-press text-xs"
+              title="Nhập thư mục hoặc tệp XML có sẵn trên máy để phân tích không cần mạng"
+            >
+              <FolderUp className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+              <span>Nhập XML máy</span>
+              <ChevronDown className="w-3 h-3 text-slate-400 ml-0.5" />
+            </button>
+
+            {isImportMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setIsImportMenuOpen(false)}
+                />
+                <div className="absolute right-0 top-10.5 z-50 bg-white border border-slate-200 rounded-xl shadow-xl py-1 w-56 text-xs divide-y divide-slate-100 animate-fadeIn">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsImportMenuOpen(false);
+                      onSelectXmlFolder?.();
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-teal-50 flex items-center space-x-2.5 text-slate-700 hover:text-teal-900 transition-colors cursor-pointer"
+                  >
+                    <Folder className="w-4 h-4 text-amber-500 shrink-0" />
+                    <div>
+                      <div className="font-semibold">Chọn cả thư mục XML...</div>
+                      <div className="text-[10.5px] text-slate-400">Quét đệ quy toàn bộ file con</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsImportMenuOpen(false);
+                      onSelectXmlFiles?.();
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-teal-50 flex items-center space-x-2.5 text-slate-700 hover:text-teal-900 transition-colors cursor-pointer"
+                  >
+                    <FileCode2 className="w-4 h-4 text-teal-600 shrink-0" />
+                    <div>
+                      <div className="font-semibold">Chọn các file XML / ZIP...</div>
+                      <div className="text-[10.5px] text-slate-400">Chọn 1 hoặc nhiều file</div>
+                    </div>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         {/* Primary CTA — Nổi bật, sắc nét và đồng bộ chiều cao h-8.5 */}

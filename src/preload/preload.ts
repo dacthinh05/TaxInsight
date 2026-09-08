@@ -37,6 +37,14 @@ const api = {
   openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', { url }),
   exportExcel: (params: { filings: TaxFiling[]; year: number }) =>
     ipcRenderer.invoke('file:exportExcel', params),
+  importLocalXmlFiles: (params: { filePaths: string[] }) =>
+    ipcRenderer.invoke('file:importLocalXmlFiles', params),
+  importLocalXmlFolder: (params: { folderPath: string }) =>
+    ipcRenderer.invoke('file:importLocalXmlFolder', params),
+  selectLocalXmlFolder: () =>
+    ipcRenderer.invoke('file:selectLocalXmlFolder'),
+  selectLocalXmlFiles: () =>
+    ipcRenderer.invoke('file:selectLocalXmlFiles'),
 
   // Phân hệ Phân Tích Chuyên Sâu GTGT (VAT Analytics)
   analyzeVat: (params: { filings: TaxFiling[] }) =>

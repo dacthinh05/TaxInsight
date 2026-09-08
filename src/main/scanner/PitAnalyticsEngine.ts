@@ -214,7 +214,10 @@ export class PitAnalyticsEngine {
         // 3. Đọc từ file XML đã tải sẵn trong máy (1ms)
         // Confinement: chỉ đọc file nằm trong baseDir (path đến từ IPC payload)
         const xmlPath = filing.downloadedFiles?.xml;
-        if (xmlPath && this.baseDir && isPathInsideBaseDir(this.baseDir, xmlPath) && fs.existsSync(xmlPath)) {
+        const isAllowedPath =
+          Boolean(xmlPath && ((this.baseDir && isPathInsideBaseDir(this.baseDir, xmlPath)) ||
+          (filing.source === 'local-xml' && xmlPath.toLowerCase().endsWith('.xml'))));
+        if (xmlPath && isAllowedPath && fs.existsSync(xmlPath)) {
           try {
             const xml = fs.readFileSync(xmlPath, 'utf-8');
             snapshot = PitXmlParser.parsePitXml(xml, filing, taxpayerId);

@@ -54,7 +54,7 @@ export interface TaxFiling {
   // biến thể với cả 2 khóa maHoSo/idTKhai — trước đây chỉ giữ 1 ID nên nửa số
   // hồ sơ (TNCN, GTGT kỳ cũ) tải không được.
   altIds?: string[];
-  source?: 'dvc-ho-so' | 'dvc-etax-html';
+  source?: 'dvc-ho-so' | 'dvc-etax-html' | 'local-xml';
   messageId?: string;
   noticeAvailable?: boolean;
   noticeId?: string;
@@ -421,4 +421,33 @@ export interface AdminAuthStatus {
   isAdmin: boolean;
   isDev: boolean;
   unlockedAt?: string;
+}
+
+export interface LocalXmlFileEntry {
+  filePath: string;
+  fileName: string;
+  taxCode: string;
+  taxpayerName?: string;
+  declarationCode: string;
+  title: string;
+  taxType: TaxType;
+  period: string;
+  periodNormalized?: PeriodNormalized;
+  filingType: FilingType;
+  supplementalNo?: number;
+  submittedAt?: string;
+  status?: string;
+  filing: TaxFiling;
+}
+
+export interface LocalXmlImportResult {
+  success: boolean;
+  importedCount: number;
+  skippedCount: number;
+  taxCodes: string[];
+  primaryTaxCode?: string;
+  years: number[];
+  primaryYear?: number;
+  filings: TaxFiling[];
+  errors?: string[];
 }

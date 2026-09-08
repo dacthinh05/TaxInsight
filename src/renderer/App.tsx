@@ -15,8 +15,10 @@ import {
   ScanProgressState,
   TaxFiling,
   TaxType,
-  UserSessionInfo
+  UserSessionInfo,
+  LocalXmlImportResult
 } from '../shared/types';
+import { CheckCircle2, FileCheck2, FolderDown, FolderInput, Loader2, UploadCloud, X } from 'lucide-react';
 import { AppHeader } from './components/AppHeader';
 import { AuditLogDrawer } from './components/AuditLogDrawer';
 import { AuthRequiredModal } from './components/AuthRequiredModal';
@@ -58,6 +60,11 @@ export const App: React.FC = () => {
   // Chi tiết C1-02 (tiểu mục NDKT từng dòng) phục vụ đối chiếu nghĩa vụ thuế ↔ GNT
   const [gntDetails, setGntDetails] = useState<Map<string, PaymentSlipDetail>>(new Map());
   const [paymentQueryStatus, setPaymentQueryStatus] = useState<PaymentQueryStatus>('NOT_QUERIED');
+  // ── Nhập tệp / thư mục XML offline từ máy tính & Drag and Drop ──
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isImportingXml, setIsImportingXml] = useState(false);
+  const [importResultModal, setImportResultModal] = useState<LocalXmlImportResult | null>(null);
+  const dragCounter = useRef(0);
   const gntDetailReqId = useRef(0);
   const failedGntDetailIds = useRef<Set<string>>(new Set());
   // ── Thanh lệnh GNT (đã nén vào ScanCommandBar): tìm kiếm + modal thống kê ──
@@ -417,6 +424,10 @@ export const App: React.FC = () => {
       })).filter(f => !f.taxCode || normalizeMstKey(f.taxCode) === normalizeMstKey(taxCode));
       if (matchingFilings.length > 0) {
         setAvailableCheckpoint({ ...res.data, filings: matchingFilings });
+        setFilings(matchingFilings);
+        setFilingsByYear(prev => ({ ...prev, [year]: matchingFilings }));
+        setMissingVat(checkMissingPeriods(matchingFilings, year, 'VAT', true));
+        setMissingPit(checkMissingPeriods(matchingFilings, year, 'PIT', true));
       } else {
         setAvailableCheckpoint(null);
       }
@@ -1512,10 +1523,159 @@ export const App: React.FC = () => {
     await window.taxPortalAPI.exportPaymentSlipsExcel({ paymentSlips: slips, year: selectedYear });
   };
 
+  // ── Xử lý kết quả nhập XML Offline từ máy tính ────────────────────────
+  const handleProcessImportResult = (res: LocalXmlImportResult) => {
+    if (res.success && res.filings.length > 0) {
+      // Nếu chưa có MST hoặc MST phát hiện khác hiện tại -> tự động cập nhật phiên
+      if (res.primaryTaxCode) {
+        setSession(prev => ({
+          ...prev,
+          taxCode: res.primaryTaxCode,
+          isLoggedIn: true
+        }));
+      }
+
+      const targetYear = res.primaryYear || selectedYear;
+      if (res.primaryYear && res.primaryYear !== selectedYear) {
+        setSelectedYear(res.primaryYear);
+      }
+
+      const newFilings = res.filings;
+      setFilings(prev => {
+        const map = new Map<string, TaxFiling>();
+        for (const f of newFilings) map.set(f.id, f);
+        for (const f of prev) {
+          if (!map.has(f.id)) map.set(f.id, f);
+        }
+        return Array.from(map.values());
+      });
+
+      // Nhóm theo năm để lưu trữ vào filingsByYear
+      const grouped: Record<number, TaxFiling[]> = {};
+      for (const f of newFilings) {
+        const y = f.periodNormalized?.year || targetYear;
+        if (!grouped[y]) grouped[y] = [];
+        grouped[y].push(f);
+      }
+
+      setFilingsByYear(prev => {
+        const updated = { ...prev };
+        for (const [yStr, list] of Object.entries(grouped)) {
+          const y = Number(yStr);
+          const map = new Map<string, TaxFiling>();
+          for (const f of list) map.set(f.id, f);
+          for (const f of (updated[y] || [])) {
+            if (!map.has(f.id)) map.set(f.id, f);
+          }
+          updated[y] = Array.from(map.values());
+        }
+        return updated;
+      });
+
+      setMissingVat(checkMissingPeriods(newFilings, targetYear, 'VAT', true));
+      setMissingPit(checkMissingPeriods(newFilings, targetYear, 'PIT', true));
+      setImportResultModal(res);
+    } else {
+      alert(res.errors?.join('\n') || 'Không tìm thấy tệp tờ khai thuế XML hợp lệ trong tệp hoặc thư mục đã chọn.');
+    }
+  };
+
+  const handleSelectXmlFolder = async () => {
+    if (!window.taxPortalAPI?.selectLocalXmlFolder) return;
+    setIsImportingXml(true);
+    try {
+      const res = await window.taxPortalAPI.selectLocalXmlFolder();
+      if (res && !res.canceled) {
+        handleProcessImportResult(res);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Lỗi khi chọn thư mục XML: ${msg}`);
+    } finally {
+      setIsImportingXml(false);
+    }
+  };
+
+  const handleSelectXmlFiles = async () => {
+    if (!window.taxPortalAPI?.selectLocalXmlFiles) return;
+    setIsImportingXml(true);
+    try {
+      const res = await window.taxPortalAPI.selectLocalXmlFiles();
+      if (res && !res.canceled) {
+        handleProcessImportResult(res);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Lỗi khi chọn tệp XML: ${msg}`);
+    } finally {
+      setIsImportingXml(false);
+    }
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDraggingOver) setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setIsDraggingOver(false);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setIsDraggingOver(false);
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    const paths: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i] as File & { path?: string };
+      if (file.path) paths.push(file.path);
+    }
+
+    if (paths.length > 0 && window.taxPortalAPI?.importLocalXmlFiles) {
+      setIsImportingXml(true);
+      try {
+        const res = await window.taxPortalAPI.importLocalXmlFiles({ filePaths: paths });
+        handleProcessImportResult(res);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        alert(`Lỗi khi đọc file kéo thả: ${msg}`);
+      } finally {
+        setIsImportingXml(false);
+      }
+    }
+  };
+
   const isDownloadingActive = downloadSummary?.isRunning || (downloadSummary?.remaining || 0) > 0;
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-100 font-sans antialiased text-slate-800 overflow-hidden select-none">
+    <div
+      className="flex flex-col h-screen w-screen bg-slate-100 font-sans antialiased text-slate-800 overflow-hidden select-none relative"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {!session.isLoggedIn ? (
         <LoginPage
           onLoginSuccess={handleLoginSuccess}
@@ -1588,9 +1748,9 @@ export const App: React.FC = () => {
           legacyFormOptions={legacyFormOptions}
           onlyMissing={onlyMissing}
           onOnlyMissingChange={setOnlyMissing}
+          onSelectXmlFolder={handleSelectXmlFolder}
+          onSelectXmlFiles={handleSelectXmlFiles}
           // ── Chế độ GNT: gộp search + tóm tắt + Thống kê/Xuất Excel vào 1 thanh lệnh ──
-          gntSearchValue={gntSearchQuery}
-          onGntSearchChange={setGntSearchQuery}
           gntStats={gntCommandStats}
           onOpenGntStats={handleBuildGntStats}
           onExportGntExcel={() => handleExportSlipsExcel(filteredPaymentSlips)}
@@ -1845,6 +2005,104 @@ export const App: React.FC = () => {
         isOpen={isApiInspectorOpen}
         onClose={() => setIsApiInspectorOpen(false)}
       />
+
+      {/* ── Drag & Drop Overlay khi kéo tệp từ ngoài vào ── */}
+      {isDraggingOver && (
+        <div className="fixed inset-0 z-[100] bg-teal-950/80 backdrop-blur-xs flex items-center justify-center p-6 select-none animate-fadeIn pointer-events-none">
+          <div className="border-3 border-dashed border-teal-400 bg-teal-900/80 rounded-3xl p-10 max-w-md w-full text-center text-white shadow-2xl flex flex-col items-center space-y-4 animate-scaleUp">
+            <div className="w-16 h-16 rounded-2xl bg-teal-500/20 border border-teal-400/40 flex items-center justify-center text-teal-300">
+              <FolderDown className="w-8 h-8 animate-bounce" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold text-teal-100">Thả thư mục hoặc tệp XML vào đây</h3>
+              <p className="text-xs text-teal-200/80 leading-relaxed">
+                Phần mềm sẽ tự động duyệt đệ quy, nhận diện Mã số thuế, Kỳ kê khai và nạp để phân tích tức thì.
+              </p>
+            </div>
+            <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-teal-800/80 border border-teal-600/50 text-[11px] text-teal-200">
+              <UploadCloud className="w-3.5 h-3.5 text-teal-300" />
+              <span>Hỗ trợ tệp <strong>.xml</strong> và tệp nén <strong>.zip</strong></span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal thông báo kết quả nhập XML Offline ── */}
+      {importResultModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-scaleUp">
+            <div className="bg-gradient-to-r from-teal-800 to-teal-700 px-6 py-4 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <CheckCircle2 className="w-5 h-5 text-teal-300" />
+                <h3 className="font-bold text-sm">Nhập XML từ máy thành công</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setImportResultModal(null)}
+                className="text-teal-200 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4 text-xs text-slate-700">
+              <div className="bg-teal-50 border border-teal-200 rounded-xl p-3.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 font-medium">Mã số thuế nhận diện:</span>
+                  <span className="font-mono font-bold text-teal-950 text-sm">{importResultModal.primaryTaxCode || 'N/A'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 font-medium">Năm kê khai chính:</span>
+                  <span className="font-bold text-slate-800">{importResultModal.primaryYear || selectedYear}</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-teal-200/60 pt-1.5 mt-1.5">
+                  <span className="text-slate-500 font-medium">Tổng số hồ sơ hợp lệ:</span>
+                  <span className="font-bold text-emerald-700 text-sm">{importResultModal.importedCount} tờ khai</span>
+                </div>
+                {importResultModal.skippedCount > 0 && (
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                    <span>Tệp bỏ qua (không phải tờ khai):</span>
+                    <span>{importResultModal.skippedCount} tệp</span>
+                  </div>
+                )}
+              </div>
+
+              <p className="text-slate-500 leading-relaxed">
+                Dữ liệu đã được nạp vào bảng hồ sơ. Bạn có thể bấm <strong>"Soát xét thuế GTGT"</strong> hoặc <strong>"Phân tích thuế TNCN"</strong> để xem kết quả kiểm toán tức thì.
+              </p>
+
+              <div className="flex items-center justify-end space-x-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setImportResultModal(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition-colors cursor-pointer"
+                >
+                  Đóng
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImportResultModal(null);
+                    handleAnalyzeVat();
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-teal-700 to-teal-600 hover:from-teal-600 hover:to-teal-500 text-white font-bold rounded-lg shadow-xs transition-all cursor-pointer"
+                >
+                  Soát xét GTGT ngay
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Overlay đang xử lý nhập XML ── */}
+      {isImportingXml && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-2xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 px-6 py-5 flex items-center space-x-3 text-xs text-slate-700">
+            <Loader2 className="w-5 h-5 animate-spin text-teal-600" />
+            <span className="font-semibold">Đang đọc và phân tích tệp XML từ máy tính…</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

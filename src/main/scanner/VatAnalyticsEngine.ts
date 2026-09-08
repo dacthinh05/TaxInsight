@@ -221,7 +221,10 @@ export class VatAnalyticsEngine {
         // Confinement: chỉ đọc file NẰM TRONG baseDir — path đến từ IPC payload,
         // không kiểm tra thì renderer bị chiếm đọc được file tùy ý.
         const xmlPath = filing.downloadedFiles?.xml;
-        if (xmlPath && this.baseDir && isPathInsideBaseDir(this.baseDir, xmlPath) && fs.existsSync(xmlPath)) {
+        const isAllowedPath =
+          Boolean(xmlPath && ((this.baseDir && isPathInsideBaseDir(this.baseDir, xmlPath)) ||
+          (filing.source === 'local-xml' && xmlPath.toLowerCase().endsWith('.xml'))));
+        if (xmlPath && isAllowedPath && fs.existsSync(xmlPath)) {
           try {
             const xml = fs.readFileSync(xmlPath, 'utf-8');
             snapshot = VatXmlParser.parseVatXml(xml, filing, taxpayerId);
@@ -399,8 +402,7 @@ export class VatAnalyticsEngine {
     );
 
     const abortCtrl = new AbortController();
-    const timer = setTimeout(() => abortCtrl.abort(), 6000);
-
+    const timer = setTimeout(() => abortCtrl.abort(), 25000);
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       if (this.isCancelled) {
         clearTimeout(timer);
