@@ -256,7 +256,7 @@ export class PaymentSlipClient {
         let ssoRes: any;
         try {
           ssoRes = await this.session.client.post(
-            `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=360103`,
+            `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=330410`,
             '',
             {
               headers: ssoHeaders,
@@ -265,9 +265,9 @@ export class PaymentSlipClient {
             }
           );
         } catch (mErr: any) {
-          console.warn('[PaymentSlipClient] SSO module=360103 failed, fallback sang module=330410:', mErr?.message || mErr);
+          console.warn('[PaymentSlipClient] SSO module=330410 failed, fallback sang module=360103:', mErr?.message || mErr);
           ssoRes = await this.session.client.post(
-            `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=330410`,
+            `${PORTAL_CONFIG.SSO_REDIRECT_API}?module=360103`,
             '',
             {
               headers: ssoHeaders,

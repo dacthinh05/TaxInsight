@@ -1115,6 +1115,12 @@ export class LegacyFilingClient {
         this.availableFormOptions = parsed.formOptions;
       }
     }
+    if (!this.currentFormState.dseOperationName) {
+      this.currentFormState.dseOperationName = 'traCuuToKhaiProc';
+    }
+    if (!this.currentFormState.actionUrl) {
+      this.currentFormState.actionUrl = '/etaxnnt/Request';
+    }
     this.isEtaxInitialized = true;
     const suffix = sessionId.slice(-4);
     this.logCheckpoint('LEGACY_04_ETAX_AUTHENTICATED', 'PASS', `Session adopted: ***${suffix}`);
