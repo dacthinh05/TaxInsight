@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
+import { copyText } from '../utils/clipboard';
 import { generateVietQrEmvCoPayload } from '../../shared/vietqr';
 import {
   ArrowLeft,
@@ -148,14 +149,14 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleCopyMachineId = () => {
-    navigator.clipboard.writeText(cleanMachineId);
+  const handleCopyMachineId = async () => {
+    await copyText(cleanMachineId);
     setCopiedMachineId(true);
     setTimeout(() => setCopiedMachineId(false), 2000);
   };
 
-  const handleCopyStk = () => {
-    navigator.clipboard.writeText('0817567008');
+  const handleCopyStk = async () => {
+    await copyText('0817567008');
     setCopiedStk(true);
     setTimeout(() => setCopiedStk(false), 2000);
   };
@@ -425,8 +426,15 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({
                     )}
                   </button>
                 </div>
-                <div className="font-mono font-bold text-base text-slate-900 bg-white px-3.5 py-2 rounded-lg border border-slate-300 tracking-wider flex items-center justify-between">
-                  <span>{cleanMachineId}</span>
+                <div
+                  onClick={handleCopyMachineId}
+                  title="Nhấp để sao chép mã máy tính"
+                  className="font-mono font-bold text-base text-slate-900 bg-white px-3.5 py-2 rounded-lg border border-slate-300 tracking-wider flex items-center justify-between select-all select-text cursor-pointer hover:border-teal-500 transition-colors group"
+                >
+                  <span className="select-all select-text">{cleanMachineId}</span>
+                  <span className="text-[11px] font-normal text-slate-400 group-hover:text-teal-700 transition-colors select-none">
+                    {copiedMachineId ? '✓ Đã sao chép' : 'Nhấp để copy'}
+                  </span>
                 </div>
               </div>
 
@@ -515,9 +523,8 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({
                     <div className="flex items-center space-x-1.5">
                       <span className="font-mono font-bold text-emerald-800 text-[13.5px]">{currentTier.priceStr}</span>
                       <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(String(currentTier.price));
+                        onClick={async () => {
+                          await copyText(String(currentTier.price));
                           setCopiedAmount(true);
                           setTimeout(() => setCopiedAmount(false), 2000);
                         }}
@@ -536,12 +543,11 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({
                       </span>
                       <button
                         type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(qrTransferContent);
+                        onClick={async () => {
+                          await copyText(qrTransferContent);
                           setCopiedContent(true);
                           setTimeout(() => setCopiedContent(false), 2000);
                         }}
-                        className="text-teal-700 hover:text-teal-900 cursor-pointer p-0.5"
                         title="Sao chép nội dung chuyển khoản"
                       >
                         {copiedContent ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}

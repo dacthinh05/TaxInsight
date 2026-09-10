@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { copyText } from '../utils/clipboard';
 import {
   AlertCircle,
   AlertTriangle,
@@ -75,7 +76,7 @@ export const DownloadProgressModal: React.FC<DownloadProgressModalProps> = ({
 
   const handleCopyId = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(id);
+    copyText(id);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 1500);
   };

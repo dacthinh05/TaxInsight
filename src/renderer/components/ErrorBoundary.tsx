@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Copy, Check } from 'lucide-react';
+import { copyText } from '../utils/clipboard';
 
 interface Props {
   children: ReactNode;
@@ -35,7 +36,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   private handleCopy = () => {
     const errorDetails = `Error: ${this.state.error?.message || 'Unknown'}\nStack: ${this.state.error?.stack || ''}\nComponentStack: ${this.state.errorInfo?.componentStack || ''}`;
-    navigator.clipboard.writeText(errorDetails);
+    copyText(errorDetails);
     this.setState({ copied: true });
     setTimeout(() => this.setState({ copied: false }), 2000);
   };

@@ -35,6 +35,8 @@ const api = {
   setDirectory: (customPath: string) => ipcRenderer.invoke('file:setDirectory', { customPath }),
   openPath: (targetPath: string) => ipcRenderer.invoke('file:openPath', { targetPath }),
   openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', { url }),
+  copyToClipboard: (text: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('clipboard:writeText', { text }),
   exportExcel: (params: { filings: TaxFiling[]; year: number }) =>
     ipcRenderer.invoke('file:exportExcel', params),
   importLocalXmlFiles: (params: { filePaths: string[] }) =>

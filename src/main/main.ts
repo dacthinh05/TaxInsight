@@ -243,8 +243,16 @@ process.on('unhandledRejection', reason => {
 app.on('web-contents-created', (_event, contents) => {
   // Ứng dụng không cần camera/micro/vị trí/thông báo. Từ chối mặc định để nội
   // dung portal hoặc renderer bị chèn script không thể xin thêm quyền hệ thống.
-  contents.session.setPermissionCheckHandler(() => false);
-  contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+  contents.session.setPermissionCheckHandler((_webContents, permission) => {
+    // Cho phép quyền ghi clipboard cơ bản cho web API, từ chối mọi quyền nhạy cảm khác
+    if (permission === 'clipboard-sanitized-write') return true;
+    return false;
+  });
+  contents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
+    if (permission === 'clipboard-sanitized-write') {
+      callback(true);
+      return;
+    }
     callback(false);
   });
 

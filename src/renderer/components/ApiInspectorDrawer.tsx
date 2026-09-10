@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { copyText } from '../utils/clipboard';
 import {
   Activity,
   AlertCircle,
@@ -148,7 +149,7 @@ export const ApiInspectorDrawer: React.FC<ApiInspectorDrawerProps> = ({ isOpen, 
   // Copy helper
   const handleCopy = (text: string, label: string) => {
     if (!text) return;
-    navigator.clipboard.writeText(text);
+    copyText(text);
     setCopiedState(label);
     setTimeout(() => setCopiedState(null), 2000);
   };

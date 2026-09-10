@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { copyText } from '../utils/clipboard';
 import {
   AlertCircle,
   AlertTriangle,
@@ -318,7 +319,7 @@ export const FilingQuickPreviewDrawer: React.FC<FilingQuickPreviewDrawerProps> =
                         <button
                           type="button"
                           onClick={() => {
-                            navigator.clipboard.writeText(filing.id);
+                            copyText(filing.id);
                             setCopiedId(true);
                             setTimeout(() => setCopiedId(false), 2000);
                           }}
@@ -427,7 +428,7 @@ export const FilingQuickPreviewDrawer: React.FC<FilingQuickPreviewDrawerProps> =
                       type="button"
                       onClick={() => {
                         if (previewData.xmlSnippet) {
-                          navigator.clipboard.writeText(previewData.xmlSnippet);
+                          copyText(previewData.xmlSnippet);
                           setCopiedXml(true);
                           setTimeout(() => setCopiedXml(false), 2000);
                         }
